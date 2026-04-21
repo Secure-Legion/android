@@ -30,16 +30,31 @@ class PhotoPreviewAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val uri = photos[position]
+        val ctx = holder.thumbnail.context
 
-        // Load thumbnail asynchronously
+        // Load thumbnail asynchronously. Sample size is computed against the actual
+        // target ImageView dimensions (preview item is 120dp wide) so we decode just
+        // enough pixels — fixes the "blurry thumbnail" you get with a hard-coded
+        // inSampleSize = 4, which under-resolved anything larger than ~480px source.
         CoroutineScope(Dispatchers.Main).launch {
             val bitmap = withContext(Dispatchers.IO) {
                 try {
-                    val options = BitmapFactory.Options().apply {
-                        inSampleSize = 4 // Load at 1/4 resolution for thumbnails
+                    val targetPx = (240 * ctx.resources.displayMetrics.density).toInt() // ~2x 120dp for sharp scaling
+
+                    // Pass 1: read bounds only
+                    val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    ctx.contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream, null, boundsOpts)
                     }
-                    holder.thumbnail.context.contentResolver.openInputStream(uri)?.use { stream ->
-                        BitmapFactory.decodeStream(stream, null, options)
+
+                    // Compute largest power-of-two sample size that still leaves both dims >= targetPx
+                    var sample = 1
+                    val maxSrc = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+                    while (maxSrc / (sample * 2) >= targetPx) sample *= 2
+
+                    val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+                    ctx.contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream, null, decodeOpts)
                     }
                 } catch (e: Exception) {
                     null

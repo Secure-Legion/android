@@ -126,4 +126,25 @@
 
     </ViewFlipper>
 
+    <!-- Close bar — same black/white chevron affordance used by the image
+         attachment sheet, so dismissing any media tab (emoji / sticker / GIF)
+         is visually obvious. -->
+    <FrameLayout
+        android:id="@+id/closeMediaKeyboard"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="#000000"
+        android:clickable="true"
+        android:focusable="true">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_chevron_down"
+            app:tint="#FFFFFF"
+            android:contentDescription="Close media keyboard" />
+
+    </FrameLayout>
+
 </LinearLayout>

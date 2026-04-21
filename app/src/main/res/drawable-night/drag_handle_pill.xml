@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same as light-theme variant: the attachment sheet is always black, so
+     the pill is always a muted white in both modes. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#55FFFFFF" />
+    <corners android:radius="2dp" />
+</shape>

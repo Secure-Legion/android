@@ -75,6 +75,13 @@ class MediaKeyboardView @JvmOverloads constructor(
 
         setupFluentEmojiPicker()
         setupTabs()
+
+        // Close bar at the bottom — same chevron affordance the attachment
+        // picker uses. Reuses the swipe-dismiss callback so both paths land
+        // in the host's hideMediaKeyboard() behavior.
+        findViewById<View>(R.id.closeMediaKeyboard)?.setOnClickListener {
+            onSwipeDismiss?.invoke()
+        }
     }
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {

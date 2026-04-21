@@ -4,15 +4,42 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@drawable/bottom_sheet_bg"
-    android:paddingTop="12dp">
+    android:background="@drawable/attachment_sheet_bg">
 
-    <!-- Drag Handle — thin line across full width -->
-    <View
+    <!-- Top row: centered drag-handle pill + right-aligned Manage button
+         (Manage only shown when the app has partial photo access on API 34+) -->
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_marginBottom="12dp"
-        android:background="#33FFFFFF" />
+        android:layout_height="wrap_content"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
+
+        <View
+            android:layout_width="36dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center"
+            android:background="@drawable/drag_handle_pill" />
+
+        <TextView
+            android:id="@+id/managePhotosButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:text="Manage"
+            android:textSize="13sp"
+            android:textColor="?attr/colorPrimary"
+            android:fontFamily="@font/poppins_medium"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <!-- Photo Previews — expands to fill all available space -->
     <FrameLayout
@@ -47,17 +74,20 @@
             android:clickable="true"
             android:focusable="true"
             android:visibility="gone" />
-
     </FrameLayout>
 
-    <!-- Action Icons — fixed at bottom, compact -->
+    <!-- Action Icons row — wrapped in its own panel so the background can be
+         themed independently (dark gray in night mode, sheet color in light mode). -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
-        android:gravity="center">
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:gravity="center"
+        android:background="@drawable/attachment_icons_row_bg">
 
         <!-- Gallery -->
         <LinearLayout
@@ -83,7 +113,7 @@
                     android:layout_height="22dp"
                     android:layout_gravity="center"
                     android:src="@android:drawable/ic_menu_gallery"
-                    app:tint="?attr/colorOnSurfaceVariant"
+                    app:tint="#FFFFFF"
                     android:contentDescription="Gallery" />
             </FrameLayout>
 
@@ -121,7 +151,7 @@
                     android:layout_height="22dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_camera"
-                    app:tint="?attr/colorOnSurfaceVariant"
+                    app:tint="#FFFFFF"
                     android:contentDescription="Camera" />
             </FrameLayout>
 
@@ -159,7 +189,7 @@
                     android:layout_height="22dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_folder"
-                    app:tint="?attr/colorOnSurfaceVariant"
+                    app:tint="#FFFFFF"
                     android:contentDescription="File" />
             </FrameLayout>
 
@@ -235,7 +265,7 @@
                     android:layout_height="22dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_location"
-                    app:tint="?attr/colorOnSurfaceVariant"
+                    app:tint="#FFFFFF"
                     android:contentDescription="Location" />
             </FrameLayout>
 
@@ -251,17 +281,19 @@
 
     </LinearLayout>
 
-    <!-- Bottom close bar -->
+    <!-- Divider between the icons row and the close bar so the close bar reads
+         as its own clickable band. 1dp, theme-neutral (works on light + dark). -->
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:layout_marginTop="4dp"
-        android:background="#33FFFFFF" />
+        android:background="?android:attr/listDivider" />
 
+    <!-- Bottom close bar — always black with white chevron so it reads clearly
+         against either theme's sheet color. -->
     <FrameLayout
         android:id="@+id/closeAttachmentPanel"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
+        android:layout_height="48dp"
         android:background="#000000"
         android:clickable="true"
         android:focusable="true">
@@ -269,8 +301,7 @@
         <ImageView
             android:layout_width="24dp"
             android:layout_height="24dp"
-            android:layout_gravity="start|center_vertical"
-            android:layout_marginStart="48dp"
+            android:layout_gravity="center"
             android:src="@drawable/ic_chevron_down"
             app:tint="#FFFFFF"
             android:contentDescription="Close panel" />

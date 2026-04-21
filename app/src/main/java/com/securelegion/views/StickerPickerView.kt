@@ -27,6 +27,10 @@ class StickerPickerView @JvmOverloads constructor(
     // All stickers grouped by category
     private val categories = mutableMapOf<String, List<StickerItem>>()
 
+    // Currently highlighted category (for active/inactive chip styling that
+    // matches the emoji picker). Null until the first chip is built.
+    private var selectedCategory: String? = null
+
     data class StickerItem(
         val assetPath: String,
         val codepoint: String,
@@ -125,17 +129,34 @@ class StickerPickerView @JvmOverloads constructor(
 
     private fun setupCategoryChips() {
         categoryChips.removeAllViews()
+        if (selectedCategory == null) {
+            selectedCategory = categories.keys.firstOrNull()
+        }
+
+        // Match the emoji picker's pill styling: dark-gray #1A1A1A inactive,
+        // dodger-blue #1E90FF active, white 13sp Poppins Medium text.
+        val density = context.resources.displayMetrics.density
+        val hPad = (14 * density).toInt()
+        val vPad = (4 * density).toInt()
+        val marginEnd = (6 * density).toInt()
+
         categories.keys.forEach { category ->
             val chip = TextView(context).apply {
                 text = category.replace(" and ", " & ")
                 textSize = 13f
-                setPadding(24, 12, 24, 12)
-                setBackgroundResource(R.drawable.wallet_token_bg)
+                setPadding(hPad, vPad, hPad, vPad)
                 setTextColor(context.getColor(android.R.color.white))
+                typeface = androidx.core.content.res.ResourcesCompat.getFont(
+                    context, R.font.poppins_medium
+                )
+                setBackgroundResource(
+                    if (category == selectedCategory) R.drawable.category_pill_active_bg
+                    else R.drawable.category_pill_inactive_bg
+                )
                 val params = MarginLayoutParams(
                     LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT
                 )
-                params.marginEnd = 8
+                params.marginEnd = marginEnd
                 layoutParams = params
                 setOnClickListener { showCategory(category) }
             }
@@ -145,8 +166,23 @@ class StickerPickerView @JvmOverloads constructor(
 
     private fun showCategory(category: String) {
         val stickers = categories[category] ?: return
+        selectedCategory = category
+        refreshChipBackgrounds()
         stickerGrid.adapter = StickerAdapter(stickers) { assetPath ->
             onStickerSelected?.invoke(assetPath)
+        }
+    }
+
+    /** Update background of every chip to reflect the current `selectedCategory`. */
+    private fun refreshChipBackgrounds() {
+        val keys = categories.keys.toList()
+        for (i in 0 until categoryChips.childCount) {
+            val chip = categoryChips.getChildAt(i) as? TextView ?: continue
+            val cat = keys.getOrNull(i) ?: continue
+            chip.setBackgroundResource(
+                if (cat == selectedCategory) R.drawable.category_pill_active_bg
+                else R.drawable.category_pill_inactive_bg
+            )
         }
     }
 

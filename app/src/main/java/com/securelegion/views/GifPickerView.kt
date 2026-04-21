@@ -35,6 +35,7 @@ class GifPickerView @JvmOverloads constructor(
 
     private val gifGrid: RecyclerView
     private val placeholder: TextView
+    private val manageButton: TextView
     private var onGifSelected: ((ByteArray) -> Unit)? = null
 
     private val gifUris = mutableListOf<Uri>()
@@ -49,8 +50,21 @@ class GifPickerView @JvmOverloads constructor(
         LayoutInflater.from(context).inflate(R.layout.view_gif_picker, this, true)
         gifGrid = findViewById(R.id.gifGrid)
         placeholder = findViewById(R.id.gifPlaceholder)
+        manageButton = findViewById(R.id.gifManageButton)
 
         gifGrid.layoutManager = GridLayoutManager(context, 3)
+
+        manageButton.setOnClickListener {
+            // Re-request READ_MEDIA_VISUAL_USER_SELECTED. Android 14+ interprets this
+            // as "open the photo picker so the user can add/remove which files we see."
+            val activity = findActivity() ?: return@setOnClickListener
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                activity.requestPermissions(
+                    arrayOf(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED),
+                    REQUEST_CODE_MEDIA_PERMISSION
+                )
+            }
+        }
 
         refreshPickerState()
     }
@@ -64,6 +78,7 @@ class GifPickerView @JvmOverloads constructor(
      * grant result, so the picker reloads device GIFs without requiring a reopen.
      */
     fun refreshPickerState() {
+        updateManageVisibility()
         if (hasMediaPermission()) {
             loadDeviceGifs()
         } else {
@@ -75,6 +90,23 @@ class GifPickerView @JvmOverloads constructor(
                 requestMediaPermission()
             }
         }
+    }
+
+    /**
+     * Show the Manage button whenever the app has ANY photo access on API 34+.
+     * Re-requesting READ_MEDIA_VISUAL_USER_SELECTED opens the re-selection UI
+     * regardless of whether the user currently has full or partial access,
+     * so the button is useful in both cases. Hidden on older OS versions or
+     * when the app has no photo permission at all (the "Allow" affordance
+     * handles that path).
+     */
+    private fun updateManageVisibility() {
+        val showManage = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) ==
+                PackageManager.PERMISSION_GRANTED ||
+             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) ==
+                PackageManager.PERMISSION_GRANTED)
+        manageButton.visibility = if (showManage) View.VISIBLE else View.GONE
     }
 
     private fun hasMediaPermission(): Boolean {

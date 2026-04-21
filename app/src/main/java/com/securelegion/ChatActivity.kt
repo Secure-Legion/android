@@ -218,38 +218,6 @@ class ChatActivity : BaseActivity() {
         }
     }
 
-    // Contact photo picker launchers
-    private val contactPhotoGalleryLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val uri = result.data?.data
-            val base64 = com.securelegion.utils.ImagePicker.processImageUri(this, uri)
-            if (base64 != null) {
-                saveContactPhoto(base64)
-                contactAvatar.setPhotoBase64(base64)
-                ThemedToast.show(this, "Contact photo updated")
-            } else {
-                ThemedToast.show(this, "Failed to process image")
-            }
-        }
-    }
-
-    private val contactPhotoCameraLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val bitmap = result.data?.extras?.let { androidx.core.os.BundleCompat.getParcelable(it, "data", Bitmap::class.java) }
-            val base64 = com.securelegion.utils.ImagePicker.processImageBitmap(bitmap)
-            if (base64 != null) {
-                saveContactPhoto(base64)
-                contactAvatar.setPhotoBase64(base64)
-                ThemedToast.show(this, "Contact photo updated")
-            } else {
-                ThemedToast.show(this, "Failed to process image")
-            }
-        }
-    }
 
     // BroadcastReceiver for instant message display and new Pings
     private val messageReceiver = object : BroadcastReceiver() {
@@ -1039,6 +1007,27 @@ class ChatActivity : BaseActivity() {
         val photoPreviewGrid = attachmentPanel.findViewById<RecyclerView>(R.id.photoPreviewGrid)
         val allowAccessButton = attachmentPanel.findViewById<View>(R.id.allowAccessButton)
         setupPhotoPreviewGrid(photoPreviewGrid, allowAccessButton, null)
+
+        // Manage button — visible only when the user granted PARTIAL photo access
+        // (API 34+). Tapping it re-requests READ_MEDIA_VISUAL_USER_SELECTED, which
+        // Android 14+ treats as "let the user update which photos this app can see."
+        attachmentPanel.findViewById<TextView>(R.id.managePhotosButton)?.let { manage ->
+            val showManage = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) ==
+                    PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) !=
+                    PackageManager.PERMISSION_GRANTED
+            manage.visibility = if (showManage) View.VISIBLE else View.GONE
+            manage.setOnClickListener {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED),
+                        GALLERY_PERMISSION_REQUEST_CODE
+                    )
+                }
+            }
+        }
 
         // Scroll messages up so last message is visible above the panel
         messagesRecyclerView.post { scrollToBottom(smooth = true) }
@@ -3393,60 +3382,6 @@ class ChatActivity : BaseActivity() {
             }
         }
 
-        // Click listener to change contact photo
-        contactAvatar.setOnClickListener {
-            showContactPhotoPickerDialog()
-        }
-    }
-
-    private fun showContactPhotoPickerDialog() {
-        val dialog = GlassDialog.builder(this)
-            .setTitle("Change Contact Photo")
-            .setItems(arrayOf("Take Photo", "Choose from Gallery", "Remove Photo")) { _, which ->
-                when (which) {
-                    0 -> com.securelegion.utils.ImagePicker.pickFromCamera(contactPhotoCameraLauncher)
-                    1 -> com.securelegion.utils.ImagePicker.pickFromGallery(contactPhotoGalleryLauncher)
-                    2 -> removeContactPhoto()
-                }
-            }
-            .create()
-        GlassDialog.show(dialog)
-    }
-
-    private fun saveContactPhoto(base64: String) {
-        lifecycleScope.launch {
-            try {
-                val keyManager = KeyManager.getInstance(this@ChatActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
-
-                withContext(Dispatchers.IO) {
-                    database.contactDao().updateContactPhoto(contactId, base64)
-                }
-                Log.d(TAG, "Contact photo saved to database")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error saving contact photo", e)
-            }
-        }
-    }
-
-    private fun removeContactPhoto() {
-        lifecycleScope.launch {
-            try {
-                val keyManager = KeyManager.getInstance(this@ChatActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
-
-                withContext(Dispatchers.IO) {
-                    database.contactDao().updateContactPhoto(contactId, null)
-                }
-                contactAvatar.clearPhoto()
-                ThemedToast.show(this@ChatActivity, "Contact photo removed")
-                Log.d(TAG, "Contact photo removed from database")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error removing contact photo", e)
-            }
-        }
     }
 
 }
