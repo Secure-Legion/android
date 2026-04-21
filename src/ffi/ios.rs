@@ -121,7 +121,9 @@ fn decode_length_prefixed_ops(data: &[u8], max_ops: usize, max_op_size: usize) -
         if ops.len() >= max_ops {
             return Err(format!("op count exceeds {}", max_ops));
         }
-        let len = u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&data[offset..offset + 4]);
+        let len = u32::from_be_bytes(len_bytes) as usize;
         offset += 4;
         if len > max_op_size {
             return Err(format!("op size {} exceeds {}", len, max_op_size));
@@ -1492,4 +1494,107 @@ pub unsafe extern "C" fn securelegion_device_id_from_pubkey(
     std::ptr::copy_nonoverlapping(hex_bytes.as_ptr(), out_buf, hex_bytes.len());
     *out_len = hex_bytes.len() as u32;
     0
+}
+
+// ───── Arti (in-process Tor) FFI for iOS main app ─────
+
+/// Initialize Arti and bootstrap to the Tor network.
+/// Blocks the calling thread during bootstrap (~5-30s) — Swift must call from a background thread.
+/// Returns 0 on success, -1 on failure.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_init(data_dir: *const c_char) -> i32 {
+    if data_dir.is_null() { return -1; }
+    let data_dir_str = match unsafe { CStr::from_ptr(data_dir) }.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return -1,
+    };
+    match RUNTIME.block_on(crate::network::arti::initialize_arti(&data_dir_str)) {
+        Ok(()) => 0,
+        Err(e) => {
+            log::error!("securelegion_arti_init failed: {}", e);
+            -1
+        }
+    }
+}
+
+/// Returns the current Arti bootstrap progress (0-100). Non-blocking, safe to poll.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_bootstrap_status() -> u32 {
+    crate::network::tor::BOOTSTRAP_STATUS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Returns true if Arti is initialized and bootstrap >= 100.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_is_ready() -> bool {
+    crate::network::arti::is_arti_ready()
+}
+
+/// High-level atomic send: connect -> write_message -> optionally read ACK -> close.
+/// Returns: 0=success, -1=not ready, -2=connect failed, -3=write failed.
+/// ACK read failure is not a send failure: the recipient may already have stored
+/// the message and can still return ACK over the outbound retry path.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_arti_send_to_onion(
+    onion_address: *const c_char,
+    port: u16,
+    payload: *const u8,
+    payload_len: u32,
+    read_ack: bool,
+    ack_out: *mut u8,
+    ack_len: *mut u32,
+) -> i32 {
+    if onion_address.is_null() || payload.is_null() { return -1; }
+    let onion_str = match CStr::from_ptr(onion_address).to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return -1,
+    };
+    let payload_slice = std::slice::from_raw_parts(payload, payload_len as usize);
+    let payload_vec = payload_slice.to_vec();
+
+    if !crate::network::arti::is_arti_ready() {
+        return -1;
+    }
+
+    RUNTIME.block_on(async {
+        // Connect
+        let mut stream = match crate::network::arti::arti_connect_to_onion(&onion_str, port).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("arti_send_to_onion: connect failed: {}", e);
+                return -2;
+            }
+        };
+
+        // Write message (length-prefixed)
+        if let Err(e) = stream.write_message(&payload_vec).await {
+            log::error!("arti_send_to_onion: write failed: {}", e);
+            return -3;
+        }
+
+        // Optionally read ACK response
+        if read_ack && !ack_out.is_null() && !ack_len.is_null() {
+            match stream.read_message().await {
+                Ok(ack_data) => {
+                    let max_len = *ack_len as usize;
+                    let copy_len = ack_data.len().min(max_len);
+                    std::ptr::copy_nonoverlapping(ack_data.as_ptr(), ack_out, copy_len);
+                    *ack_len = copy_len as u32;
+                }
+                Err(e) => {
+                    log::warn!("arti_send_to_onion: ACK read failed after write succeeded: {}", e);
+                    *ack_len = 0;
+                }
+            }
+        } else if !ack_len.is_null() {
+            *ack_len = 0;
+        }
+
+        0
+    })
+}
+
+/// Shut down Arti and release all resources.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_shutdown() {
+    crate::network::arti::shutdown_arti();
 }

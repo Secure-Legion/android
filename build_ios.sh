@@ -4,6 +4,9 @@ set -e
 echo "Building Secure Legion Core Library for iOS (arm64)..."
 echo ""
 
+# Match Xcode project minimum deployment target so the library works on older devices.
+export IPHONEOS_DEPLOYMENT_TARGET=17.0
+
 # Build staticlib only — skip cdylib (requires JNI/linking that fails on iOS)
 cargo rustc --release --target aarch64-apple-ios --crate-type staticlib
 

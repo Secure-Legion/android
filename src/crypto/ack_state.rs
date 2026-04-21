@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
+use crate::util::lock_recover;
 
 /// ACK state for a single contact
 /// Protocol v2: Only PING_ACK and MESSAGE_ACK remain (PONG_ACK removed).
@@ -33,7 +34,7 @@ pub const ACK_TYPE_MESSAGE: u8 = 2;
 /// * `contact_id` - Contact identifier
 /// * `ack_type` - Type of ACK (0=PING_ACK, 2=MESSAGE_ACK)
 pub fn validate_and_record_ack(contact_id: &str, ack_type: u8) -> bool {
-    let mut states = ACK_STATES.lock().unwrap();
+    let mut states = lock_recover(&ACK_STATES);
     let state = states.entry(contact_id.to_string()).or_default();
 
     // Guard 1: Handle duplicate ACKs (idempotency)
@@ -66,7 +67,7 @@ pub fn validate_and_record_ack(contact_id: &str, ack_type: u8) -> bool {
 
 /// Reset ACK state for a contact (e.g., after completing a message exchange)
 pub fn reset_ack_state(contact_id: &str) {
-    let mut states = ACK_STATES.lock().unwrap();
+    let mut states = lock_recover(&ACK_STATES);
     states.remove(contact_id);
     log::debug!("ACK state reset for contact {}", contact_id);
 }
@@ -74,7 +75,7 @@ pub fn reset_ack_state(contact_id: &str) {
 /// Clear all ACK states (for testing)
 #[cfg(test)]
 pub fn clear_ack_states() {
-    let mut states = ACK_STATES.lock().unwrap();
+    let mut states = lock_recover(&ACK_STATES);
     states.clear();
 }
 
