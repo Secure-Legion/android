@@ -93,7 +93,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/premium_card_bg"
+                android:background="@drawable/contact_info_box_bg"
                 android:padding="16dp"
                 android:layout_marginBottom="14dp">
 
@@ -159,7 +159,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/premium_card_bg"
+                android:background="@drawable/contact_info_box_bg"
                 android:padding="16dp"
                 android:layout_marginBottom="14dp">
 
@@ -225,7 +225,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/premium_card_bg"
+                android:background="@drawable/contact_info_box_bg"
                 android:padding="16dp">
 
                 <LinearLayout
