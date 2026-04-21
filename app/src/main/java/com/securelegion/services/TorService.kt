@@ -124,7 +124,13 @@ class TorService : Service() {
     private val TAP_RECENT_WINDOW_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
     // Friend-request replay protection and envelope validation (shared across all incoming Phase 1)
-    private val frNonceCache = NonceReplayCache(ttlMs = 300_000L, maxEntries = 10_000)
+    // TTL must be ≥ FriendRequestValidator.TIMESTAMP_WINDOW_SEC so every nonce still-in-window
+    // is remembered. Without this the pair leaves a replay gap between the nonce TTL and the
+    // timestamp window. 10k entries @ 24h = trivial memory; attacker-flood is bounded by maxEntries.
+    private val frNonceCache = NonceReplayCache(
+        ttlMs = FriendRequestValidator.TIMESTAMP_WINDOW_SEC * 1000L,
+        maxEntries = 10_000
+    )
     private val frValidator = FriendRequestValidator(frNonceCache)
 
     // Debounced NEWNYM for network changes and stream failure escalation

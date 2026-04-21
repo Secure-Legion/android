@@ -230,10 +230,16 @@ class FriendRequestWorker(
 
         Log.d(TAG, "Retrying Phase 1 to ${request.recipientOnion}")
 
+        // Refresh the envelope timestamp so the receiver's anti-replay window accepts it.
+        // Without this, an FR composed yesterday but only delivered today gets rejected
+        // (receiver sees the stale timestamp and treats it as a replay).
+        val refreshedPayload = com.securelegion.services.FriendRequestEnvelope
+            .refreshTimestamp(request.phase1PayloadJson)
+
         // Re-encrypt Phase 1 with PIN
         val cardManager = com.securelegion.services.ContactCardManager(applicationContext)
         val encryptedPhase1 = try {
-            cardManager.encryptWithPin(request.phase1PayloadJson, request.recipientPin)
+            cardManager.encryptWithPin(refreshedPayload, request.recipientPin)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to encrypt Phase 1", e)
             return false

@@ -48,6 +48,24 @@ data class FriendRequestEnvelope(
         }
 
         /**
+         * Return `jsonString` with its `timestamp` field refreshed to now. Nonce and every
+         * other field stay intact so receiver-side dedup (by nonce) still works across
+         * retries. Used by the retry path so a cached envelope re-sent tomorrow doesn't get
+         * rejected by the receiver's anti-replay window.
+         *
+         * Falls back to the original string on any parse error (caller can still attempt send).
+         */
+        fun refreshTimestamp(jsonString: String): String {
+            return try {
+                val json = JSONObject(jsonString)
+                json.put("timestamp", System.currentTimeMillis() / 1000)
+                json.toString()
+            } catch (e: Exception) {
+                jsonString
+            }
+        }
+
+        /**
          * Parse an envelope JSON string. Returns null on any schema violation — no detailed
          * error reporting to avoid leaking info to attackers.
          */

@@ -58,7 +58,10 @@ class FriendRequestValidator(private val replayCache: NonceReplayCache) {
     enum class Result { OK, INVALID }
 
     companion object {
-        const val TIMESTAMP_WINDOW_SEC = 120L
+        // 24h window. Async P2P over Tor + retry backoff regularly exceeds tens of minutes;
+        // the nonce cache does the actual replay dedup — this bound just keeps that cache finite.
+        // NOTE: keep FR nonce cache TTL in TorService ≥ this value.
+        const val TIMESTAMP_WINDOW_SEC = 86_400L
         const val EXPECTED_TOKEN_LEN = 32
     }
 
