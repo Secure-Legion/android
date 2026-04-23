@@ -13,7 +13,7 @@ class AppearanceActivity : BaseActivity() {
         setContentView(R.layout.activity_appearance)
 
         val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
-        val currentMode = prefs.getString("app_theme_mode", "light") ?: "light"
+        val currentMode = prefs.getString("app_theme_mode", "system") ?: "system"
         Log.d("Appearance", "Current theme mode: $currentMode, night mode: ${AppCompatDelegate.getDefaultNightMode()}")
 
         val radioDark = findViewById<RadioButton>(R.id.radioDark)
@@ -29,7 +29,7 @@ class AppearanceActivity : BaseActivity() {
         selectRadio(currentMode)
 
         fun applyTheme(mode: String) {
-            val current = prefs.getString("app_theme_mode", "light") ?: "light"
+            val current = prefs.getString("app_theme_mode", "system") ?: "system"
             if (current == mode) return
             Log.d("Appearance", "Switching to $mode")
             selectRadio(mode)

@@ -45,7 +45,7 @@ abstract class BaseActivity : AppCompatActivity() {
 
     private fun applyThemeMode() {
         val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
-        val mode = prefs.getString("app_theme_mode", "light") ?: "light"
+        val mode = prefs.getString("app_theme_mode", "system") ?: "system"
         val target = when (mode) {
             "light" -> AppCompatDelegate.MODE_NIGHT_NO
             "system" -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
