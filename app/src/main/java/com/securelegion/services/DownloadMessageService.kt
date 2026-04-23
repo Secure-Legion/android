@@ -868,29 +868,49 @@ class DownloadMessageService : Service() {
             return
         }
 
-        // Type-specific notification text based on wire format
+        // Title is the sender's name; body is the action. Previously both fields
+        // led with "New sticker"/"New message" which Android rendered as
+        // "New sticker New sticker from X" once notifications grouped — now
+        // matches the modern messaging-app pattern (title=who, text=what).
         val (title, text) = when (lastReceivedWireType) {
-            0x03 -> "New message" to "New message from $contactName"
-            0x04 -> "New voice clip" to "New voice clip from $contactName"
-            0x09 -> "New image" to "New image from $contactName"
-            0x0E -> "New sticker" to "New sticker from $contactName"
-            0x0A -> "Payment request" to "New payment request from $contactName"
-            0x0B -> "Payment received" to "Payment sent by $contactName"
-            0x0C -> "Payment accepted" to "Payment accepted by $contactName"
+            0x03 -> contactName to "New message"
+            0x04 -> contactName to "New voice message"
+            0x09 -> contactName to "Sent a photo"
+            0x0E -> contactName to "Sent a sticker"
+            0x0A -> contactName to "Payment request"
+            0x0B -> contactName to "Payment received"
+            0x0C -> contactName to "Payment accepted"
             0x0F -> return // Profile update — no notification
-            else -> "New message" to "New message from $contactName"
+            else -> contactName to "New message"
         }
 
-        // Launch via LockActivity to prevent showing chat before authentication
-        val intent = Intent(this, LockActivity::class.java).apply {
-            if (currentContactId != -1L) {
-                putExtra("TARGET_ACTIVITY", "ChatActivity")
+        // Route the tap: if the user has no password set, skip LockActivity and
+        // land directly on the chat. If a password exists, LockActivity handles
+        // auth (biometric auto-prompts when enabled) and then forwards to
+        // ChatActivity with the same extras.
+        val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+        val hasPassword = try {
+            com.securelegion.crypto.KeyManager.getInstance(this).isDevicePasswordSet()
+        } catch (_: Exception) { false }
+        val needsLock = !isUnlocked && hasPassword
+
+        val intent = if (!needsLock && currentContactId != -1L) {
+            Intent(this, ChatActivity::class.java).apply {
                 putExtra(ChatActivity.EXTRA_CONTACT_ID, currentContactId)
                 putExtra(ChatActivity.EXTRA_CONTACT_NAME, currentContactName)
-            } else {
-                putExtra("TARGET_ACTIVITY", "MainActivity")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        } else {
+            Intent(this, LockActivity::class.java).apply {
+                if (currentContactId != -1L) {
+                    putExtra("TARGET_ACTIVITY", "ChatActivity")
+                    putExtra(ChatActivity.EXTRA_CONTACT_ID, currentContactId)
+                    putExtra(ChatActivity.EXTRA_CONTACT_NAME, currentContactName)
+                } else {
+                    putExtra("TARGET_ACTIVITY", "MainActivity")
+                }
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
         }
         val pendingIntent = PendingIntent.getActivity(
             this, currentContactId.toInt(), intent,
@@ -908,6 +928,10 @@ class DownloadMessageService : Service() {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            // Group-tag the notification so ChatActivity.cancelNotificationsForContact()
+            // can clear it when the user opens that specific chat. Matches the group
+            // tag TorService.showMessageNotification() uses (7965).
+            .setGroup("MESSAGES_${currentContactId}")
             .build()
 
         notificationManager?.notify(successId, notification)

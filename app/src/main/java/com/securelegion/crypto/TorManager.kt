@@ -21,10 +21,13 @@ import com.securelegion.SecureLegionApplication
  * - Store/retrieve .onion address
  * - Provide access to Tor SOCKS proxy
  */
-@Deprecated(
-    message = "Legacy Kotlin Tor orchestrator. Migration target is Rust/Arti-owned lifecycle.",
-    level = DeprecationLevel.WARNING
-)
+/**
+ * Note (not deprecated): the class name is a historical artifact from before the
+ * migration to Arti. Its remaining responsibilities — HS key-directory seeding,
+ * SharedPreferences-backed onion address cache, and bootstrap listener init —
+ * are real work that Arti relies on. When those responsibilities eventually move
+ * into Rust/Arti startup, this class can be deleted; until then it stays as-is.
+ */
 class TorManager(private val context: Context) {
 
     private val prefs: SharedPreferences by lazy {

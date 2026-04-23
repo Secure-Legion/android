@@ -920,15 +920,16 @@ class AddFriendActivity : BaseActivity() {
     }
 
     /**
-     * Accept friend request by downloading contact card
+     * Accept friend request. v5 flow: no IPFS/Crust fetch — the sender's onion
+     * address lives in the `ipfsCid` field (legacy name, see v2 schema notes), and
+     * `acceptPhase2FriendRequest` handles the X25519-encrypted phase-2 handshake
+     * directly over the sender's .onion. The old path went through
+     * `downloadContactCard` → Crust → ipfs.io (clearnet), which was dead in
+     * practice and leaked an `ipfs.io` request on every tap. Removed.
      */
     private fun acceptFriendRequest(friendRequest: FriendRequest, pin: String) {
         Log.d(TAG, "Accepting friend request from ${friendRequest.displayName}")
-
-        // Use the existing downloadContactCard function
-        // Note: downloadContactCard will automatically call removeFriendRequestByCid()
-        // when the download completes successfully, which will refresh the UI
-        downloadContactCard(friendRequest.ipfsCid, pin)
+        acceptPhase2FriendRequest(friendRequest.ipfsCid, pin)
     }
 
     /**

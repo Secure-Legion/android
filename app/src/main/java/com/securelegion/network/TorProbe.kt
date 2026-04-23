@@ -12,10 +12,11 @@ import com.securelegion.crypto.RustBridge
  * 3. Works on all networks - doesn't depend on external hosts being reachable
  * 4. Fast - no network round-trip needed
  */
-@Deprecated(
-    message = "Legacy Kotlin-side Tor probe. Keep for telemetry only while Arti owns liveness decisions.",
-    level = DeprecationLevel.WARNING
-)
+/**
+ * Note (not deprecated): name is a historical artifact. Used for telemetry
+ * readouts alongside Arti; Arti owns the real liveness decisions but this
+ * still surfaces circuit / bootstrap state cheaply.
+ */
 class TorProbe {
     companion object {
         private const val TAG = "TorProbe"

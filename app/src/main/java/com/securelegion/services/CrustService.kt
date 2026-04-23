@@ -2,6 +2,7 @@ package com.securelegion.services
 
 import android.content.Context
 import android.util.Log
+import com.securelegion.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -79,6 +80,10 @@ class CrustService(
      * @return IPFS CID
      */
     suspend fun uploadContactCard(encryptedData: ByteArray, publicKey: String): Result<String> = withContext(Dispatchers.IO) {
+        if (!BuildConfig.ENABLE_CRUST_IPFS) {
+            Log.w(TAG, "Crust/IPFS disabled in this build — uploadContactCard refused")
+            return@withContext Result.failure(IllegalStateException("Crust/IPFS disabled in this build"))
+        }
         try {
             Log.d(TAG, "Uploading encrypted contact card to Crust (${encryptedData.size} bytes)")
 
@@ -218,6 +223,10 @@ class CrustService(
      * @return Encrypted contact card as byte array
      */
     suspend fun downloadContactCard(cid: String): Result<ByteArray> = withContext(Dispatchers.IO) {
+        if (!BuildConfig.ENABLE_CRUST_IPFS) {
+            Log.w(TAG, "Crust/IPFS disabled in this build — downloadContactCard refused")
+            return@withContext Result.failure(IllegalStateException("Crust/IPFS disabled in this build"))
+        }
         try {
             Log.d(TAG, "Downloading contact card from IPFS: $cid")
 
