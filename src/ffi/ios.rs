@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use argon2::{Algorithm, Argon2, Params, Version};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use chacha20poly1305::{
     aead::{Aead, KeyInit, OsRng},
     XChaCha20Poly1305, XNonce,
@@ -22,17 +22,20 @@ use crate::crdt::limits::{HARD_CAP_OPS_PER_GROUP, MAX_OP_PAYLOAD_BYTES};
 use crate::crdt::messages::MessageEntry;
 use crate::crdt::ops::{
     generate_msg_id, AdminRights, GroupCreatePayload, GroupDeletePayload, MemberAcceptPayload,
-    MemberInvitePayload, MemberRemovePayload, MemberUnbanPayload,
-    MetadataKey, MetadataSetPayload, MsgAddPayload, MsgDeletePayload, MsgEditPayload, OpEnvelope, OpType,
-    ReactionSetPayload, RemoveReason, Role, RoleSetPayload,
+    MemberInvitePayload, MemberRemovePayload, MemberUnbanPayload, MetadataKey, MetadataSetPayload,
+    MsgAddPayload, MsgDeletePayload, MsgEditPayload, OpEnvelope, OpType, ReactionSetPayload,
+    RemoveReason, Role, RoleSetPayload,
 };
 use crate::crypto::encryption::{
-    decrypt_message, decrypt_message_with_evolution, derive_message_key, derive_receive_key_at_sequence,
-    derive_root_key, encrypt_message, encrypt_message_with_evolution, evolve_chain_key,
+    decrypt_message, decrypt_message_with_evolution, derive_message_key,
+    derive_receive_key_at_sequence, derive_root_key, encrypt_message,
+    encrypt_message_with_evolution, evolve_chain_key,
 };
 use crate::crypto::hashing::{generate_salt, hash_password_with_salt};
 use crate::crypto::key_exchange::{derive_shared_secret, generate_static_keypair};
-use crate::crypto::pqc::{generate_hybrid_keypair_from_seed, hybrid_decapsulate, hybrid_encapsulate, HybridCiphertext};
+use crate::crypto::pqc::{
+    generate_hybrid_keypair_from_seed, hybrid_decapsulate, hybrid_encapsulate, HybridCiphertext,
+};
 use crate::crypto::signing::{generate_keypair, sign_data, verify_signature};
 use crate::network::compute_onion_address_from_ed25519_seed;
 use crate::network::friend_request_server::get_endpoint;
@@ -49,6 +52,12 @@ static VERSION_CSTR: Lazy<CString> =
 static RUNTIME: Lazy<tokio::runtime::Runtime> =
     Lazy::new(|| tokio::runtime::Runtime::new().expect("failed to create tokio runtime"));
 static FR_SERVER_STARTED: AtomicBool = AtomicBool::new(false);
+static ARTI_STREAMS: Lazy<Mutex<HashMap<u64, crate::network::arti::ArtiStream>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+static NEXT_ARTI_STREAM_ID: AtomicU64 = AtomicU64::new(1);
+const IOS_ARTI_DIRECT_CONNECT_TIMEOUT_MS: u64 = 10_000;
+const IOS_ARTI_DIRECT_WRITE_TIMEOUT_MS: u64 = 8_000;
+const IOS_ARTI_DIRECT_ACK_TIMEOUT_MS: u64 = 15_000;
 
 fn get_groups() -> &'static Mutex<HashMap<GroupID, GroupState>> {
     GROUPS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -113,7 +122,11 @@ unsafe fn write_cstr_to_buf(out_ptr: *mut c_char, data: &str, max_without_nul: u
     0
 }
 
-fn decode_length_prefixed_ops(data: &[u8], max_ops: usize, max_op_size: usize) -> Result<Vec<OpEnvelope>, String> {
+fn decode_length_prefixed_ops(
+    data: &[u8],
+    max_ops: usize,
+    max_op_size: usize,
+) -> Result<Vec<OpEnvelope>, String> {
     let mut ops = Vec::new();
     let mut offset = 0usize;
 
@@ -197,7 +210,9 @@ fn hex_to_32(hex_str: &str, field_name: &str) -> Result<[u8; 32], String> {
 }
 
 fn b64_to_24(s: &str, field_name: &str) -> Result<[u8; 24], String> {
-    let bytes = B64.decode(s).map_err(|e| format!("bad {} b64: {}", field_name, e))?;
+    let bytes = B64
+        .decode(s)
+        .map_err(|e| format!("bad {} b64: {}", field_name, e))?;
     if bytes.len() != 24 {
         return Err(format!("{} must be 24 bytes", field_name));
     }
@@ -242,8 +257,7 @@ fn message_to_json(msg: &MessageEntry) -> serde_json::Value {
 /// Derive a 32-byte key from PIN + salt using Argon2id with Android-compatible params.
 /// Matches libsodium crypto_pwhash(OPSLIMIT_INTERACTIVE=2, MEMLIMIT_INTERACTIVE=64MB).
 fn pin_kdf(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
-    let params = Params::new(65536, 2, 1, Some(32))
-        .map_err(|e| format!("argon2 params: {}", e))?;
+    let params = Params::new(65536, 2, 1, Some(32)).map_err(|e| format!("argon2 params: {}", e))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut output = [0u8; 32];
     argon2
@@ -289,8 +303,10 @@ fn pin_decrypt_internal(ciphertext: &[u8], pin: &str) -> Result<Vec<u8>, String>
     }
 
     // Fallback: XChaCha20-Poly1305 + Argon2id(default m=19456) — old iOS format
-    let old_key = hash_password_with_salt(pin, salt).map_err(|e| format!("pin kdf failed: {}", e))?;
-    let chacha = XChaCha20Poly1305::new_from_slice(&old_key).map_err(|_| "invalid key".to_string())?;
+    let old_key =
+        hash_password_with_salt(pin, salt).map_err(|e| format!("pin kdf failed: {}", e))?;
+    let chacha =
+        XChaCha20Poly1305::new_from_slice(&old_key).map_err(|_| "invalid key".to_string())?;
     chacha
         .decrypt(XNonce::from_slice(nonce), body)
         .map_err(|_| "pin decrypt failed".to_string())
@@ -302,7 +318,10 @@ pub extern "C" fn securelegion_version() -> *const c_char {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn securelegion_generate_keypair(pubkey_out: *mut u8, privkey_out: *mut u8) -> i32 {
+pub unsafe extern "C" fn securelegion_generate_keypair(
+    pubkey_out: *mut u8,
+    privkey_out: *mut u8,
+) -> i32 {
     if pubkey_out.is_null() || privkey_out.is_null() {
         return -1;
     }
@@ -464,7 +483,10 @@ pub unsafe extern "C" fn securelegion_verify(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn securelegion_generate_x25519_keypair(pubkey_out: *mut u8, privkey_out: *mut u8) -> i32 {
+pub unsafe extern "C" fn securelegion_generate_x25519_keypair(
+    pubkey_out: *mut u8,
+    privkey_out: *mut u8,
+) -> i32 {
     if pubkey_out.is_null() || privkey_out.is_null() {
         return -1;
     }
@@ -528,7 +550,10 @@ pub unsafe extern "C" fn securelegion_derive_root_key(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn securelegion_evolve_chain_key(chain_key: *const u8, evolved_key_out: *mut u8) -> i32 {
+pub unsafe extern "C" fn securelegion_evolve_chain_key(
+    chain_key: *const u8,
+    evolved_key_out: *mut u8,
+) -> i32 {
     if evolved_key_out.is_null() {
         return -1;
     }
@@ -546,7 +571,10 @@ pub unsafe extern "C" fn securelegion_evolve_chain_key(chain_key: *const u8, evo
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn securelegion_derive_message_key(chain_key: *const u8, message_key_out: *mut u8) -> i32 {
+pub unsafe extern "C" fn securelegion_derive_message_key(
+    chain_key: *const u8,
+    message_key_out: *mut u8,
+) -> i32 {
     if message_key_out.is_null() {
         return -1;
     }
@@ -757,7 +785,11 @@ pub unsafe extern "C" fn securelegion_generate_hybrid_kem_keypair(
     kyber_pub_out: *mut u8,
     kyber_sec_out: *mut u8,
 ) -> i32 {
-    if x25519_pub_out.is_null() || x25519_sec_out.is_null() || kyber_pub_out.is_null() || kyber_sec_out.is_null() {
+    if x25519_pub_out.is_null()
+        || x25519_sec_out.is_null()
+        || kyber_pub_out.is_null()
+        || kyber_sec_out.is_null()
+    {
         return -1;
     }
     let seed_arr = match copy_fixed::<32>(seed) {
@@ -1050,17 +1082,23 @@ pub unsafe extern "C" fn securelegion_crdt_load_group(
             Err(_) => return -1,
         };
         let data = bytes_from_ptr_opt(serialized_ops, serialized_ops_len as usize);
-        let ops = match decode_length_prefixed_ops(data, HARD_CAP_OPS_PER_GROUP, MAX_SERIALIZED_OP_BYTES) {
-            Ok(v) => v,
-            Err(_) => return -1,
-        };
+        let ops =
+            match decode_length_prefixed_ops(data, HARD_CAP_OPS_PER_GROUP, MAX_SERIALIZED_OP_BYTES)
+            {
+                Ok(v) => v,
+                Err(_) => return -1,
+            };
         let state = match GroupState::rebuild_from_ops(gid, &ops) {
             Ok(v) => v,
             Err(_) => return -1,
         };
-        get_groups().lock().unwrap_or_else(|e| e.into_inner()).insert(gid, state);
+        get_groups()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(gid, state);
         0
-    })).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -1074,10 +1112,17 @@ pub unsafe extern "C" fn securelegion_crdt_unload_group(group_id_hex: *const c_c
             Ok(v) => v,
             Err(_) => return -1,
         };
-        get_groups().lock().unwrap_or_else(|e| e.into_inner()).remove(&gid);
-        get_lamport_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&gid);
+        get_groups()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&gid);
+        get_lamport_map()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&gid);
         0
-    })).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -1101,7 +1146,11 @@ pub unsafe extern "C" fn securelegion_crdt_apply_ops(
             Ok(v) => v,
             Err(_) => return -1,
         };
-        let ops = match decode_length_prefixed_ops(data, MAX_OPS_PER_APPLY_BATCH, MAX_SERIALIZED_OP_BYTES) {
+        let ops = match decode_length_prefixed_ops(
+            data,
+            MAX_OPS_PER_APPLY_BATCH,
+            MAX_SERIALIZED_OP_BYTES,
+        ) {
             Ok(v) => v,
             Err(_) => return -1,
         };
@@ -1126,7 +1175,8 @@ pub unsafe extern "C" fn securelegion_crdt_apply_ops(
         })
         .to_string();
         write_bytes_with_len(result_json_out, result_json_len, json.as_bytes())
-    })).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -1183,18 +1233,32 @@ pub unsafe extern "C" fn securelegion_crdt_create_op(
             None => return -1,
         };
 
-        let lamport = if otype == OpType::GroupCreate { 1 } else { next_lamport(&gid, state) };
+        let lamport = if otype == OpType::GroupCreate {
+            1
+        } else {
+            next_lamport(&gid, state)
+        };
         let op_nonce: u64 = rand::random();
 
         let envelope = match otype {
             OpType::GroupCreate => {
                 let group_name = params["group_name"].as_str().unwrap_or("").to_string();
-                let secret = B64.decode(params["encrypted_group_secret_b64"].as_str().unwrap_or("")).unwrap_or_default();
-                let payload = GroupCreatePayload { group_name, encrypted_group_secret: secret };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                let secret = B64
+                    .decode(params["encrypted_group_secret_b64"].as_str().unwrap_or(""))
+                    .unwrap_or_default();
+                let payload = GroupCreatePayload {
+                    group_name,
+                    encrypted_group_secret: secret,
+                };
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MemberInvite => {
-                let invited_pubkey = match hex_to_32(params["invited_pubkey_hex"].as_str().unwrap_or(""), "invited_pubkey") {
+                let invited_pubkey = match hex_to_32(
+                    params["invited_pubkey_hex"].as_str().unwrap_or(""),
+                    "invited_pubkey",
+                ) {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
@@ -1202,35 +1266,60 @@ pub unsafe extern "C" fn securelegion_crdt_create_op(
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
-                let secret = B64.decode(params["encrypted_group_secret_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let secret = B64
+                    .decode(params["encrypted_group_secret_b64"].as_str().unwrap_or(""))
+                    .unwrap_or_default();
                 let invited_device_id = DeviceID::from_pubkey(&invited_pubkey);
-                let payload = MemberInvitePayload { invited_device_id, invited_pubkey, role, encrypted_group_secret: secret };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                let payload = MemberInvitePayload {
+                    invited_device_id,
+                    invited_pubkey,
+                    role,
+                    encrypted_group_secret: secret,
+                };
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MemberAccept => {
-                let invite_op_id = match OpID::from_hex(params["invite_op_id_hex"].as_str().unwrap_or("")) {
-                    Ok(v) => v,
-                    Err(_) => return -1,
-                };
+                let invite_op_id =
+                    match OpID::from_hex(params["invite_op_id_hex"].as_str().unwrap_or("")) {
+                        Ok(v) => v,
+                        Err(_) => return -1,
+                    };
                 let payload = MemberAcceptPayload { invite_op_id };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MemberRemove => {
-                let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
+                let target_pk = match hex_to_32(
+                    params["target_pubkey_hex"].as_str().unwrap_or(""),
+                    "target_pubkey",
+                ) {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
-                let reason = match parse_remove_reason(params["reason"].as_str().unwrap_or("Kick")) {
+                let reason = match parse_remove_reason(params["reason"].as_str().unwrap_or("Kick"))
+                {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
                 let target_device_id = DeviceID::from_pubkey(&target_pk);
                 let ban = params["ban"].as_bool().unwrap_or(false);
-                let payload = MemberRemovePayload { target_device_id, reason, ban };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                let payload = MemberRemovePayload {
+                    target_device_id,
+                    reason,
+                    ban,
+                };
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::RoleSet => {
-                let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
+                let target_pk = match hex_to_32(
+                    params["target_pubkey_hex"].as_str().unwrap_or(""),
+                    "target_pubkey",
+                ) {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
@@ -1240,7 +1329,9 @@ pub unsafe extern "C" fn securelegion_crdt_create_op(
                 };
                 let target_device_id = DeviceID::from_pubkey(&target_pk);
                 let admin_rights = params.get("admin_rights").and_then(|ar| {
-                    if ar.is_null() || !ar.is_object() { return None; }
+                    if ar.is_null() || !ar.is_object() {
+                        return None;
+                    }
                     Some(AdminRights {
                         can_invite: ar["can_invite"].as_bool().unwrap_or(false),
                         can_remove: ar["can_remove"].as_bool().unwrap_or(false),
@@ -1251,72 +1342,117 @@ pub unsafe extern "C" fn securelegion_crdt_create_op(
                     })
                 });
                 let custom_title = params["custom_title"].as_str().map(|s| s.to_string());
-                let payload = RoleSetPayload { target_device_id, new_role, admin_rights, custom_title };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                let payload = RoleSetPayload {
+                    target_device_id,
+                    new_role,
+                    admin_rights,
+                    custom_title,
+                };
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MsgAdd => {
                 let msg_id = generate_msg_id(&author_device, lamport, op_nonce);
-                let ciphertext = B64.decode(params["ciphertext_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let ciphertext = B64
+                    .decode(params["ciphertext_b64"].as_str().unwrap_or(""))
+                    .unwrap_or_default();
                 let nonce = match b64_to_24(params["nonce_b64"].as_str().unwrap_or(""), "nonce") {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
-                let payload = MsgAddPayload { msg_id, ciphertext, nonce };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                let payload = MsgAddPayload {
+                    msg_id,
+                    ciphertext,
+                    nonce,
+                };
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MsgEdit => {
-                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
+                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id")
+                {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
-                let new_ciphertext = B64.decode(params["new_ciphertext_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let new_ciphertext = B64
+                    .decode(params["new_ciphertext_b64"].as_str().unwrap_or(""))
+                    .unwrap_or_default();
                 let nonce = match b64_to_24(params["nonce_b64"].as_str().unwrap_or(""), "nonce") {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
-                let payload = MsgEditPayload { msg_id, new_ciphertext, nonce };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                let payload = MsgEditPayload {
+                    msg_id,
+                    new_ciphertext,
+                    nonce,
+                };
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MsgDelete => {
-                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
+                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id")
+                {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
                 let payload = MsgDeletePayload { msg_id };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::ReactionSet => {
-                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
+                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id")
+                {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
                 let emoji = params["emoji"].as_str().unwrap_or("").to_string();
                 let present = params["present"].as_bool().unwrap_or(true);
-                let payload = ReactionSetPayload { msg_id, emoji, present };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                let payload = ReactionSetPayload {
+                    msg_id,
+                    emoji,
+                    present,
+                };
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MetadataSet => {
                 let key = match parse_metadata_key(params["key"].as_str().unwrap_or("")) {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
-                let value = B64.decode(params["value_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let value = B64
+                    .decode(params["value_b64"].as_str().unwrap_or(""))
+                    .unwrap_or_default();
                 let payload = MetadataSetPayload { key, value };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::MemberUnban => {
-                let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
+                let target_pk = match hex_to_32(
+                    params["target_pubkey_hex"].as_str().unwrap_or(""),
+                    "target_pubkey",
+                ) {
                     Ok(v) => v,
                     Err(_) => return -1,
                 };
                 let target_device_id = DeviceID::from_pubkey(&target_pk);
                 let payload = MemberUnbanPayload { target_device_id };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
             OpType::GroupDelete => {
                 let reason = params["reason"].as_str().map(|s| s.to_string());
                 let payload = GroupDeletePayload { reason };
-                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+                OpEnvelope::create_signed(
+                    gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key,
+                )
             }
         };
 
@@ -1348,7 +1484,8 @@ pub unsafe extern "C" fn securelegion_crdt_create_op(
             json["msg_id_hex"] = serde_json::Value::String(hex::encode(msg_id));
         }
         write_bytes_with_len(result_out, result_len, json.to_string().as_bytes())
-    })).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -1477,11 +1614,13 @@ pub unsafe extern "C" fn securelegion_crdt_query(
 /// Swift uses this to match the author field returned by CRDT queries.
 #[no_mangle]
 pub unsafe extern "C" fn securelegion_device_id_from_pubkey(
-    pubkey: *const u8,       // 32-byte Ed25519 public key
-    out_buf: *mut u8,        // buffer for hex string output
-    out_len: *mut u32,       // set to actual length written
+    pubkey: *const u8, // 32-byte Ed25519 public key
+    out_buf: *mut u8,  // buffer for hex string output
+    out_len: *mut u32, // set to actual length written
 ) -> i32 {
-    if pubkey.is_null() || out_buf.is_null() || out_len.is_null() { return -1; }
+    if pubkey.is_null() || out_buf.is_null() || out_len.is_null() {
+        return -1;
+    }
     let pk: [u8; 32] = {
         let mut buf = [0u8; 32];
         std::ptr::copy_nonoverlapping(pubkey, buf.as_mut_ptr(), 32);
@@ -1490,7 +1629,9 @@ pub unsafe extern "C" fn securelegion_device_id_from_pubkey(
     let did = DeviceID::from_pubkey(&pk);
     let hex_str = did.to_hex();
     let hex_bytes = hex_str.as_bytes();
-    if hex_bytes.len() > 64 { return -1; }
+    if hex_bytes.len() > 64 {
+        return -1;
+    }
     std::ptr::copy_nonoverlapping(hex_bytes.as_ptr(), out_buf, hex_bytes.len());
     *out_len = hex_bytes.len() as u32;
     0
@@ -1503,7 +1644,9 @@ pub unsafe extern "C" fn securelegion_device_id_from_pubkey(
 /// Returns 0 on success, -1 on failure.
 #[no_mangle]
 pub extern "C" fn securelegion_arti_init(data_dir: *const c_char) -> i32 {
-    if data_dir.is_null() { return -1; }
+    if data_dir.is_null() {
+        return -1;
+    }
     let data_dir_str = match unsafe { CStr::from_ptr(data_dir) }.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return -1,
@@ -1529,6 +1672,43 @@ pub extern "C" fn securelegion_arti_is_ready() -> bool {
     crate::network::arti::is_arti_ready()
 }
 
+/// Get messaging HS publisher status for the in-process Arti client.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_get_hs_publisher_status(
+    out_buf: *mut u8,
+    out_len: *mut u32,
+) -> i32 {
+    if out_buf.is_null() || out_len.is_null() {
+        return -1;
+    }
+    let status = crate::network::arti::get_hs_publisher_status();
+    unsafe { write_bytes_with_len(out_buf, out_len, status.as_bytes()) }
+}
+
+/// Get listener heartbeat timestamp (epoch millis).
+#[no_mangle]
+pub extern "C" fn securelegion_arti_get_last_listener_heartbeat() -> u64 {
+    crate::network::tor::get_last_listener_heartbeat()
+}
+
+/// Get HS loop heartbeat timestamp (epoch millis).
+#[no_mangle]
+pub extern "C" fn securelegion_arti_get_last_hs_loop_heartbeat() -> u64 {
+    crate::network::tor::get_last_hs_loop_heartbeat()
+}
+
+/// Get HS accept heartbeat timestamp (epoch millis).
+#[no_mangle]
+pub extern "C" fn securelegion_arti_get_last_hs_accept_heartbeat() -> u64 {
+    crate::network::tor::get_last_hs_accept_heartbeat()
+}
+
+/// Get last proof timestamp (epoch millis).
+#[no_mangle]
+pub extern "C" fn securelegion_arti_get_last_tor_proof_ms() -> u64 {
+    crate::network::tor::get_last_tor_proof_ms()
+}
+
 /// High-level atomic send: connect -> write_message -> optionally read ACK -> close.
 /// Returns: 0=success, -1=not ready, -2=connect failed, -3=write failed.
 /// ACK read failure is not a send failure: the recipient may already have stored
@@ -1543,7 +1723,9 @@ pub unsafe extern "C" fn securelegion_arti_send_to_onion(
     ack_out: *mut u8,
     ack_len: *mut u32,
 ) -> i32 {
-    if onion_address.is_null() || payload.is_null() { return -1; }
+    if onion_address.is_null() || payload.is_null() {
+        return -1;
+    }
     let onion_str = match CStr::from_ptr(onion_address).to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return -1,
@@ -1557,33 +1739,57 @@ pub unsafe extern "C" fn securelegion_arti_send_to_onion(
 
     RUNTIME.block_on(async {
         // Connect
-        let mut stream = match crate::network::arti::arti_connect_to_onion(&onion_str, port).await {
-            Ok(s) => s,
-            Err(e) => {
+        let mut stream = match tokio::time::timeout(
+            std::time::Duration::from_millis(IOS_ARTI_DIRECT_CONNECT_TIMEOUT_MS),
+            crate::network::arti::arti_connect_to_onion(&onion_str, port),
+        ).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
                 log::error!("arti_send_to_onion: connect failed: {}", e);
                 return -2;
-            }
+            },
+            Err(_) => {
+                log::error!("arti_send_to_onion: connect timed out after {}ms", IOS_ARTI_DIRECT_CONNECT_TIMEOUT_MS);
+                return -2;
+            },
         };
 
         // Write message (length-prefixed)
-        if let Err(e) = stream.write_message(&payload_vec).await {
-            log::error!("arti_send_to_onion: write failed: {}", e);
-            return -3;
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(IOS_ARTI_DIRECT_WRITE_TIMEOUT_MS),
+            stream.write_message(&payload_vec),
+        ).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                log::error!("arti_send_to_onion: write failed: {}", e);
+                return -3;
+            },
+            Err(_) => {
+                log::error!("arti_send_to_onion: write timed out after {}ms", IOS_ARTI_DIRECT_WRITE_TIMEOUT_MS);
+                return -3;
+            },
         }
 
         // Optionally read ACK response
         if read_ack && !ack_out.is_null() && !ack_len.is_null() {
-            match stream.read_message().await {
-                Ok(ack_data) => {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(IOS_ARTI_DIRECT_ACK_TIMEOUT_MS),
+                stream.read_message(),
+            ).await {
+                Ok(Ok(ack_data)) => {
                     let max_len = *ack_len as usize;
                     let copy_len = ack_data.len().min(max_len);
                     std::ptr::copy_nonoverlapping(ack_data.as_ptr(), ack_out, copy_len);
                     *ack_len = copy_len as u32;
-                }
-                Err(e) => {
+                },
+                Ok(Err(e)) => {
                     log::warn!("arti_send_to_onion: ACK read failed after write succeeded: {}", e);
                     *ack_len = 0;
-                }
+                },
+                Err(_) => {
+                    log::warn!("arti_send_to_onion: ACK read timed out after {}ms; treating write as success", IOS_ARTI_DIRECT_ACK_TIMEOUT_MS);
+                    *ack_len = 0;
+                },
             }
         } else if !ack_len.is_null() {
             *ack_len = 0;
@@ -1593,8 +1799,332 @@ pub unsafe extern "C" fn securelegion_arti_send_to_onion(
     })
 }
 
+/// Atomic tracked exchange on one Arti connection:
+/// connect -> write PING -> read PONG -> write MESSAGE -> read ACK -> close.
+/// Returns:
+///   0 success
+///  -1 invalid args / arti not ready
+///  -2 connect failed
+///  -3 ping write failed
+///  -4 pong read failed / timeout
+///  -5 message write failed
+///  -6 ack read failed / timeout
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_arti_tracked_exchange(
+    onion_address: *const c_char,
+    port: u16,
+    ping_payload: *const u8,
+    ping_payload_len: u32,
+    message_payload: *const u8,
+    message_payload_len: u32,
+    pong_out: *mut u8,
+    pong_len: *mut u32,
+    ack_out: *mut u8,
+    ack_len: *mut u32,
+) -> i32 {
+    if onion_address.is_null()
+        || ping_payload.is_null()
+        || message_payload.is_null()
+        || pong_out.is_null()
+        || pong_len.is_null()
+        || ack_out.is_null()
+        || ack_len.is_null()
+    {
+        return -1;
+    }
+    if !crate::network::arti::is_arti_ready() {
+        return -1;
+    }
+
+    let onion_str = match CStr::from_ptr(onion_address).to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return -1,
+    };
+    let ping_vec = std::slice::from_raw_parts(ping_payload, ping_payload_len as usize).to_vec();
+    let message_vec =
+        std::slice::from_raw_parts(message_payload, message_payload_len as usize).to_vec();
+
+    RUNTIME.block_on(async {
+        let mut stream = match crate::network::arti::arti_connect_to_onion(&onion_str, port).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("arti_tracked_exchange: connect failed: {}", e);
+                return -2;
+            }
+        };
+
+        if let Err(e) = stream.write_message(&ping_vec).await {
+            log::error!("arti_tracked_exchange: ping write failed: {}", e);
+            return -3;
+        }
+
+        let pong_data = match tokio::time::timeout(
+            std::time::Duration::from_millis(60_000),
+            stream.read_message(),
+        )
+        .await
+        {
+            Ok(Ok(data)) => data,
+            Ok(Err(e)) => {
+                log::warn!(
+                    "arti_tracked_exchange: pong read failed after ping write: {}",
+                    e
+                );
+                return -4;
+            }
+            Err(_) => {
+                log::warn!("arti_tracked_exchange: pong read timed out after 60000ms");
+                return -4;
+            }
+        };
+
+        let pong_rc = write_bytes_with_len(pong_out, pong_len, &pong_data);
+        if pong_rc != 0 {
+            return pong_rc;
+        }
+
+        if let Err(e) = stream.write_message(&message_vec).await {
+            log::error!("arti_tracked_exchange: message write failed: {}", e);
+            return -5;
+        }
+
+        let ack_data = match tokio::time::timeout(
+            std::time::Duration::from_millis(30_000),
+            stream.read_message(),
+        )
+        .await
+        {
+            Ok(Ok(data)) => data,
+            Ok(Err(e)) => {
+                log::warn!(
+                    "arti_tracked_exchange: ack read failed after message write: {}",
+                    e
+                );
+                return -6;
+            }
+            Err(_) => {
+                log::warn!("arti_tracked_exchange: ack read timed out after 30000ms");
+                return -6;
+            }
+        };
+
+        write_bytes_with_len(ack_out, ack_len, &ack_data)
+    })
+}
+
 /// Shut down Arti and release all resources.
 #[no_mangle]
 pub extern "C" fn securelegion_arti_shutdown() {
     crate::network::arti::shutdown_arti();
+}
+
+/// Request fresh outbound Arti circuits without tearing down the client.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_send_newnym() -> bool {
+    if !crate::network::arti::is_arti_ready() {
+        return false;
+    }
+    crate::network::arti::send_newnym();
+    true
+}
+
+/// Lightweight outbound connect/close probe used before repeated-failure sends.
+/// Returns 0 on success, -1 on invalid args / arti not ready, -2 on connect failure or timeout.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_arti_preflight_connect(
+    onion_address: *const c_char,
+    port: u16,
+    timeout_ms: u32,
+    latency_ms_out: *mut u32,
+) -> i32 {
+    if onion_address.is_null() {
+        return -1;
+    }
+    let onion_str = match CStr::from_ptr(onion_address).to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return -1,
+    };
+
+    if !crate::network::arti::is_arti_ready() {
+        return -1;
+    }
+
+    let started = std::time::Instant::now();
+    let result = RUNTIME.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(timeout_ms.max(1) as u64),
+            crate::network::arti::arti_connect_to_onion(&onion_str, port),
+        )
+        .await
+    });
+
+    match result {
+        Ok(Ok(_stream)) => {
+            if !latency_ms_out.is_null() {
+                *latency_ms_out = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+            }
+            0
+        }
+        Ok(Err(e)) => {
+            log::warn!("arti_preflight_connect: connect failed: {}", e);
+            if !latency_ms_out.is_null() {
+                *latency_ms_out = 0;
+            }
+            -2
+        }
+        Err(_) => {
+            log::warn!("arti_preflight_connect: timed out after {}ms", timeout_ms.max(1));
+            if !latency_ms_out.is_null() {
+                *latency_ms_out = 0;
+            }
+            -2
+        }
+    }
+}
+
+/// Open a reusable outbound Arti stream to a peer onion.
+/// Returns a non-zero stream handle on success, 0 on failure.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_arti_open_stream(
+    onion_address: *const c_char,
+    port: u16,
+) -> u64 {
+    if onion_address.is_null() {
+        return 0;
+    }
+    let onion_str = match CStr::from_ptr(onion_address).to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return 0,
+    };
+
+    if !crate::network::arti::is_arti_ready() {
+        return 0;
+    }
+
+    let stream = match RUNTIME
+        .block_on(async { crate::network::arti::arti_connect_to_onion(&onion_str, port).await })
+    {
+        Ok(stream) => stream,
+        Err(e) => {
+            log::error!("arti_open_stream: connect failed: {}", e);
+            return 0;
+        }
+    };
+
+    let handle = NEXT_ARTI_STREAM_ID.fetch_add(1, Ordering::SeqCst);
+    let mut map = ARTI_STREAMS.lock().unwrap_or_else(|e| e.into_inner());
+    map.insert(handle, stream);
+    handle
+}
+
+/// Write one length-prefixed wire payload to an open Arti stream.
+/// Returns 0 on success, -1 on invalid handle/args, -2 on write failure.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_arti_write_stream(
+    stream_handle: u64,
+    payload: *const u8,
+    payload_len: u32,
+) -> i32 {
+    if stream_handle == 0 || payload.is_null() {
+        return -1;
+    }
+    let payload_vec = std::slice::from_raw_parts(payload, payload_len as usize).to_vec();
+    let mut stream = {
+        let mut map = ARTI_STREAMS.lock().unwrap_or_else(|e| e.into_inner());
+        match map.remove(&stream_handle) {
+            Some(stream) => stream,
+            None => return -1,
+        }
+    };
+
+    let result = RUNTIME.block_on(async { stream.write_message(&payload_vec).await });
+    match result {
+        Ok(()) => {
+            let mut map = ARTI_STREAMS.lock().unwrap_or_else(|e| e.into_inner());
+            map.insert(stream_handle, stream);
+            0
+        }
+        Err(e) => {
+            log::error!(
+                "arti_write_stream: write failed handle={}: {}",
+                stream_handle,
+                e
+            );
+            -2
+        }
+    }
+}
+
+/// Read one length-prefixed wire payload from an open Arti stream.
+/// Returns 0 on success, -1 on invalid handle/args, -2 on read failure, -3 on timeout.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_arti_read_stream(
+    stream_handle: u64,
+    timeout_ms: u32,
+    payload_out: *mut u8,
+    payload_len_out: *mut u32,
+) -> i32 {
+    if stream_handle == 0 || payload_out.is_null() || payload_len_out.is_null() {
+        return -1;
+    }
+    let mut stream = {
+        let mut map = ARTI_STREAMS.lock().unwrap_or_else(|e| e.into_inner());
+        match map.remove(&stream_handle) {
+            Some(stream) => stream,
+            None => return -1,
+        }
+    };
+
+    let read_result = RUNTIME.block_on(async {
+        if timeout_ms == 0 {
+            stream
+                .read_message()
+                .await
+                .map_err(|e| e.to_string())
+                .map(Some)
+        } else {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(timeout_ms as u64),
+                stream.read_message(),
+            )
+            .await
+            {
+                Ok(Ok(data)) => Ok(Some(data)),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Ok(None),
+            }
+        }
+    });
+
+    match read_result {
+        Ok(Some(data)) => {
+            let rc = write_bytes_with_len(payload_out, payload_len_out, &data);
+            let mut map = ARTI_STREAMS.lock().unwrap_or_else(|e| e.into_inner());
+            map.insert(stream_handle, stream);
+            rc
+        }
+        Ok(None) => {
+            let mut map = ARTI_STREAMS.lock().unwrap_or_else(|e| e.into_inner());
+            map.insert(stream_handle, stream);
+            -3
+        }
+        Err(e) => {
+            log::error!(
+                "arti_read_stream: read failed handle={}: {}",
+                stream_handle,
+                e
+            );
+            -2
+        }
+    }
+}
+
+/// Close and drop an open Arti stream handle.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_close_stream(stream_handle: u64) {
+    if stream_handle == 0 {
+        return;
+    }
+    let mut map = ARTI_STREAMS.lock().unwrap_or_else(|e| e.into_inner());
+    map.remove(&stream_handle);
 }
