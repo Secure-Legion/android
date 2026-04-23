@@ -25,7 +25,7 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 3
+        versionCode = 4
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -53,6 +53,8 @@ android {
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Master\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
+            // Crust/IPFS mailbox — code retained for future use. No live caller today.
+            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "true")
         }
 
         create("solanadapp") {
@@ -72,6 +74,7 @@ android {
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Solana dApp\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
+            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "true")
         }
 
 
@@ -93,6 +96,7 @@ android {
             buildConfigField("String", "FLAVOR_NAME", "\"Starnet Hackathon\"")
             buildConfigField("String", "HACKATHON_NAME", "\"Starnet\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
+            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "true")
         }
 
         create("googleplay") {
@@ -100,7 +104,11 @@ android {
             applicationId = "org.securelegion"
 
             buildConfigField("boolean", "ENABLE_TOR", "true")
-            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            // Voice CALLING only — not voice messages. Voice messages use MediaRecorder
+            // (AAC) via utils/VoiceRecorder.kt and remain available on this flavor.
+            // Voice calling is hard-disabled at ChatActivity.kt:799 across all flavors;
+            // this flag documents intent for a future flavor-gated enablement.
+            buildConfigField("boolean", "ENABLE_VOICE", "false")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
             buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "false")
@@ -111,6 +119,8 @@ android {
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Google Play\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
+            // Play build forbids clearnet 3rd-party API calls; Crust/IPFS stays off here.
+            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
         }
 
         create("googleplaydemo") {
@@ -132,6 +142,7 @@ android {
             buildConfigField("String", "DEMO_USERNAME", "\"google_reviewer\"")
             buildConfigField("String", "DEMO_PASSWORD", "\"demo123!\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
+            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
         }
 
         create("fdroid") {
@@ -139,18 +150,23 @@ android {
             applicationId = "com.securelegion.fdroid"
             versionNameSuffix = "-fdroid"
 
+            // Mirrors the googleplay flavor's feature set. Only identity fields
+            // (applicationId, versionNameSuffix, FLAVOR_NAME) and any future
+            // F-Droid-specific divergences differ.
             buildConfigField("boolean", "ENABLE_TOR", "true")
-            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            // Voice CALLING only — voice messages (AAC via MediaRecorder) still work.
+            buildConfigField("boolean", "ENABLE_VOICE", "false")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
-            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "false")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
-            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "true")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "false")
             buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"F-Droid\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
+            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
         }
     }
 
