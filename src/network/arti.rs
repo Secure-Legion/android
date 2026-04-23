@@ -23,7 +23,7 @@ use tor_cell::relaycell::msg::Connected;
 use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 use tor_proto::client::stream::ClientStreamCtrl;
-use tor_linkspec::HasRelayIds;
+use tor_linkspec::{HasAddrs, HasRelayIds};
 use tor_netdir::{NetDirProvider, Timeliness};
 use tor_geoip::HasCountryCode;
 
@@ -401,6 +401,9 @@ struct HopInfo {
     nickname: Option<String>,
     /// ISO-3166 two-letter country code from Arti's embedded GeoIP DB.
     country: Option<String>,
+    /// First ORPort IP address (prefer IPv4 for display parity with iOS).
+    /// Always populated for real relay hops; `None` only for virtual hops.
+    ip: Option<String>,
 }
 
 /// Path of the most recent successful `client.connect()`. Displayed on the
@@ -481,6 +484,19 @@ fn capture_circuit_path(
             .map(|id| id.as_hex_upper())
             .unwrap_or_default();
 
+        // ORPort IP — prefer IPv4 for display parity with iOS, fall back to the
+        // first address of any kind so we still surface *something* for v6-only
+        // relays. Public info (lives in the consensus), no privacy leak to show it.
+        let ip = {
+            let mut v4: Option<String> = None;
+            let mut any: Option<String> = None;
+            for a in ct.addrs() {
+                if any.is_none() { any = Some(a.ip().to_string()); }
+                if a.is_ipv4() { v4 = Some(a.ip().to_string()); break; }
+            }
+            v4.or(any)
+        };
+
         let (nickname, country) = if let Some(nd) = netdir.as_ref() {
             let relay = nd.by_ids(ct);
             let nick = relay.as_ref().map(|r| r.rs().nickname().to_string());
@@ -498,6 +514,7 @@ fn capture_circuit_path(
             fp,
             nickname,
             country,
+            ip,
         });
     }
 
@@ -669,13 +686,18 @@ pub async fn create_onion_service(
     // We box the RendRequest stream because the two launch functions return different
     // opaque `impl Stream` types.
     //
-    // Retry up to 3x on StateDirectoryInaccessible / AlreadyLocked: Arti's async
-    // teardown after a prior stop_arti_listener may still be releasing the keystore
-    // file lock. The outer 2s Thread.sleep on the Kotlin side isn't always enough.
+    // Retry on StateDirectoryInaccessible / AlreadyLocked: Arti's async teardown
+    // after a prior stop_arti_listener (which drops RUNNING_HS) releases the keystore
+    // file lock asynchronously and can take several seconds. If we give up early, the
+    // listener restart cycle livelocks — see the TorService watchdog at
+    // TorService.kt:855. 8 × 1.5s gives us a ~10s window; empirically Arti completes
+    // cleanup well within that.
+    const MAX_LAUNCH_ATTEMPTS: u32 = 8;
+    const LAUNCH_RETRY_DELAY_MS: u64 = 1500;
     type HsTuple = (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>);
     let mut final_err: Option<String> = None;
     let mut launched: Option<HsTuple> = None;
-    for attempt in 1..=3u32 {
+    for attempt in 1..=MAX_LAUNCH_ATTEMPTS {
         // Rebuild keypair + config each attempt — both are consumed by launch.
         let ed_keypair = tor_llcrypto::pk::ed25519::Keypair::from_bytes(ed25519_seed);
         let expanded = tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&ed_keypair);
@@ -695,9 +717,10 @@ pub async fn create_onion_service(
             Ok(None) => return Err("Onion service was disabled in config".into()),
             Err(e) => {
                 let es = format!("{:?}", e);
-                if es.contains("AlreadyLocked") && attempt < 3 {
-                    log::warn!("Arti: messaging HS launch attempt {}/3 hit AlreadyLocked; waiting 1s for keystore release", attempt);
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if es.contains("AlreadyLocked") && attempt < MAX_LAUNCH_ATTEMPTS {
+                    log::warn!("Arti: messaging HS launch attempt {}/{} hit AlreadyLocked; waiting {}ms for keystore release",
+                        attempt, MAX_LAUNCH_ATTEMPTS, LAUNCH_RETRY_DELAY_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(LAUNCH_RETRY_DELAY_MS)).await;
                     continue;
                 }
                 // Not AlreadyLocked (or retries exhausted) — try the non-hsid path
@@ -1438,11 +1461,13 @@ pub async fn create_friend_request_onion_service(
     // Deterministic nickname tied to FR onion to avoid stale keystore alias/key mismatch.
     let nickname_str = format!("sl-fr-{}", &expected_addr[..12]);
 
-    // Retry up to 3x on AlreadyLocked — see create_onion_service for rationale.
+    // Retry on AlreadyLocked — see create_onion_service for rationale.
+    const FR_MAX_LAUNCH_ATTEMPTS: u32 = 8;
+    const FR_LAUNCH_RETRY_DELAY_MS: u64 = 1500;
     type FrHsTuple = (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>);
     let mut final_err: Option<String> = None;
     let mut launched: Option<FrHsTuple> = None;
-    for attempt in 1..=3u32 {
+    for attempt in 1..=FR_MAX_LAUNCH_ATTEMPTS {
         let ed_keypair = tor_llcrypto::pk::ed25519::Keypair::from_bytes(ed25519_seed);
         let expanded = tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&ed_keypair);
         let hsid_keypair = HsIdKeypair::from(expanded);
@@ -1461,9 +1486,10 @@ pub async fn create_friend_request_onion_service(
             Ok(None) => return Err("FR onion service was disabled in config".into()),
             Err(e) => {
                 let es = format!("{:?}", e);
-                if es.contains("AlreadyLocked") && attempt < 3 {
-                    log::warn!("Arti: FR HS launch attempt {}/3 hit AlreadyLocked; waiting 1s for keystore release", attempt);
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if es.contains("AlreadyLocked") && attempt < FR_MAX_LAUNCH_ATTEMPTS {
+                    log::warn!("Arti: FR HS launch attempt {}/{} hit AlreadyLocked; waiting {}ms for keystore release",
+                        attempt, FR_MAX_LAUNCH_ATTEMPTS, FR_LAUNCH_RETRY_DELAY_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(FR_LAUNCH_RETRY_DELAY_MS)).await;
                     continue;
                 }
                 log::warn!("FR launch_onion_service_with_hsid failed ({}), trying launch_onion_service", e);
