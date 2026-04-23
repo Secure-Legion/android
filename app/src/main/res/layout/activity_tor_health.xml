@@ -45,7 +45,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Tor Health"
+            android:text="Secure Network"
             android:textSize="24sp"
             android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
@@ -76,7 +76,7 @@
             android:paddingTop="16dp"
             android:paddingBottom="24dp">
 
-            <!-- Network status (single collapsed line — shows "Live" when receivable and 100% bootstrapped) -->
+            <!-- Network — status dot reflects live connectivity; toggle lets the user disable Tor -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -84,9 +84,9 @@
                 android:gravity="center_vertical"
                 android:background="@drawable/settings_box_bg"
                 android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:paddingTop="14dp"
-                android:paddingBottom="14dp">
+                android:paddingEnd="10dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp">
 
                 <View
                     android:id="@+id/networkStatusIndicator"
@@ -104,14 +104,13 @@
                     android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium" />
 
-                <TextView
-                    android:id="@+id/networkStatusText"
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/networkToggle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Checking..."
-                    android:textSize="14sp"
-                    android:textColor="@color/text_settings"
-                    android:fontFamily="@font/poppins_medium" />
+                    android:checked="true"
+                    app:thumbTint="@color/input_border"
+                    app:trackTint="@color/lock_icon_gray" />
 
             </LinearLayout>
 

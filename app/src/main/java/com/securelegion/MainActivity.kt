@@ -344,27 +344,15 @@ class MainActivity : BaseActivity() {
                 Log.d("MainActivity", "Total unread messages: $unreadCount")
 
                 withContext(Dispatchers.Main) {
-                    // Update notification badge
+                    // Launcher-icon badge counts are already driven by the per-message
+                    // notifications posted from TorService / DownloadMessageService —
+                    // a separate summary ("Secure Legion N unread messages") duplicated
+                    // those and was the silent notification users were seeing.
+                    // We still cancel the legacy 998 id here so stale copies from
+                    // previous installs disappear on startup.
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
-
-                        if (unreadCount > 0) {
-                            // Create a simple badge notification
-                            val notification = androidx.core.app.NotificationCompat.Builder(this@MainActivity, "badge_channel")
-                                .setSmallIcon(R.drawable.ic_shield)
-                                .setContentTitle("Secure Legion")
-                                .setContentText("$unreadCount unread message${if (unreadCount > 1) "s" else ""}")
-                                .setNumber(unreadCount)
-                                .setBadgeIconType(androidx.core.app.NotificationCompat.BADGE_ICON_SMALL)
-                                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
-                                .setAutoCancel(true)
-                                .build()
-
-                            notificationManager.notify(998, notification) // Badge notification (was 999, conflicted with pending messages)
-                        } else {
-                            // Clear badge
-                            notificationManager.cancel(998)
-                        }
+                        getSystemService(android.app.NotificationManager::class.java)
+                            ?.cancel(998)
                     }
                 }
             } catch (e: Exception) {
@@ -699,6 +687,10 @@ class MainActivity : BaseActivity() {
         // Notify TorService that app is in foreground (fast bandwidth updates)
         com.securelegion.services.TorService.setForegroundState(true)
 
+        // Refresh onboarding carousel so the "Connect to Network" helper card
+        // appears/disappears as the user toggles Secure Network on the settings page.
+        setupOnboardingCarousel()
+
         // Reload data when returning to MainActivity (receiver stays registered)
         if (currentTab == "messages") {
             setupChatList()
@@ -829,29 +821,53 @@ class MainActivity : BaseActivity() {
         val prefs = getSharedPreferences("onboarding", MODE_PRIVATE)
         container.removeAllViews()
 
+        val inflater = layoutInflater
+        var visibleCount = 0
+
+        // Connect to Network: shown only when the user has toggled Secure Network OFF.
+        // Cannot be dismissed manually — it auto-disappears when Tor is re-enabled, which
+        // we catch by refreshing this carousel in onResume() after the user returns from
+        // the Secure Network page.
+        if (com.securelegion.services.TorService.isUserDisabled(this)) {
+            val view = inflater.inflate(R.layout.item_onboarding_card, container, false)
+            view.findViewById<TextView>(R.id.cardNumber).text = ""
+            view.findViewById<TextView>(R.id.cardLabel).text = "Connect to Network"
+            view.findViewById<ImageView>(R.id.cardIcon).setImageResource(R.drawable.ic_tor)
+            view.setOnClickListener {
+                val i = Intent(this, TorHealthActivity::class.java)
+                startActivity(i)
+            }
+            view.findViewById<View>(R.id.cardDismiss).visibility = View.GONE
+            container.addView(view)
+            visibleCount++
+        }
+
         data class OnboardingCard(val num: String, val label: String, val icon: Int, val action: () -> Unit)
         val cards = listOf(
             OnboardingCard("1.", "Invite friends", R.drawable.ic_paper_plane) {
-                // Open profile page to get QR code to share
-                val i = Intent(this, WalletIdentityActivity::class.java)
-                startActivity(i)
+                // Fire Android's native share sheet with an invite link to our download page
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "Let's switch to Secure: https://securelegion.org/download")
+                }
+                startActivity(Intent.createChooser(shareIntent, "Invite friends"))
             },
             OnboardingCard("2.", "Add profile photo", R.drawable.ic_camera) {
                 val i = Intent(this, WalletIdentityActivity::class.java)
                 startActivity(i)
             },
             OnboardingCard("3.", "Set up security", R.drawable.ic_shield) {
-                val i = Intent(this, SettingsActivity::class.java)
+                val i = Intent(this, SecurityModeActivity::class.java)
                 startActivity(i)
             },
             OnboardingCard("4.", "Add a contact", R.drawable.ic_add_friend) {
-                val i = Intent(this, AddFriendActivity::class.java)
-                startActivity(i)
+                // Jump to the contacts tab and auto-open the add-contact sheet — the
+                // legacy AddFriendActivity (manual entry) is not the desired entry point.
+                showContactsTab()
+                showAddContactBottomSheet()
             }
         )
 
-        val inflater = layoutInflater
-        var visibleCount = 0
         for ((idx, card) in cards.withIndex()) {
             val key = "card_${idx}_dismissed"
             if (prefs.getBoolean(key, false)) continue
@@ -2059,10 +2075,12 @@ class MainActivity : BaseActivity() {
             startActivityWithSlideAnimation(intent)
         }
 
-        // Option 3: Share Invite — open share bottom sheet (QR or manual)
+        // Option 3: Share Invite — directly share the QR code via Android's share sheet.
+        // (The previous intermediate QR-or-manual sheet is gone; manual text sharing
+        // was removed because QR is the only supported flow now.)
         view.findViewById<View>(R.id.optionShareInvite).setOnClickListener {
             bottomSheet.dismiss()
-            showShareInviteBottomSheet()
+            shareInviteQrCode()
         }
 
         bottomSheet.show()
@@ -2150,80 +2168,6 @@ class MainActivity : BaseActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to share invite QR", e)
                 ThemedToast.show(this@MainActivity, "Failed to share QR code")
-            }
-        }
-    }
-
-    private fun showShareInviteBottomSheet() {
-        val bottomSheet = com.securelegion.utils.GlassBottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.bottom_sheet_share_invite, null)
-        bottomSheet.setContentView(view)
-
-        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-            ?.setBackgroundResource(android.R.color.transparent)
-        view.post {
-            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
-        }
-
-        view.findViewById<View>(R.id.optionShareQrCode).setOnClickListener {
-            bottomSheet.dismiss()
-            shareInviteQrCode()
-        }
-
-        view.findViewById<View>(R.id.optionShareManually).setOnClickListener {
-            bottomSheet.dismiss()
-            shareManualInfo()
-        }
-
-        bottomSheet.show()
-    }
-
-    private fun shareManualInfo() {
-        lifecycleScope.launch {
-            try {
-                val text = withContext(Dispatchers.Default) {
-                    val keyManager = KeyManager.getInstance(this@MainActivity)
-                    val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return@withContext null
-                    val pin = keyManager.getContactPin() ?: ""
-                    val username = keyManager.getUsername() ?: ""
-
-                    val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
-                    val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
-                    val rotationTimestamp = keyManager.getPinRotationTimestamp()
-                    val expiryMs = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
-                        rotationTimestamp + rotationIntervalMs
-                    } else 0L
-
-                    buildString {
-                        append("Add me on Secure!")
-                        if (username.isNotEmpty()) append("\nUsername: $username")
-                        append("\nAddress: $friendRequestOnion")
-                        if (pin.isNotEmpty()) append("\nPIN: $pin")
-                        if (expiryMs > 0) {
-                            val remainingMs = expiryMs - System.currentTimeMillis()
-                            if (remainingMs > 0) {
-                                val hours = remainingMs / (60 * 60 * 1000)
-                                val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
-                                append("\nExpires in: ${hours}h ${minutes}m")
-                            }
-                        }
-                    }
-                }
-
-                if (text == null) {
-                    ThemedToast.show(this@MainActivity, "Failed to load identity info")
-                    return@launch
-                }
-
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, text)
-                }
-                startActivity(Intent.createChooser(shareIntent, "Share Invite"))
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to share manual info", e)
-                ThemedToast.show(this@MainActivity, "Failed to share")
             }
         }
     }

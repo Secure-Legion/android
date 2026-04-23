@@ -1547,6 +1547,26 @@ class TorService : Service() {
             }
         }
 
+        // SharedPreferences-backed kill switch for the Secure Network page. When true,
+        // BootReceiver + LockActivity auto-start paths skip starting TorService so the
+        // user's opt-out survives restarts, reboots, and unlock flows.
+        private const val NETWORK_PREFS = "network_prefs"
+        private const val PREF_TOR_DISABLED = "tor_disabled"
+
+        fun isUserDisabled(context: Context): Boolean {
+            return context
+                .getSharedPreferences(NETWORK_PREFS, Context.MODE_PRIVATE)
+                .getBoolean(PREF_TOR_DISABLED, false)
+        }
+
+        fun setUserDisabled(context: Context, disabled: Boolean) {
+            context
+                .getSharedPreferences(NETWORK_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_TOR_DISABLED, disabled)
+                .apply()
+        }
+
         /**
          * Stop the Tor service
          */
@@ -7564,30 +7584,15 @@ class TorService : Service() {
             0
         }
 
-        // Only show notification if there are pending messages
+        // Per-message notifications (see showMessageNotification + DownloadMessageService
+        // success notifications) already cover the "you have unread messages" case —
+        // posting a separate "You have N pending messages" summary at id 999 duplicated
+        // them and read as redundant noise. We still cancel the legacy id here so any
+        // stale copy from a previous install clears out.
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.cancel(999)
         if (pendingCount > 0) {
-            // Build notification
-            val notification = NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_shield)
-                .setContentTitle("New Message")
-                .setContentText("You have $pendingCount pending ${if (pendingCount == 1) "message" else "messages"}")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                .setAutoCancel(true)
-                .setContentIntent(openAppPendingIntent)
-                .setNumber(pendingCount) // Shows badge on app icon
-                .build()
-
-            // Show notification
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.notify(999, notification) // Use fixed ID so it updates instead of creating multiple
-
-            Log.i(TAG, "New message notification shown ($pendingCount pending)")
-        } else {
-            // Cancel notification if no pending messages
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.cancel(999)
-            Log.d(TAG, "No pending messages - notification cancelled")
+            Log.d(TAG, "Pending messages: $pendingCount (no summary notification posted)")
         }
     }
 
@@ -8243,8 +8248,8 @@ class TorService : Service() {
         )
 
         // Detect "connected" states explicitly — everything else is a problem state.
-        // Safer than keyword matching: any new problem status is automatically caught
-        // instead of silently falling through to the "Connected" bandwidth display.
+        // Tor state machine values are unchanged; only the user-facing strings are
+        // rebranded below as "Secure …" so users don't see the word "Tor" by default.
         val isConnectedState = status == "Connected to Tor" ||
                                status == "Connected to the Tor Network"
 
@@ -8254,13 +8259,13 @@ class TorService : Service() {
             .setContentIntent(pendingIntent)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
 
-        // Problem states show status text; connected state shows bandwidth stats
+        // Problem states: title shows Secure Disconnected with a tap-to-connect hint.
         if (!isConnectedState) {
-            builder.setContentTitle("Secure Legion")
-                   .setContentText(status)
+            builder.setContentTitle("Secure Disconnected")
+                   .setContentText("Tap to connect")
                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         } else {
-            // Connected state - show bandwidth stats
+            // Connected state - show bandwidth stats under the Secure Connected title
             if (vpnActive) {
                 // VPN enabled - show combined stats
                 val messagingDown = formatBytes(currentDownloadSpeed)
@@ -8268,10 +8273,10 @@ class TorService : Service() {
                 val vpnDown = formatBytesTotal(vpnBytesReceived)
                 val vpnUp = formatBytesTotal(vpnBytesSent)
 
-                builder.setContentTitle("Secure Legion")
+                builder.setContentTitle("Secure Connected")
                        .setContentText("Messaging: ↓ $messagingDown ↑ $messagingUp\nVPN: ↓ $vpnDown ↑ $vpnUp")
                        .setStyle(NotificationCompat.BigTextStyle()
-                           .bigText("Messaging Tor: ↓ $messagingDown / ↑ $messagingUp\nDevice VPN: ↓ $vpnDown / ↑ $vpnUp"))
+                           .bigText("Messaging: ↓ $messagingDown / ↑ $messagingUp\nVPN: ↓ $vpnDown / ↑ $vpnUp"))
                        .setPriority(NotificationCompat.PRIORITY_MIN)
                        .setShowWhen(false)
                        .setSilent(true)
@@ -8280,7 +8285,7 @@ class TorService : Service() {
                 val downloadSpeed = formatBytes(currentDownloadSpeed)
                 val uploadSpeed = formatBytes(currentUploadSpeed)
 
-                builder.setContentTitle("Connected to the Tor Network")
+                builder.setContentTitle("Secure Connected")
                        .setContentText("↓ $downloadSpeed / ↑ $uploadSpeed")
                        .setPriority(NotificationCompat.PRIORITY_MIN)
                        .setShowWhen(false)

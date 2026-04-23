@@ -81,11 +81,15 @@ class BootReceiver : BroadcastReceiver() {
             // Show a visible notification that the app is restarting
             showBootNotification(context)
 
-            // 1. Start TorService (foreground service)
-            val torIntent = Intent(context, TorService::class.java)
-            torIntent.action = TorService.ACTION_START_TOR
-            context.startForegroundService(torIntent)
-            Log.i(TAG, "TorService started")
+            // 1. Start TorService (foreground service) — respect the user's Secure Network kill-switch
+            if (TorService.isUserDisabled(context)) {
+                Log.i(TAG, "TorService auto-start skipped — user disabled Tor on Secure Network page")
+            } else {
+                val torIntent = Intent(context, TorService::class.java)
+                torIntent.action = TorService.ACTION_START_TOR
+                context.startForegroundService(torIntent)
+                Log.i(TAG, "TorService started")
+            }
 
             // 2. Schedule MessageRetryWorker (periodic background task)
             MessageRetryWorker.schedule(context)
@@ -127,8 +131,8 @@ class BootReceiver : BroadcastReceiver() {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_shield)
-            .setContentTitle("Secure Legion")
-            .setContentText("Reconnecting to the Tor network...")
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText("Reconnecting...")
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)

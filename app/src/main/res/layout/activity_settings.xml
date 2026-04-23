@@ -435,7 +435,7 @@
 
             </LinearLayout>
 
-            <!-- Tor Health -->
+            <!-- Network (Tor Health + on/off toggle) -->
             <LinearLayout
                 android:id="@+id/torHealthItem"
                 android:layout_width="match_parent"
@@ -469,7 +469,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Tor Health"
+                    android:text="Network"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />
@@ -748,7 +748,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Tor VPN Settings"
+                    android:text="Tor VPN"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />

@@ -17,6 +17,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.services.TorVpnService
 import com.securelegion.utils.BiometricAuthHelper
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 
 class SettingsActivity : BaseActivity() {
@@ -32,8 +33,11 @@ class SettingsActivity : BaseActivity() {
             // Permission granted, start VPN service
             startTorVpnService()
         } else {
-            // Permission denied, turn off switch
+            // Permission denied, revert the switch without firing the listener
+            // (we never started the VPN, so stopTorVpnService would be a no-op anyway)
+            suppressTorModeListener = true
             torModeSwitch.isChecked = false
+            suppressTorModeListener = false
             ThemedToast.show(this, "VPN permission denied")
         }
     }
@@ -281,9 +285,13 @@ class SettingsActivity : BaseActivity() {
         BottomNavigationHelper.setupBottomNavigation(this)
     }
 
+    // Suppresses the toggle listener while we programmatically revert the switch
+    // after a cancelled confirmation — otherwise revertering OFF would trigger
+    // stopTorVpnService() on a VPN that was never started.
+    private var suppressTorModeListener = false
+
     private fun setupTorModeToggle() {
         torModeSwitch = findViewById(R.id.torModeSwitch)
-        val prefs = getSharedPreferences("tor_prefs", MODE_PRIVATE)
 
         // Load current state
         val isTorModeEnabled = TorVpnService.isRunning()
@@ -291,14 +299,37 @@ class SettingsActivity : BaseActivity() {
 
         // Handle toggle
         torModeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (suppressTorModeListener) return@setOnCheckedChangeListener
             if (isChecked) {
-                // User wants to enable Tor Mode - request VPN permission
-                requestVpnPermission()
+                // Confirm intent before triggering Android's own mandatory VPN consent dialog.
+                // Android's prompt ("App will monitor network traffic") is generic and scary;
+                // our pre-warn explains what the switch actually does.
+                confirmEnableTorVpn()
             } else {
-                // User wants to disable Tor Mode - stop VPN service
                 stopTorVpnService()
             }
         }
+    }
+
+    private fun confirmEnableTorVpn() {
+        val dialog = GlassDialog.builder(this)
+            .setTitle("Enable Tor VPN?")
+            .setMessage("This is a system-wide VPN. Every app on your phone — browser, email, games, everything — will route through the Tor network while it's on. Other apps will be noticeably slower and some may fail to connect.\n\nAndroid will ask you to approve a VPN connection on the next screen. You can turn this off any time from Settings.")
+            .setPositiveButton("Continue") { _, _ ->
+                requestVpnPermission()
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                suppressTorModeListener = true
+                torModeSwitch.isChecked = false
+                suppressTorModeListener = false
+            }
+            .setOnCancelListener {
+                suppressTorModeListener = true
+                torModeSwitch.isChecked = false
+                suppressTorModeListener = false
+            }
+            .create()
+        GlassDialog.show(dialog)
     }
 
     private fun requestVpnPermission() {
@@ -324,7 +355,9 @@ class SettingsActivity : BaseActivity() {
         } catch (e: Exception) {
             Log.e("SettingsActivity", "Failed to start Tor VPN", e)
             ThemedToast.show(this, "Failed to start Tor Mode: ${e.message}")
+            suppressTorModeListener = true
             torModeSwitch.isChecked = false
+            suppressTorModeListener = false
         }
     }
 
@@ -352,7 +385,7 @@ class SettingsActivity : BaseActivity() {
         dialog.setContentView(sheetView)
 
         val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
-        val currentMode = prefs.getString("app_theme_mode", "dark") ?: "dark"
+        val currentMode = prefs.getString("app_theme_mode", "system") ?: "system"
 
         val radioDark = sheetView.findViewById<RadioButton>(R.id.radioDark)
         val radioLight = sheetView.findViewById<RadioButton>(R.id.radioLight)

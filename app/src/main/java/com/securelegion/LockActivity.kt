@@ -388,10 +388,14 @@ class LockActivity : AppCompatActivity() {
         // handlers to safely derive the DB passphrase. Idempotent — if TorService is
         // already running this is a no-op (KEEP_ALIVE-style start).
         try {
-            val torIntent = Intent(this, com.securelegion.services.TorService::class.java)
-            torIntent.action = com.securelegion.services.TorService.ACTION_START_TOR
-            startForegroundService(torIntent)
-            Log.i("LockActivity", "TorService started after unlock")
+            if (com.securelegion.services.TorService.isUserDisabled(this)) {
+                Log.i("LockActivity", "TorService auto-start skipped — user disabled Tor on Secure Network page")
+            } else {
+                val torIntent = Intent(this, com.securelegion.services.TorService::class.java)
+                torIntent.action = com.securelegion.services.TorService.ACTION_START_TOR
+                startForegroundService(torIntent)
+                Log.i("LockActivity", "TorService started after unlock")
+            }
         } catch (e: Exception) {
             Log.e("LockActivity", "Failed to start TorService after unlock", e)
         }

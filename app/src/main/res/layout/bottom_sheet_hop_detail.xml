@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bottom_sheet_bg"
+    android:orientation="vertical"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingTop="20dp"
+    android:paddingBottom="32dp">
+
+    <!-- Header: role title + close button -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/hopDetailRole"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="22sp"
+            android:textColor="?attr/colorOnSurface"
+            android:fontFamily="@font/space_grotesk_bold" />
+
+        <FrameLayout
+            android:id="@+id/hopDetailClose"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_gravity="center"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:tint="?attr/colorOnSurface" />
+
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Grouped detail card — reuses the settings_box style so it flips with theme -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/settings_box_bg"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
+
+        <!-- Relay Name row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Relay Name"
+                android:textSize="13sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/hopDetailRelayName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="16sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/poppins_medium"
+                android:layout_marginTop="2dp" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?attr/colorOnSurface"
+            android:alpha="0.08"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp" />
+
+        <!-- IP Address row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="IP Address"
+                android:textSize="13sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/hopDetailIp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="16sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/poppins_medium"
+                android:layout_marginTop="2dp" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?attr/colorOnSurface"
+            android:alpha="0.08"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp" />
+
+        <!-- Country row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Country"
+                android:textSize="13sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/hopDetailCountry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="16sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/poppins_medium"
+                android:layout_marginTop="2dp" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?attr/colorOnSurface"
+            android:alpha="0.08"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp" />
+
+        <!-- Fingerprint row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Fingerprint"
+                android:textSize="13sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/hopDetailFingerprint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="monospace"
+                android:layout_marginTop="2dp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>
