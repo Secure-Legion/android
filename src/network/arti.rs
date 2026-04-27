@@ -132,6 +132,39 @@ static FR_REND_REQUEST_STREAM: StdMutex<Option<Box<dyn futures::Stream<Item = to
 /// CancellationToken for the friend-request HS acceptor task.
 static FR_ACCEPTOR_CANCEL: StdMutex<Option<CancellationToken>> = StdMutex::new(None);
 
+// ───── Per-Peer Failure Tracking (Stale Descriptor Recovery) ─────
+
+/// Per-peer consecutive `arti_connect_to_onion` failure count, keyed by ".onion" string.
+/// Reset on success. When the count crosses [PEER_FAIL_NEWNYM_THRESHOLD] we send NEWNYM
+/// (rate-limited by [LAST_PEER_NEWNYM_SENT_MS]), forcing Arti to swap to a fresh isolated
+/// client and re-fetch the peer's HS descriptor from a new HSDir.
+///
+/// This recovers the case where Arti has cached a peer's descriptor whose intro points
+/// are dead — every retry hits the same bad intros and fails identically. Without this,
+/// the only escape was a manual app restart.
+static PEER_FAILURE_COUNTS: Lazy<StdMutex<std::collections::HashMap<String, u32>>> =
+    Lazy::new(|| StdMutex::new(std::collections::HashMap::new()));
+
+/// Threshold of consecutive `arti_connect_to_onion` failures (each failure = 3 internal
+/// retry attempts already exhausted) before we trigger NEWNYM. With Kotlin's 30s Fast
+/// retry loop, hitting this means ~90s of failed sends to the same peer.
+const PEER_FAIL_NEWNYM_THRESHOLD: u32 = 3;
+
+/// Last NEWNYM trigger timestamp (epoch ms). Throttle: don't NEWNYM more than once every
+/// 60s no matter how many peers are failing — NEWNYM is global and disrupts working
+/// circuits to OTHER peers.
+static LAST_PEER_NEWNYM_SENT_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+const PEER_NEWNYM_COOLDOWN_MS: u64 = 60_000;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 // ───── Initialization ─────
 
 /// Spawn an async task on the stored runtime handle.
@@ -570,6 +603,13 @@ pub async fn arti_connect_to_onion(
                 } else {
                     log::info!("Arti: connected to {}:{}", onion_address, port);
                 }
+                // Success: clear any accumulated failure count for this peer.
+                {
+                    let mut counts = lock_recover(&PEER_FAILURE_COUNTS);
+                    if counts.remove(onion_address).is_some() {
+                        log::debug!("Arti: cleared failure counter for {} after successful connect", onion_address);
+                    }
+                }
                 capture_circuit_path(&stream, &client);
                 return Ok(ArtiStream {
                     stream,
@@ -592,6 +632,42 @@ pub async fn arti_connect_to_onion(
     }
 
     log::error!("Arti connect to {}:{} failed after {} attempts: {}", onion_address, port, MAX_RETRIES, last_err);
+
+    // Per-peer failure tracking: after PEER_FAIL_NEWNYM_THRESHOLD consecutive
+    // top-level failures (i.e., 3*N internal attempts), trigger NEWNYM to swap to
+    // a fresh isolated client + force a fresh HSDir lookup. Recovers the case
+    // where Arti has cached a peer's descriptor whose intro points are dead.
+    // Rate-limited via PEER_NEWNYM_COOLDOWN_MS so simultaneous failures across
+    // multiple peers don't repeatedly disrupt working circuits.
+    let new_count = {
+        let mut counts = lock_recover(&PEER_FAILURE_COUNTS);
+        let entry = counts.entry(onion_address.to_string()).or_insert(0);
+        *entry += 1;
+        *entry
+    };
+
+    if new_count >= PEER_FAIL_NEWNYM_THRESHOLD {
+        let now = now_ms();
+        let last_newnym = LAST_PEER_NEWNYM_SENT_MS.load(std::sync::atomic::Ordering::SeqCst);
+        if now.saturating_sub(last_newnym) >= PEER_NEWNYM_COOLDOWN_MS {
+            log::warn!(
+                "Arti: {} consecutive failures to {} — sending NEWNYM to force fresh circuits + HSDir refresh",
+                new_count, onion_address
+            );
+            LAST_PEER_NEWNYM_SENT_MS.store(now, std::sync::atomic::Ordering::SeqCst);
+            send_newnym();
+            // Reset only THIS peer's counter; counters for other still-failing peers
+            // continue and may trigger their own NEWNYM after the cooldown.
+            lock_recover(&PEER_FAILURE_COUNTS).remove(onion_address);
+        } else {
+            let remaining = PEER_NEWNYM_COOLDOWN_MS.saturating_sub(now.saturating_sub(last_newnym));
+            log::warn!(
+                "Arti: {} consecutive failures to {} — NEWNYM cooldown active ({}ms remaining)",
+                new_count, onion_address, remaining
+            );
+        }
+    }
+
     Err(format!("Arti connect failed: {}", last_err).into())
 }
 
@@ -686,15 +762,24 @@ pub async fn create_onion_service(
     // We box the RendRequest stream because the two launch functions return different
     // opaque `impl Stream` types.
     //
-    // Retry on StateDirectoryInaccessible / AlreadyLocked: Arti's async teardown
-    // after a prior stop_arti_listener (which drops RUNNING_HS) releases the keystore
-    // file lock asynchronously and can take several seconds. If we give up early, the
-    // listener restart cycle livelocks — see the TorService watchdog at
-    // TorService.kt:855. 8 × 1.5s gives us a ~10s window; empirically Arti completes
-    // cleanup well within that.
+    // Retry on keystore-busy errors: Arti's async teardown after a prior stop_arti_listener
+    // releases the keystore file lock asynchronously and can take several seconds. If we
+    // give up early, the listener restart cycle livelocks — see TorService.kt:855.
+    // 8 × 1.5s gives us a ~10s window; empirically Arti completes cleanup well within that.
+    //
+    // Both launch paths are retried per attempt because the same keystore-busy condition
+    // surfaces as two different error strings depending on which internal path Arti takes:
+    //   - "AlreadyLocked" when the state-dir lock file is still held
+    //   - "bad API usage (bug): Error while trying to access a key store" when Arti's
+    //     internal registration of the hsid hasn't been cleaned up yet
     const MAX_LAUNCH_ATTEMPTS: u32 = 8;
     const LAUNCH_RETRY_DELAY_MS: u64 = 1500;
     type HsTuple = (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>);
+    let is_retriable_launch_err = |es: &str| -> bool {
+        es.contains("AlreadyLocked")
+            || es.contains("bad API usage")
+            || es.contains("key store")
+    };
     let mut final_err: Option<String> = None;
     let mut launched: Option<HsTuple> = None;
     for attempt in 1..=MAX_LAUNCH_ATTEMPTS {
@@ -709,42 +794,54 @@ pub async fn create_onion_service(
             .build()
             .map_err(|e| format!("OnionServiceConfig build failed: {}", e))?;
 
-        match client.launch_onion_service_with_hsid(config, hsid_keypair) {
+        // First path: launch_onion_service_with_hsid (fresh key insert).
+        let err_with_hsid = match client.launch_onion_service_with_hsid(config, hsid_keypair) {
             Ok(Some((svc, stream))) => {
                 launched = Some((svc, Box::new(stream)));
                 break;
             }
             Ok(None) => return Err("Onion service was disabled in config".into()),
-            Err(e) => {
-                let es = format!("{:?}", e);
-                if es.contains("AlreadyLocked") && attempt < MAX_LAUNCH_ATTEMPTS {
-                    log::warn!("Arti: messaging HS launch attempt {}/{} hit AlreadyLocked; waiting {}ms for keystore release",
-                        attempt, MAX_LAUNCH_ATTEMPTS, LAUNCH_RETRY_DELAY_MS);
-                    tokio::time::sleep(std::time::Duration::from_millis(LAUNCH_RETRY_DELAY_MS)).await;
-                    continue;
-                }
-                // Not AlreadyLocked (or retries exhausted) — try the non-hsid path
-                // to handle the KeyAlreadyExists case (key persisted from a prior run).
-                log::warn!("launch_onion_service_with_hsid failed ({}), trying launch_onion_service", e);
-                let nickname2 = HsNickname::new(nickname_str.clone())
-                    .map_err(|e| format!("Invalid HS nickname: {}", e))?;
-                let config2 = OnionServiceConfig::builder()
-                    .nickname(nickname2)
-                    .build()
-                    .map_err(|e| format!("OnionServiceConfig rebuild failed: {}", e))?;
-                match client.launch_onion_service(config2) {
-                    Ok(Some((svc, stream))) => {
-                        launched = Some((svc, Box::new(stream)));
-                    }
-                    Ok(None) => return Err("Onion service was disabled in config".into()),
-                    Err(e2) => {
-                        log::error!("launch_onion_service also failed: {:?}", e2);
-                        final_err = Some(format!("launch_onion_service failed: {}", e2));
-                    }
-                }
+            Err(e) => format!("{:?}", e),
+        };
+
+        // Fallback path: launch_onion_service (reads persisted key from keystore).
+        let nickname2 = HsNickname::new(nickname_str.clone())
+            .map_err(|e| format!("Invalid HS nickname: {}", e))?;
+        let config2 = OnionServiceConfig::builder()
+            .nickname(nickname2)
+            .build()
+            .map_err(|e| format!("OnionServiceConfig rebuild failed: {}", e))?;
+        let err_fallback = match client.launch_onion_service(config2) {
+            Ok(Some((svc, stream))) => {
+                launched = Some((svc, Box::new(stream)));
                 break;
             }
+            Ok(None) => return Err("Onion service was disabled in config".into()),
+            Err(e) => format!("{:?}", e),
+        };
+
+        // Both paths failed — retry if either error is retriable and we still have attempts.
+        if (is_retriable_launch_err(&err_with_hsid) || is_retriable_launch_err(&err_fallback))
+            && attempt < MAX_LAUNCH_ATTEMPTS
+        {
+            log::warn!(
+                "Arti: messaging HS launch attempt {}/{} failed (with_hsid={}; fallback={}); retrying in {}ms",
+                attempt, MAX_LAUNCH_ATTEMPTS, err_with_hsid, err_fallback, LAUNCH_RETRY_DELAY_MS
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(LAUNCH_RETRY_DELAY_MS)).await;
+            continue;
         }
+
+        // Non-retriable or attempts exhausted — give up with both errors recorded.
+        log::error!(
+            "Arti: messaging HS launch failed after {} attempt(s). with_hsid={}; fallback={}",
+            attempt, err_with_hsid, err_fallback
+        );
+        final_err = Some(format!(
+            "launch_onion_service_with_hsid: {}; launch_onion_service: {}",
+            err_with_hsid, err_fallback
+        ));
+        break;
     }
     let (running_service, rend_requests): HsTuple = launched
         .ok_or_else(|| final_err.unwrap_or_else(|| "Onion service launch failed".to_string()))?;
@@ -762,14 +859,28 @@ pub async fn create_onion_service(
     let initial_status = running_service.status();
     log::info!("Arti: messaging HS initial status: {:?}", initial_status);
 
-    // Spawn background task to monitor HS status until it reaches Running
-    let svc_clone = Arc::clone(&running_service);
+    // Spawn background task to monitor HS status until it reaches Running.
+    //
+    // IMPORTANT: hold the service as a Weak ref, not a cloned Arc. A strong clone here
+    // would pin the RunningOnionService alive forever, so stop_arti_listener could not
+    // release Arti's keystore lock on `sl-msg-<id>` and subsequent create_onion_service
+    // calls would fail with "bad API usage (bug): Error while trying to access a key store"
+    // followed by AlreadyLocked — livelocking the Kotlin watchdog restart cycle.
+    //
+    // status_events() returns a postage::watch::Receiver that is decoupled from the
+    // service lifetime (src/status.rs:292) — safe to hold across awaits; yields None
+    // when the sender side drops, which is our clean shutdown signal.
+    let svc_weak = Arc::downgrade(&running_service);
     let addr_clone = expected_addr.clone();
+    let mut events = running_service.status_events();
     runtime_spawn(async move {
-        let mut events = svc_clone.status_events();
         let mut proof_set = false;
         loop {
-            let status = svc_clone.status();
+            let Some(svc) = svc_weak.upgrade() else {
+                log::info!("Arti: messaging HS status task exiting for {} (service dropped)", addr_clone);
+                break;
+            };
+            let status = svc.status();
             let state = status.state();
             log::info!("Arti: messaging HS status update: state={:?} for {}", state, addr_clone);
 
@@ -796,9 +907,18 @@ pub async fn create_onion_service(
                 _ => {}
             }
 
-            // Wait for next status change (or timeout after 60s)
+            // Release the strong ref before awaiting so the service can actually be dropped
+            // while we're parked on events.next() / sleep.
+            drop(svc);
+
+            // Wait for next status change, timeout after 60s, or stream end (service dropped).
             tokio::select! {
-                _ = events.next() => {}
+                event = events.next() => {
+                    if event.is_none() {
+                        log::info!("Arti: messaging HS status stream ended for {} — task exiting", addr_clone);
+                        break;
+                    }
+                }
                 _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
             }
         }
@@ -1461,10 +1581,17 @@ pub async fn create_friend_request_onion_service(
     // Deterministic nickname tied to FR onion to avoid stale keystore alias/key mismatch.
     let nickname_str = format!("sl-fr-{}", &expected_addr[..12]);
 
-    // Retry on AlreadyLocked — see create_onion_service for rationale.
+    // Retry on keystore-busy errors — see create_onion_service for full rationale.
+    // Both launch paths (with_hsid + fallback) are retried per attempt because the same
+    // keystore-busy condition surfaces as either "AlreadyLocked" or "bad API usage".
     const FR_MAX_LAUNCH_ATTEMPTS: u32 = 8;
     const FR_LAUNCH_RETRY_DELAY_MS: u64 = 1500;
     type FrHsTuple = (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>);
+    let fr_is_retriable_launch_err = |es: &str| -> bool {
+        es.contains("AlreadyLocked")
+            || es.contains("bad API usage")
+            || es.contains("key store")
+    };
     let mut final_err: Option<String> = None;
     let mut launched: Option<FrHsTuple> = None;
     for attempt in 1..=FR_MAX_LAUNCH_ATTEMPTS {
@@ -1478,40 +1605,54 @@ pub async fn create_friend_request_onion_service(
             .build()
             .map_err(|e| format!("FR OnionServiceConfig build failed: {}", e))?;
 
-        match client.launch_onion_service_with_hsid(config, hsid_keypair) {
+        // First path: launch_onion_service_with_hsid (fresh key insert).
+        let err_with_hsid = match client.launch_onion_service_with_hsid(config, hsid_keypair) {
             Ok(Some((svc, stream))) => {
                 launched = Some((svc, Box::new(stream)));
                 break;
             }
             Ok(None) => return Err("FR onion service was disabled in config".into()),
-            Err(e) => {
-                let es = format!("{:?}", e);
-                if es.contains("AlreadyLocked") && attempt < FR_MAX_LAUNCH_ATTEMPTS {
-                    log::warn!("Arti: FR HS launch attempt {}/{} hit AlreadyLocked; waiting {}ms for keystore release",
-                        attempt, FR_MAX_LAUNCH_ATTEMPTS, FR_LAUNCH_RETRY_DELAY_MS);
-                    tokio::time::sleep(std::time::Duration::from_millis(FR_LAUNCH_RETRY_DELAY_MS)).await;
-                    continue;
-                }
-                log::warn!("FR launch_onion_service_with_hsid failed ({}), trying launch_onion_service", e);
-                let nickname2 = HsNickname::new(nickname_str.clone())
-                    .map_err(|e| format!("Invalid FR HS nickname: {}", e))?;
-                let config2 = OnionServiceConfig::builder()
-                    .nickname(nickname2)
-                    .build()
-                    .map_err(|e| format!("FR OnionServiceConfig rebuild failed: {}", e))?;
-                match client.launch_onion_service(config2) {
-                    Ok(Some((svc, stream))) => {
-                        launched = Some((svc, Box::new(stream)));
-                    }
-                    Ok(None) => return Err("FR onion service was disabled in config".into()),
-                    Err(e2) => {
-                        log::error!("FR launch_onion_service also failed: {:?}", e2);
-                        final_err = Some(format!("FR launch_onion_service failed: {}", e2));
-                    }
-                }
+            Err(e) => format!("{:?}", e),
+        };
+
+        // Fallback path: launch_onion_service (reads persisted key from keystore).
+        let nickname2 = HsNickname::new(nickname_str.clone())
+            .map_err(|e| format!("Invalid FR HS nickname: {}", e))?;
+        let config2 = OnionServiceConfig::builder()
+            .nickname(nickname2)
+            .build()
+            .map_err(|e| format!("FR OnionServiceConfig rebuild failed: {}", e))?;
+        let err_fallback = match client.launch_onion_service(config2) {
+            Ok(Some((svc, stream))) => {
+                launched = Some((svc, Box::new(stream)));
                 break;
             }
+            Ok(None) => return Err("FR onion service was disabled in config".into()),
+            Err(e) => format!("{:?}", e),
+        };
+
+        // Both paths failed — retry if either error is retriable and we still have attempts.
+        if (fr_is_retriable_launch_err(&err_with_hsid) || fr_is_retriable_launch_err(&err_fallback))
+            && attempt < FR_MAX_LAUNCH_ATTEMPTS
+        {
+            log::warn!(
+                "Arti: FR HS launch attempt {}/{} failed (with_hsid={}; fallback={}); retrying in {}ms",
+                attempt, FR_MAX_LAUNCH_ATTEMPTS, err_with_hsid, err_fallback, FR_LAUNCH_RETRY_DELAY_MS
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(FR_LAUNCH_RETRY_DELAY_MS)).await;
+            continue;
         }
+
+        // Non-retriable or attempts exhausted — give up with both errors recorded.
+        log::error!(
+            "Arti: FR HS launch failed after {} attempt(s). with_hsid={}; fallback={}",
+            attempt, err_with_hsid, err_fallback
+        );
+        final_err = Some(format!(
+            "FR launch_onion_service_with_hsid: {}; FR launch_onion_service: {}",
+            err_with_hsid, err_fallback
+        ));
+        break;
     }
     let (running_service, rend_requests): FrHsTuple = launched
         .ok_or_else(|| final_err.unwrap_or_else(|| "FR onion service launch failed".to_string()))?;
@@ -1529,16 +1670,27 @@ pub async fn create_friend_request_onion_service(
     let fr_initial_status = running_service.status();
     log::info!("Arti: FR HS initial status: {:?}", fr_initial_status);
 
-    // Spawn background task to monitor FR HS status
-    let fr_svc_clone = Arc::clone(&running_service);
+    // Spawn background task to monitor FR HS status.
+    // See messaging HS status task above for why this MUST hold a Weak ref, not a cloned Arc.
+    let fr_svc_weak = Arc::downgrade(&running_service);
     let fr_addr_clone = expected_addr.clone();
+    let mut events = running_service.status_events();
     runtime_spawn(async move {
-        let mut events = fr_svc_clone.status_events();
         loop {
-            let status = fr_svc_clone.status();
+            let Some(svc) = fr_svc_weak.upgrade() else {
+                log::info!("Arti: FR HS status task exiting for {} (service dropped)", fr_addr_clone);
+                break;
+            };
+            let status = svc.status();
             log::info!("Arti: FR HS status update: {:?} for {}", status, fr_addr_clone);
+            drop(svc);
             tokio::select! {
-                _ = events.next() => {}
+                event = events.next() => {
+                    if event.is_none() {
+                        log::info!("Arti: FR HS status stream ended for {} — task exiting", fr_addr_clone);
+                        break;
+                    }
+                }
                 _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
             }
         }
