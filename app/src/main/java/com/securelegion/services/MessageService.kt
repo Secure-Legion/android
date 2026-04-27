@@ -344,11 +344,9 @@ class MessageService(private val context: Context) {
          */
         suspend fun scheduleRetry(database: SecureLegionDatabase, message: Message) {
             try {
-                // Calculate exponential backoff
+                // Calculate exponential backoff (clamped — see Message.computeRetryDelay)
                 val retryCount = message.retryCount + 1
-                val initialDelay = Message.INITIAL_RETRY_DELAY_MS
-                val backoffExponent = (retryCount - 1).toDouble()
-                val nextRetryDelay = (initialDelay * Math.pow(Message.RETRY_BACKOFF_MULTIPLIER, backoffExponent)).toLong()
+                val nextRetryDelay = Message.computeRetryDelay(retryCount)
                 val now = System.currentTimeMillis()
 
                 // CRITICAL: Use partial update to avoid overwriting delivery status
@@ -3378,29 +3376,25 @@ class MessageService(private val context: Context) {
                 // Look up the message to update
                 val message = database.messageDao().getMessageByMessageId(messageId)
                 if (message != null) {
-                    // Create updated message based on new state
-                    val updatedMessage = when (currentState) {
+                    // Use partial-update DAOs so concurrent retry-state writes (retryCount,
+                    // nextRetryAtMs) are not clobbered by a full-row write here.
+                    val applied = when (currentState) {
                         AckState.PING_ACKED -> {
-                            // Ping acknowledged - mark pingDelivered
-                            message.copy(pingDelivered = true)
+                            database.messageDao().updatePingDeliveredStatus(message.id, true, message.status)
+                            true
                         }
                         AckState.PONG_RECEIVED -> {
-                            // PONG received - mark pingDelivered + transition to PONG_RECEIVED status
-                            message.copy(pingDelivered = true, status = Message.STATUS_PONG_RECEIVED)
+                            database.messageDao().updatePingDeliveredStatus(message.id, true, Message.STATUS_PONG_RECEIVED)
+                            true
                         }
                         AckState.DELIVERED -> {
-                            // Full delivery - mark messageDelivered and status = DELIVERED
-                            message.copy(
-                                messageDelivered = true,
-                                status = Message.STATUS_DELIVERED
-                            )
+                            database.messageDao().updateMessageDeliveredStatus(message.id, true, Message.STATUS_DELIVERED)
+                            true
                         }
-                        else -> null // NONE state - no update needed
+                        else -> false // NONE state - no update needed
                     }
 
-                    // Save updated message if state changed
-                    if (updatedMessage != null) {
-                        database.messageDao().updateMessage(updatedMessage)
+                    if (applied) {
                         Log.d(TAG, "Updated message status: $currentState for $messageId")
 
                         // Broadcast UI update for all delivery status changes
@@ -4180,9 +4174,7 @@ class MessageService(private val context: Context) {
                         // BACKOFF ON FAILURE: Was missing — now tracks retry state properly
                         registerRetryableFailure(onion, false)
                         val newRetryCount = msg.retryCount + 1
-                        val nextDelay = (com.securelegion.database.entities.Message.INITIAL_RETRY_DELAY_MS *
-                            Math.pow(com.securelegion.database.entities.Message.RETRY_BACKOFF_MULTIPLIER, (newRetryCount - 1).toDouble())).toLong()
-                            .coerceAtMost(com.securelegion.database.entities.Message.MAX_RETRY_DELAY_MS)
+                        val nextDelay = com.securelegion.database.entities.Message.computeRetryDelay(newRetryCount)
                         database.messageDao().updateRetrySchedule(msg.id, newRetryCount, now, now + nextDelay)
                         Log.w(TAG, "[FAST_MODE_RETRY] Failed ${msg.messageId}, next retry in ${nextDelay}ms")
                     }
@@ -4415,9 +4407,7 @@ class MessageService(private val context: Context) {
                 }
 
                 // CRITICAL: Set nextRetryAtMs so the message respects backoff (was missing!)
-                val nextRetryDelay = (com.securelegion.database.entities.Message.INITIAL_RETRY_DELAY_MS *
-                    Math.pow(com.securelegion.database.entities.Message.RETRY_BACKOFF_MULTIPLIER, (newRetryCount - 1).toDouble())).toLong()
-                    .coerceAtMost(com.securelegion.database.entities.Message.MAX_RETRY_DELAY_MS)
+                val nextRetryDelay = com.securelegion.database.entities.Message.computeRetryDelay(newRetryCount)
                 database.messageDao().updateRetrySchedule(
                     message.id,
                     newRetryCount,

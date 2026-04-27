@@ -37,6 +37,13 @@ abstract class BaseActivity : AppCompatActivity() {
         applyThemeMode()
         super.onCreate(savedInstanceState)
 
+        // Direct-Boot belt-and-suspenders: ensure SecureRuntime is initialized once
+        // the user has unlocked. Application.onCreate already calls this when unlocked
+        // at process attach, and UnlockReceiver fires on ACTION_USER_UNLOCKED, but
+        // calling again here is idempotent and guarantees init even if both upstream
+        // paths failed (e.g., non-direct-boot-aware delivery quirk).
+        com.securelegion.SecureRuntime.initializeAfterUnlock(this)
+
         window.setFlags(
             android.view.WindowManager.LayoutParams.FLAG_SECURE,
             android.view.WindowManager.LayoutParams.FLAG_SECURE

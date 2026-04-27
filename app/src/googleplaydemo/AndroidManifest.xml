@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same VPN strip as googleplay flavor. See googleplay/AndroidManifest.xml for rationale. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.BIND_VPN_SERVICE"
+        tools:node="remove" />
+
+    <application>
+        <service
+            android:name=".services.TorVpnService"
+            tools:node="remove" />
+    </application>
+
+</manifest>

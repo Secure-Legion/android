@@ -163,6 +163,18 @@
                     android:layout_marginTop="2dp"
                     android:visibility="gone" />
 
+                <!-- Self-destruct timer indicator -->
+                <ImageView
+                    android:id="@+id/timerIndicator"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:src="@drawable/ic_timer"
+                    android:layout_marginTop="4dp"
+                    android:layout_gravity="end"
+                    android:tint="?attr/colorOnSurfaceVariant"
+                    android:contentDescription="Disappearing message"
+                    android:visibility="gone" />
+
             </LinearLayout>
 
         </LinearLayout>

@@ -55,6 +55,19 @@
                 android:layout_marginBottom="8dp"
                 android:contentDescription="Message status" />
 
+            <!-- Self-destruct timer overlay (bottom-left of image) -->
+            <ImageView
+                android:id="@+id/timerIndicator"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_timer"
+                android:layout_gravity="bottom|start"
+                android:layout_marginStart="8dp"
+                android:layout_marginBottom="8dp"
+                android:tint="#FFFFFF"
+                android:contentDescription="Disappearing message"
+                android:visibility="gone" />
+
         </FrameLayout>
 
         <!-- Swipe-revealed timestamp -->

@@ -464,6 +464,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- Unlock receiver - Triggers SecureRuntime init the moment the user unlocks
+             the device, for headless wake paths (WorkManager/JobScheduler/etc.) where
+             the process is alive but no Activity has been launched. -->
+        <receiver
+            android:name=".receivers.UnlockReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.USER_UNLOCKED" />
+            </intent-filter>
+        </receiver>
+
         <!-- FileProvider for sharing images -->
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -56,6 +56,19 @@
                 app:shapeAppearanceOverlay="@style/RoundedImageShape"
                 android:contentDescription="Image message" />
 
+            <!-- Self-destruct timer overlay (bottom-end of image) -->
+            <ImageView
+                android:id="@+id/timerIndicator"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_timer"
+                android:layout_gravity="bottom|end"
+                android:layout_marginEnd="8dp"
+                android:layout_marginBottom="8dp"
+                android:tint="#FFFFFF"
+                android:contentDescription="Disappearing message"
+                android:visibility="gone" />
+
         </FrameLayout>
 
         <!-- Selection Checkbox -->

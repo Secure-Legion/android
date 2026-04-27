@@ -99,11 +99,13 @@
                 android:textColor="@color/text_primary"
                 android:layout_marginBottom="8dp" />
 
-            <!-- Version -->
+            <!-- Version — populated from BuildConfig.VERSION_NAME at runtime -->
             <TextView
+                android:id="@+id/aboutVersionText"
+                xmlns:tools="http://schemas.android.com/tools"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Version 1.0.0"
+                tools:text="Version 1.0.1"
                 android:textSize="14sp"
                 android:fontFamily="@font/poppins_regular"
                 android:textColor="@color/text_gray"

@@ -76,41 +76,153 @@
             android:paddingTop="16dp"
             android:paddingBottom="24dp">
 
-            <!-- Network — status dot reflects live connectivity; toggle lets the user disable Tor -->
+            <!-- Network status card — Tunnel toggle + Status / Bootstrap / Circuit rows
+                 so the user can diagnose which component is lagging when the indicator
+                 disagrees with perceived connectivity. -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
+                android:orientation="vertical"
                 android:background="@drawable/settings_box_bg"
                 android:paddingStart="16dp"
                 android:paddingEnd="10dp"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp">
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp">
 
-                <View
-                    android:id="@+id/networkStatusIndicator"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:layout_marginEnd="12dp"
-                    android:background="@drawable/status_offline_indicator" />
-
-                <TextView
-                    android:layout_width="0dp"
+                <!-- Tunnel (toggle) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Network"
-                    android:textSize="16sp"
-                    android:textColor="?attr/colorOnSurface"
-                    android:fontFamily="@font/poppins_medium" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp">
 
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/networkToggle"
-                    android:layout_width="wrap_content"
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Tunnel"
+                        android:textSize="16sp"
+                        android:textColor="?attr/colorOnSurface"
+                        android:fontFamily="@font/poppins_medium" />
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/networkToggle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        app:thumbTint="@color/input_border"
+                        app:trackTint="@color/lock_icon_gray" />
+
+                </LinearLayout>
+
+                <!-- Status -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:checked="true"
-                    app:thumbTint="@color/input_border"
-                    app:trackTint="@color/lock_icon_gray" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:paddingEnd="6dp">
+
+                    <View
+                        android:id="@+id/networkStatusIndicator"
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:layout_marginEnd="12dp"
+                        android:background="@drawable/status_offline_indicator" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Status"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_muted"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/networkStatusText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_muted"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
+                <!-- Bootstrap -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:paddingEnd="6dp">
+
+                    <View
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:layout_marginEnd="12dp" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Bootstrap"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_muted"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/networkBootstrapText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_muted"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
+                <!-- Circuit -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:paddingEnd="6dp">
+
+                    <View
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:layout_marginEnd="12dp" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Circuit"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_muted"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/networkCircuitText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_muted"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
 
             </LinearLayout>
 

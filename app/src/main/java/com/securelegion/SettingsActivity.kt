@@ -291,6 +291,15 @@ class SettingsActivity : BaseActivity() {
     private var suppressTorModeListener = false
 
     private fun setupTorModeToggle() {
+        // Flavor-gate: on googleplay/googleplaydemo the VpnService is stripped
+        // from the merged manifest (Play policy limits VpnService to apps where
+        // VPN is core functionality), so the toggle must be hidden too — tapping
+        // it would start a service that isn't declared and crash at runtime.
+        if (!BuildConfig.ENABLE_VPN) {
+            findViewById<View>(R.id.torModeItem)?.visibility = View.GONE
+            return
+        }
+
         torModeSwitch = findViewById(R.id.torModeSwitch)
 
         // Load current state

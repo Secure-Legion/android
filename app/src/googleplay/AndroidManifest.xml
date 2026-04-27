@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  googleplay-flavor overrides.
+
+  Google Play Developer Policy forbids VpnService in apps where VPN is not the
+  core functionality. SecureLegion is a messaging app with an optional Tor-VPN
+  mode, which does not qualify. To keep the Play build compliant, we remove the
+  BIND_VPN_SERVICE permission and the TorVpnService declaration from the
+  merged manifest here. The code path (TorVpnService.kt + SettingsActivity Tor
+  Mode toggle) is guarded by BuildConfig.ENABLE_VPN=false so the UI never
+  reaches the stripped service.
+
+  Non-Play flavors (master, solanadapp, starnethackathon, apk, fdroid) inherit
+  the main manifest unchanged and retain full VPN functionality.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.BIND_VPN_SERVICE"
+        tools:node="remove" />
+
+    <application>
+        <service
+            android:name=".services.TorVpnService"
+            tools:node="remove" />
+    </application>
+
+</manifest>

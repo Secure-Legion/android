@@ -35,6 +35,10 @@ class LockActivity : AppCompatActivity() {
     private var isPasswordVisible = false // Track password visibility state
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Direct-Boot: must run before any CE-storage access (KeyManager below).
+        // Idempotent — safe to call before super.
+        com.securelegion.SecureRuntime.initializeAfterUnlock(this)
+
         // Check if wallet exists BEFORE calling super.onCreate() to prevent any UI flash
         val keyManager = KeyManager.getInstance(this)
         hasWallet = keyManager.isInitialized()

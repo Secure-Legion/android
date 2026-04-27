@@ -462,6 +462,34 @@ interface MessageDao {
     suspend fun clearAllRetryBackoff(): Int
 
     /**
+     * Unstick STATUS_SENT messages whose `messageDelivered` flag was set true while
+     * status remained STATUS_SENT (1). That state is inconsistent — STATUS_SENT means
+     * "blob sent, awaiting MESSAGE_ACK," which contradicts `messageDelivered=true`.
+     * The Fast retry filter `!messageDelivered` permanently excludes such rows, so
+     * the message is invisible to retry logic until the inconsistency is repaired.
+     *
+     * Called on Tor-bootstrap-ready alongside [resetAllRetryBackoffs] to recover
+     * cross-restart stuck backlogs that pre-date Fix C, especially after process
+     * kill (install/replace) which wipes Rust's `OUTGOING_PING_SIGNERS` map.
+     *
+     * Resets: messageDelivered → false, nextRetryAtMs → NULL.
+     * Only touches rows older than [staleCutoffMs] to avoid racing with in-flight
+     * sends.
+     *
+     * Returns the row count updated.
+     */
+    @Query("""
+        UPDATE messages
+        SET messageDelivered = 0,
+            nextRetryAtMs = NULL
+        WHERE isSentByMe = 1
+          AND status = 1
+          AND messageDelivered = 1
+          AND timestamp < :staleCutoffMs
+    """)
+    suspend fun unstickStaleSentMessages(staleCutoffMs: Long): Int
+
+    /**
      * Mark PING as delivered when PING_ACK is successfully sent
      * Updates the message status to reflect ACK confirmation
      */

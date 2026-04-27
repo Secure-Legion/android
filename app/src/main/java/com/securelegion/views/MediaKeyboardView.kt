@@ -111,6 +111,11 @@ class MediaKeyboardView @JvmOverloads constructor(
         currentTab = index
         mediaFlipper.displayedChild = index
         updateTabHighlights()
+        // Lazy-scan the GIF picker only when the user actually opens that tab.
+        // Without this, GifPickerView.init would trigger a MediaStore scan as
+        // soon as the chat view inflated, which violates the "only load media
+        // when the picker opens" promise in the Play declaration.
+        if (index == 2) gifPicker.refreshPickerState()
     }
 
     private fun setupTabs() {

@@ -385,5 +385,13 @@ data class Message(
         const val INITIAL_RETRY_DELAY_MS = 5000L // 5 seconds
         const val MAX_RETRY_DELAY_MS = 1_800_000L // 30 minutes (raised from 5min)
         const val RETRY_BACKOFF_MULTIPLIER = 3.0 // Triple each time (was 2x — reaches ceiling faster)
+
+        // Single source of truth for exponential backoff. Clamped to MAX_RETRY_DELAY_MS so
+        // overflow at high retryCount can't push a message past the 48h expiry window.
+        fun computeRetryDelay(retryCount: Int): Long {
+            val n = retryCount.coerceAtLeast(1)
+            val raw = INITIAL_RETRY_DELAY_MS * Math.pow(RETRY_BACKOFF_MULTIPLIER, (n - 1).toDouble())
+            return if (raw.isFinite() && raw < MAX_RETRY_DELAY_MS) raw.toLong() else MAX_RETRY_DELAY_MS
+        }
     }
 }

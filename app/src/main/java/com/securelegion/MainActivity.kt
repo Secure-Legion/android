@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Base64
 import android.util.Log
 import android.view.View
 import android.widget.ImageView
@@ -40,6 +41,7 @@ import com.securelegion.adapters.ContactAdapter
 import com.securelegion.adapters.WalletAdapter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.entities.PendingFriendRequest as PendingFriendRequestEntity
 import com.securelegion.database.entities.Wallet
 import com.securelegion.models.Chat
 import com.securelegion.models.Contact
@@ -74,6 +76,7 @@ class MainActivity : BaseActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CALL = 100
+        private const val FRIEND_RETRY_PREFS = "friend_request_retry_map"
     }
 
     private var currentTab = "messages" // Track current tab: "messages", "groups", "contacts", or "wallet"
@@ -477,55 +480,74 @@ class MainActivity : BaseActivity() {
      */
     private fun observeTorStatus() {
         lifecycleScope.launch {
+            // Tick at 400ms so the dot animation feels alive ("Connecting." → ".." → "..."),
+            // but only re-poll Tor state every 5 ticks (~2s) — the underlying state machine
+            // doesn't change fast enough to warrant tighter polling.
+            var tick = 0
+            var baseLabel = ""
+            var lastState: TorService.TorState? = null
             while (isActive) {
                 val statusDot = findViewById<View>(R.id.torStatusDot)
                 val statusText = findViewById<android.widget.TextView>(R.id.torStatusText)
-                val state = TorService.getCurrentTorState()
-                val bootstrapPercent = TorService.getBootstrapPercent()
 
-                when (state) {
-                    TorService.TorState.RUNNING -> {
-                        val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-                        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
-                        val hasValidatedInternet = caps?.hasCapability(
-                            android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
-                        ) == true
+                if (tick % 5 == 0) {
+                    val state = TorService.getCurrentTorState()
+                    lastState = state
 
-                        val lastProofMs = try { com.securelegion.crypto.RustBridge.getLastTorProofMs() } catch (_: Exception) { 0L }
-                        val lastNetworkChangeMs = TorService.getLastNetworkChangeMs()
-                        val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
-                        val circuitsEstablished = try { com.securelegion.crypto.RustBridge.getCircuitEstablished() } catch (_: Exception) { 0 }
-                        val hasTransportReady = bootstrapPercent >= 100 && circuitsEstablished == 1
+                    when (state) {
+                        TorService.TorState.RUNNING -> {
+                            val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+                            val hasValidatedInternet = caps?.hasCapability(
+                                android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                            ) == true
 
-                        when {
-                            !hasValidatedInternet -> {
-                                statusDot?.setBackgroundResource(R.drawable.status_dot_red)
-                                statusText?.text = "Offline"
-                            }
-                            hasFreshProof || hasTransportReady -> {
-                                statusDot?.setBackgroundResource(R.drawable.status_dot_green)
-                                statusText?.text = "Connected"
-                            }
-                            else -> {
-                                statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
-                                statusText?.text = "Connecting"
+                            val lastProofMs = try { com.securelegion.crypto.RustBridge.getLastTorProofMs() } catch (_: Exception) { 0L }
+                            val lastNetworkChangeMs = TorService.getLastNetworkChangeMs()
+                            val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
+
+                            // Strict: "Connected" requires a fresh HS self-test proof, not just
+                            // "transport looks ready." Matches the Secure Network page so the two
+                            // screens never disagree. Transport-ready alone was masking a bug
+                            // where the self-test never re-fires after a network toggle.
+                            baseLabel = when {
+                                !hasValidatedInternet -> {
+                                    statusDot?.setBackgroundResource(R.drawable.status_dot_red)
+                                    "Offline"
+                                }
+                                hasFreshProof -> {
+                                    statusDot?.setBackgroundResource(R.drawable.status_dot_green)
+                                    "Connected"
+                                }
+                                else -> {
+                                    statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
+                                    "Connecting"
+                                }
                             }
                         }
-                    }
-                    TorService.TorState.BOOTSTRAPPING -> {
-                        statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
-                        statusText?.text = "Connecting"
-                    }
-                    TorService.TorState.STARTING -> {
-                        statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
-                        statusText?.text = "Starting"
-                    }
-                    else -> {
-                        statusDot?.setBackgroundResource(R.drawable.status_dot_red)
-                        statusText?.text = "Disconnected"
+                        TorService.TorState.BOOTSTRAPPING -> {
+                            statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
+                            baseLabel = "Connecting"
+                        }
+                        TorService.TorState.STARTING -> {
+                            statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
+                            baseLabel = "Starting"
+                        }
+                        else -> {
+                            statusDot?.setBackgroundResource(R.drawable.status_dot_red)
+                            baseLabel = "Disconnected"
+                        }
                     }
                 }
-                delay(2000)
+
+                statusText?.text = if (baseLabel == "Connecting" || baseLabel == "Starting") {
+                    baseLabel + ".".repeat((tick % 3) + 1)
+                } else {
+                    baseLabel
+                }
+
+                tick++
+                delay(400)
             }
         }
     }
@@ -1970,6 +1992,12 @@ class MainActivity : BaseActivity() {
                     contactCardJson = partialContactJson,
                     id = requestId
                 ))
+                persistPhase2RetryRecord(
+                    uiRequestId = requestId,
+                    recipientOnion = senderFriendRequestOnion,
+                    encryptedPhase2 = encryptedPhase2,
+                    partialContactJson = partialContactJson
+                )
 
                 com.securelegion.utils.ThemedToast.show(this@MainActivity, "Accepting request from $senderUsername...")
                 setupRequestsList()
@@ -2034,6 +2062,46 @@ class MainActivity : BaseActivity() {
             } catch (e: Exception) { false }
         }
         prefs.edit().putStringSet("pending_requests_v2", requestsSet).apply()
+    }
+
+    private suspend fun persistPhase2RetryRecord(
+        uiRequestId: String,
+        recipientOnion: String,
+        encryptedPhase2: ByteArray,
+        partialContactJson: String
+    ) {
+        withContext(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                val entity = PendingFriendRequestEntity(
+                    recipientOnion = recipientOnion,
+                    phase = PendingFriendRequestEntity.PHASE_2_SENT,
+                    direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
+                    needsRetry = false,
+                    phase2PayloadBase64 = Base64.encodeToString(encryptedPhase2, Base64.NO_WRAP),
+                    contactCardJson = partialContactJson
+                )
+                val dbId = database.pendingFriendRequestDao().insertRequest(entity)
+                rememberRetryDbId(uiRequestId, dbId)
+                Log.d(TAG, "Persisted Phase 2 retry record (ui=$uiRequestId, db=$dbId)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist Phase 2 retry record", e)
+            }
+        }
+    }
+
+    private fun rememberRetryDbId(uiRequestId: String, dbId: Long) {
+        try {
+            getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(uiRequestId, dbId)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to map retry dbId for request $uiRequestId", e)
+        }
     }
 
     private fun updateRequestsPillBadge() {

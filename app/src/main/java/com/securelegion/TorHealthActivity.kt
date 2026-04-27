@@ -38,6 +38,9 @@ class TorHealthActivity : AppCompatActivity() {
     }
 
     private lateinit var networkStatusIndicator: View
+    private lateinit var networkStatusText: TextView
+    private lateinit var networkBootstrapText: TextView
+    private lateinit var networkCircuitText: TextView
     private lateinit var networkToggle: SwitchCompat
     private lateinit var circuitRouteContainer: LinearLayout
     private var lastRenderedCircuit: String? = null
@@ -59,6 +62,9 @@ class TorHealthActivity : AppCompatActivity() {
         setContentView(R.layout.activity_tor_health)
 
         networkStatusIndicator = findViewById(R.id.networkStatusIndicator)
+        networkStatusText = findViewById(R.id.networkStatusText)
+        networkBootstrapText = findViewById(R.id.networkBootstrapText)
+        networkCircuitText = findViewById(R.id.networkCircuitText)
         networkToggle = findViewById(R.id.networkToggle)
         circuitRouteContainer = findViewById(R.id.circuitRouteContainer)
         renderCircuitPlaceholders()
@@ -141,6 +147,11 @@ class TorHealthActivity : AppCompatActivity() {
         } catch (_: Throwable) {
             // Already stopped — fine.
         }
+        // Cancel the periodic health monitor so it doesn't keep poking a stopped
+        // service and leaving stale proof/heartbeat state while the user has Tor off.
+        try {
+            androidx.work.WorkManager.getInstance(this).cancelUniqueWork("tor_health_monitor")
+        } catch (_: Throwable) { /* best-effort */ }
         ThemedToast.show(this, "Tor network disabled")
     }
 
@@ -154,6 +165,16 @@ class TorHealthActivity : AppCompatActivity() {
                 startForegroundService(intent)
             } else {
                 startService(intent)
+            }
+            // Kick the health monitor IMMEDIATELY. Its first run is a OneTimeWork that
+            // fires as soon as WorkManager schedules it, which runs an HS self-test +
+            // calls setTorProofOk() on success. Without this kick, proof state stays
+            // pre-toggle (or zero on a fresh process) and the Connected indicator
+            // never turns green even though the transport is back.
+            try {
+                com.securelegion.workers.TorHealthMonitorWorker.schedulePeriodicCheck(this)
+            } catch (e: Throwable) {
+                android.util.Log.w(TAG, "Failed to kick health monitor after toggle-on", e)
             }
             ThemedToast.show(this, "Tor network enabled")
         } catch (e: Throwable) {
@@ -170,6 +191,10 @@ class TorHealthActivity : AppCompatActivity() {
             val userDisabled = TorService.isUserDisabled(this)
             if (userDisabled) {
                 networkStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
+                networkStatusText.text = "Off"
+                networkStatusText.setTextColor(0xFFAAAAAA.toInt())
+                networkBootstrapText.text = "—"
+                networkCircuitText.text = "—"
                 // When the user opted out of Tor we don't report circuit info — hops reflect
                 // pre-disable state and would be confusing.
                 renderCircuitPlaceholders()
@@ -191,6 +216,31 @@ class TorHealthActivity : AppCompatActivity() {
 
             val isLive = hasInternet && bootstrapPercent >= 100 && hasFreshProof
             val isConnecting = hasInternet && (bootstrapPercent < 100 || circuitsEstablished != 1 || !hasFreshProof)
+
+            // Populate the three diagnostic rows — shows the user exactly which component
+            // is lagging when the "Connected" indicator disagrees with perceived reachability.
+            networkBootstrapText.text = "$bootstrapPercent%"
+            networkBootstrapText.setTextColor(
+                if (bootstrapPercent >= 100) 0xFF00CC66.toInt() else 0xFFFFAA00.toInt()
+            )
+            networkCircuitText.text = if (circuitsEstablished == 1) "Established" else "Pending"
+            networkCircuitText.setTextColor(
+                if (circuitsEstablished == 1) 0xFF00CC66.toInt() else 0xFFFFAA00.toInt()
+            )
+            when {
+                !hasInternet -> {
+                    networkStatusText.text = "Offline"
+                    networkStatusText.setTextColor(0xFFFF6666.toInt())
+                }
+                isLive -> {
+                    networkStatusText.text = "Connected"
+                    networkStatusText.setTextColor(0xFF00CC66.toInt())
+                }
+                else -> {
+                    networkStatusText.text = "Connecting"
+                    networkStatusText.setTextColor(0xFFFFAA00.toInt())
+                }
+            }
 
             when {
                 !hasInternet -> networkStatusIndicator.setBackgroundResource(R.drawable.status_error_indicator)

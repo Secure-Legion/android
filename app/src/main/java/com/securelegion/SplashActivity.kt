@@ -30,6 +30,10 @@ class SplashActivity : AppCompatActivity() {
 
         super.onCreate(savedInstanceState)
 
+        // Direct-Boot: ensure post-unlock runtime is initialized before this
+        // activity touches CE storage (KeyManager, prefs, etc.).
+        com.securelegion.SecureRuntime.initializeAfterUnlock(this)
+
         // Security: Prevent screenshots and screen recording
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,

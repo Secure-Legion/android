@@ -25,7 +25,7 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 5
+        versionCode = 14
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -55,6 +55,9 @@ android {
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
             // Crust/IPFS mailbox — code retained for future use. No live caller today.
             buildConfigField("boolean", "ENABLE_CRUST_IPFS", "true")
+            // Tor VPN (route entire device traffic through Tor). Disabled on
+            // googleplay/googleplaydemo per Play Developer VPN-service policy.
+            buildConfigField("boolean", "ENABLE_VPN", "true")
         }
 
         create("solanadapp") {
@@ -75,6 +78,7 @@ android {
             buildConfigField("String", "FLAVOR_NAME", "\"Solana dApp\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
             buildConfigField("boolean", "ENABLE_CRUST_IPFS", "true")
+            buildConfigField("boolean", "ENABLE_VPN", "true")
         }
 
 
@@ -97,6 +101,7 @@ android {
             buildConfigField("String", "HACKATHON_NAME", "\"Starnet\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
             buildConfigField("boolean", "ENABLE_CRUST_IPFS", "true")
+            buildConfigField("boolean", "ENABLE_VPN", "true")
         }
 
         create("googleplay") {
@@ -121,6 +126,10 @@ android {
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
             // Play build forbids clearnet 3rd-party API calls; Crust/IPFS stays off here.
             buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
+            // Play Developer Policy permits VpnService only for apps where VPN is
+            // the core functionality. Secure is a messaging app with optional VPN —
+            // disabled on Play, available in non-Play flavors (master/apk/fdroid).
+            buildConfigField("boolean", "ENABLE_VPN", "false")
         }
 
         create("googleplaydemo") {
@@ -143,6 +152,7 @@ android {
             buildConfigField("String", "DEMO_PASSWORD", "\"demo123!\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
             buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
+            buildConfigField("boolean", "ENABLE_VPN", "false")
         }
 
         create("fdroid") {
@@ -167,6 +177,7 @@ android {
             buildConfigField("String", "FLAVOR_NAME", "\"F-Droid\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
             buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
+            buildConfigField("boolean", "ENABLE_VPN", "true")
         }
     }
 

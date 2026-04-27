@@ -66,7 +66,11 @@ class GifPickerView @JvmOverloads constructor(
             }
         }
 
-        refreshPickerState()
+        // Note: refreshPickerState() is NOT called here so GIFs aren't scanned
+        // when the chat activity inflates. The scan is deferred to the first time
+        // the user taps the GIF tab (see MediaKeyboardView.selectTab). The
+        // permission-grant callback in ChatActivity also calls refreshPickerState
+        // so the grid reloads after the user grants access.
     }
 
     fun setOnGifSelectedListener(listener: (ByteArray) -> Unit) {

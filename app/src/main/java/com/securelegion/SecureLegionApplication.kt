@@ -42,96 +42,43 @@ class SecureLegionApplication : Application() {
     }
 
     override fun onCreate() {
-        // Apply saved theme mode BEFORE super.onCreate() so the system splash
-        // and all activities use the correct DayNight mode from the very start
-        val themePrefs = getSharedPreferences("app_settings", MODE_PRIVATE)
-        val mode = themePrefs.getString("app_theme_mode", "system") ?: "system"
-        when (mode) {
-            "dark" -> androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
-                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
-            "light" -> androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
-                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO)
-            "system" -> androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
-                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
-        }
-
+        // super FIRST — no logic before super.onCreate() because anything that touches
+        // Credential Encrypted (CE) storage in pre-super space crashes during direct-boot
+        // (Android calls Application.onCreate before the user has unlocked).
+        // Theme mode application moved to BaseActivity.applyThemeFromPrefs().
         super.onCreate()
 
-        // CRITICAL: Check if we're in the main process
-        // We must skip ALL initialization in non-main processes to avoid
-        // duplicate Tor startup, duplicate IPFS init, and potential native runtime conflicts.
+        // CRITICAL: Check if we're in the main process. Skip ALL init in non-main processes.
         val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             getProcessName()
         } else {
-            // Fallback for API 27
             try {
                 val pid = android.os.Process.myPid()
                 val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
                 am.runningAppProcesses?.find { it.pid == pid }?.processName
-            } catch (e: Exception) {
-                null
-            }
+            } catch (e: Exception) { null }
         }
         if (processName != null && processName != packageName) {
             Log.d(TAG, "Skipping initialization in non-main process: $processName")
             return
         }
 
-        Log.d(TAG, "Application starting...")
+        Log.d(TAG, "Application starting (boot-safe phase)...")
 
-        // Create notification channels
+        // BOOT-SAFE ONLY in this method. No SharedPreferences, no KeyManager, no Tor,
+        // no IPFS, no DB, no filesDir reads. Anything CE-encrypted is deferred to
+        // SecureRuntime.initializeAfterUnlock(), invoked from the first entry-point
+        // Activity (BaseActivity / Splash / Lock) AND from UnlockReceiver on
+        // ACTION_USER_UNLOCKED for headless/background wake paths.
         createNotificationChannels()
-
-        // IPtProxy removed — Arti handles Tor in-process, no pluggable transport controller needed
-
-        // Register lifecycle observer for auto-lock on background
         registerLifecycleObserver()
 
-        // Initialize Tor network
-        // Skip auto-start on first launch so user can configure bridges first
-        // Skip auto-start if we recently shut down (restart storm suppression)
-        try {
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            if (keyManager.isInitialized()) {
-                // Check for restart storm: if last shutdown was within 30s, skip auto-start
-                // SplashActivity will handle Tor init when user opens the app
-                val shutdownFile = File(filesDir, "tor/last_shutdown_time")
-                val recentShutdown = try {
-                    if (shutdownFile.exists()) {
-                        val lastShutdown = shutdownFile.readText().trim().toLongOrNull() ?: 0L
-                        val elapsed = System.currentTimeMillis() - lastShutdown
-                        elapsed in 1..30_000
-                    } else false
-                } catch (e: Exception) { false }
-
-                if (recentShutdown) {
-                    Log.w(TAG, "Tor shutdown was within last 30s - suppressing auto-start to prevent restart storm")
-                } else {
-                    Log.d(TAG, "Existing account - auto-starting Tor...")
-                    initializeTor()
-                    Log.d(TAG, "Tor initialization started")
-                }
-            } else {
-                Log.i(TAG, "First-time setup - skipping Tor auto-start (user will press Start)")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize Tor", e)
-        }
-
-        // Initialize IPFS Manager for auto-pinning mesh (v5 architecture)
-        try {
-            Log.d(TAG, "Initializing IPFS Manager...")
-            CoroutineScope(Dispatchers.IO).launch {
-                val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@SecureLegionApplication)
-                val result = ipfsManager.initialize()
-                if (result.isSuccess) {
-                    Log.i(TAG, "IPFS Manager initialized successfully")
-                } else {
-                    Log.e(TAG, "IPFS Manager initialization failed: ${result.exceptionOrNull()?.message}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize IPFS Manager", e)
+        // If the user is already unlocked at process attach (warm app open, not boot
+        // wake), run the post-unlock init right now — saves the activity ~one tick.
+        if (androidx.core.os.UserManagerCompat.isUserUnlocked(this)) {
+            SecureRuntime.initializeAfterUnlock(this)
+        } else {
+            Log.i(TAG, "User locked — deferring sensitive init until ACTION_USER_UNLOCKED or first activity")
         }
     }
 
@@ -228,8 +175,4 @@ class SecureLegionApplication : Application() {
         }
     }
 
-    private fun initializeTor() {
-        Log.i(TAG, "Starting TorService (Arti-owned lifecycle)")
-        com.securelegion.services.TorService.start(this)
-    }
 }

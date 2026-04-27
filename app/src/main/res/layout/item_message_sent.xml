@@ -160,6 +160,19 @@
 
                 </LinearLayout>
 
+                <!-- Self-destruct timer indicator - left of delivery status -->
+                <ImageView
+                    android:id="@+id/timerIndicator"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:src="@drawable/ic_timer"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="2dp"
+                    android:layout_gravity="bottom"
+                    android:tint="#FFFFFF"
+                    android:contentDescription="Disappearing message"
+                    android:visibility="gone" />
+
                 <!-- Delivery status indicator (circle with checkmarks) - right of text, inline with text baseline -->
                 <ImageView
                     android:id="@+id/messageStatus"

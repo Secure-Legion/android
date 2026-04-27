@@ -16,11 +16,11 @@ class HelpCenterActivity : BaseActivity() {
         }
 
         setHtml(R.id.connectionIssuesBody, """
-            Check the connection pill at the top of the Messages screen. It shows your current Tor connection status.<br/><br/>
+            Check the connection pill at the top of the Messages screen. It shows your current connection status.<br/><br/>
             &#8226; <b>Green (Connected)</b><br/>Your connection is active and working normally.<br/><br/>
-            &#8226; <b>Yellow (Connecting)</b><br/>The app is still establishing a Tor connection. Wait a moment for it to finish.<br/><br/>
-            &#8226; <b>Red (Disconnected)</b><br/>The connection has failed or dropped. Tap the pill to open the VPN connect screen and reconnect.<br/><br/>
-            If tapping the pill does not resolve the issue, go to Settings &gt; Tor VPN Settings and toggle the tunnel off, then back on to restart the connection.
+            &#8226; <b>Yellow (Connecting)</b><br/>The app is still establishing a connection. Wait a moment for it to finish.<br/><br/>
+            &#8226; <b>Red (Disconnected)</b><br/>The connection has failed or dropped.<br/><br/>
+            Tap the pill (or go to Settings &gt; Network) to open the Network screen, then toggle the network off and back on to restart the connection.
         """.trimIndent())
 
         setHtml(R.id.bootstrapBody, """

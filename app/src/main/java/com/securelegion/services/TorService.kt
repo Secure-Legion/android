@@ -256,9 +256,27 @@ class TorService : Service() {
     @Volatile private var lastEventListenerRestartAttempt: Long = 0L
     private val EVENT_LISTENER_RESTART_COOLDOWN_MS = 10_000L // 10 seconds between restart attempts
 
-    // HS listener liveness: in-memory throttle for health-sample-triggered listener restarts
+    // HS listener liveness: in-memory throttle for health-sample-triggered listener restarts.
+    // Cooldown escalates exponentially (120s → 240s → 480s → 960s → capped at 1800s) so that a
+    // repeatedly-failing restart doesn't spam logs or burn battery. The counter resets whenever
+    // the loop heartbeat goes fresh again (i.e., the restart actually succeeded).
     @Volatile private var lastHsListenerRestartMs: Long = 0L
-    private val HS_LISTENER_RESTART_COOLDOWN_MS = 120_000L // 2 minutes between sampler-triggered restarts
+    @Volatile private var hsListenerRestartAttempts: Int = 0
+    private val HS_LISTENER_RESTART_COOLDOWN_BASE_MS = 120_000L   // 2 min baseline
+    private val HS_LISTENER_RESTART_COOLDOWN_CAP_MS = 1_800_000L  // 30 min cap
+
+    // After a network swap (WiFi↔LTE, airplane off, etc.) the gate flips open quickly
+    // but HS circuits to peer .onions need time to rebuild against the new transport.
+    // Firing TAPs immediately produces "Onion Service not found" / connect-timeout errors
+    // because the local descriptor cache doesn't have fresh intro points yet.
+    private val NETWORK_CHANGE_TAP_WARMUP_MS = 15_000L
+
+    private fun currentHsListenerRestartCooldownMs(): Long {
+        // shl clamped at 4 → multipliers 1,2,4,8,16 → capped at CAP_MS
+        val shift = hsListenerRestartAttempts.coerceIn(0, 4)
+        val scaled = HS_LISTENER_RESTART_COOLDOWN_BASE_MS shl shift
+        return minOf(scaled, HS_LISTENER_RESTART_COOLDOWN_CAP_MS)
+    }
 
     /**
      * Update Tor state and log transition
@@ -493,7 +511,16 @@ class TorService : Service() {
                 // now that we have fresh circuits. Without this, messages sit in 10-min backoff.
                 val resetCount = database.messageDao().resetAllRetryBackoffs()
                 if (resetCount > 0) {
-                    Log.i(TAG, "Bootstrap: reset retry backoff for $resetCount message(s)")
+                    Log.w(TAG, "Bootstrap: reset retry backoff for $resetCount message(s)")
+                }
+
+                // Unstick STATUS_SENT rows whose `messageDelivered` flag is true (silent-killer
+                // inconsistency that hides them from the Fast retry filter). Older than 30 min
+                // to avoid racing in-flight sends. Log.w so it survives R8 stripping.
+                val unstickCutoff = System.currentTimeMillis() - 30 * 60_000L
+                val unstuckCount = database.messageDao().unstickStaleSentMessages(unstickCutoff)
+                if (unstuckCount > 0) {
+                    Log.w(TAG, "Bootstrap: unstuck $unstuckCount stale STATUS_SENT messages with messageDelivered=true")
                 }
 
                 // Revert STATUS_SENT messages that never got MESSAGE_ACK back to PONG_RECEIVED
@@ -502,7 +529,7 @@ class TorService : Service() {
                 val cutoff = System.currentTimeMillis() - ackTimeoutMs
                 val revertedCount = database.messageDao().revertStaleSentMessages(cutoff)
                 if (revertedCount > 0) {
-                    Log.i(TAG, "Bootstrap: reverted $revertedCount stale SENT messages to PONG_RECEIVED for re-send")
+                    Log.w(TAG, "Bootstrap: reverted $revertedCount stale SENT messages to PONG_RECEIVED for re-send")
                 }
 
                 val messageService = MessageService(this@TorService)
@@ -851,15 +878,26 @@ class TorService : Service() {
 
         // HS listener liveness: if loop heartbeat is stale, the accept loop is wedged.
         // This is a faster check (2s) than the Worker (60s) for the most critical failure mode.
-        // Throttled to prevent restart spam if heartbeat stays stale during recovery.
+        // Cooldown escalates exponentially to prevent restart spam when the restart itself is
+        // failing (e.g., Arti keystore leak) — the previous flat 120s cooldown livelocked at
+        // one restart every 2 minutes forever when create_onion_service couldn't reacquire.
         if (isHealthy && isListenerRunning) {
             val hsLoopHb = RustBridge.getLastHsLoopHeartbeat()
             if (hsLoopHb > 0) {
                 val hsLoopAgeMs = System.currentTimeMillis() - hsLoopHb
-                if (hsLoopAgeMs > 90_000) { // 90s stale threshold (same as Worker)
+                if (hsLoopAgeMs <= 90_000) {
+                    // Heartbeat fresh → acceptor alive → clear any accumulated backoff.
+                    if (hsListenerRestartAttempts > 0) {
+                        Log.i(TAG, "HS loop heartbeat fresh (${hsLoopAgeMs}ms) — clearing restart backoff (was attempt #$hsListenerRestartAttempts)")
+                        hsListenerRestartAttempts = 0
+                    }
+                } else {
                     val now = SystemClock.elapsedRealtime()
-                    if (now - lastHsListenerRestartMs >= HS_LISTENER_RESTART_COOLDOWN_MS) {
-                        Log.w(TAG, "HS loop heartbeat STALE (${hsLoopAgeMs}ms) → restarting listeners")
+                    val cooldownMs = currentHsListenerRestartCooldownMs()
+                    if (now - lastHsListenerRestartMs >= cooldownMs) {
+                        hsListenerRestartAttempts++
+                        val nextCooldownMs = currentHsListenerRestartCooldownMs()
+                        Log.w(TAG, "HS loop heartbeat STALE (${hsLoopAgeMs}ms) → restarting listeners (attempt #$hsListenerRestartAttempts, next cooldown ${nextCooldownMs / 1000}s)")
                         lastHsListenerRestartMs = now
                         serviceScope.launch {
                             restartListeners()
@@ -868,7 +906,7 @@ class TorService : Service() {
                             isListenerRunning = false
                         }
                     } else {
-                        Log.d(TAG, "HS loop stale but restart cooldown active (${(now - lastHsListenerRestartMs) / 1000}s / ${HS_LISTENER_RESTART_COOLDOWN_MS / 1000}s)")
+                        Log.d(TAG, "HS loop stale but restart cooldown active (${(now - lastHsListenerRestartMs) / 1000}s / ${cooldownMs / 1000}s, attempt #$hsListenerRestartAttempts)")
                     }
                 }
             }
@@ -918,7 +956,11 @@ class TorService : Service() {
             val usingBridges = bridgeType != "none"
             val intervalMs = 30_000L // 30s — fast-mode ACK recovery needs tight loop (was 90s)
 
-            Log.i(TAG, "Starting fast retry loop (interval=${intervalMs}ms, bridges=$usingBridges)")
+            // Promoted from Log.i → Log.w because R8's bundled -assumenosideeffects rule
+            // strips Log.i during shrinking even with -dontoptimize. Log.w survives, giving
+            // us release-build visibility into whether the loop is running. Revert these
+            // promotions to Log.i once we've diagnosed the stuck-backlog flow.
+            Log.w(TAG, "Starting fast retry loop (interval=${intervalMs}ms, bridges=$usingBridges)")
 
             // Initial delay — let Tor stabilize after startup
             kotlinx.coroutines.delay(if (usingBridges) 15_000L else 5_000L)
@@ -937,13 +979,25 @@ class TorService : Service() {
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
                     val currentMs = System.currentTimeMillis()
-                    val pendingCount = database.messageDao().getMessagesNeedingRetry(
+                    val allRetryCandidates = database.messageDao().getMessagesNeedingRetry(
                         currentTimeMs = currentMs,
                         giveupAfterDays = 365
-                    ).count { !it.messageDelivered && (it.nextRetryAtMs == null || it.nextRetryAtMs <= currentMs) }
+                    )
+                    val pendingCount = allRetryCandidates.count { !it.messageDelivered && (it.nextRetryAtMs == null || it.nextRetryAtMs <= currentMs) }
+
+                    // Heartbeat: Log.w so we can see the loop is alive even when nothing is pending.
+                    // Diagnostic dump of why pending=0 if there are STATUS_SENT candidates filtered out.
+                    if (pendingCount == 0 && allRetryCandidates.isNotEmpty()) {
+                        val sample = allRetryCandidates.take(3).joinToString("|") { m ->
+                            "${m.messageId.take(8)}(status=${m.status},delivered=${m.messageDelivered},nextRetry=${m.nextRetryAtMs?.let { it - currentMs }})"
+                        }
+                        Log.w(TAG, "Fast retry tick: pending=0 but ${allRetryCandidates.size} STATUS_SENT-ish in DB, filtered out. Sample: $sample")
+                    } else if (pendingCount == 0) {
+                        Log.w(TAG, "Fast retry tick: pending=0 (nothing in DB needing retry)")
+                    }
 
                     if (pendingCount > 0) {
-                        Log.i(TAG, "Fast retry: $pendingCount pending message(s), attempting phase-aware retry...")
+                        Log.w(TAG, "Fast retry: $pendingCount pending message(s), attempting phase-aware retry...")
                         val messageService = MessageService(this@TorService)
 
                         val nowMs = System.currentTimeMillis()
@@ -979,9 +1033,17 @@ class TorService : Service() {
                                         retried++
                                     }
                                     com.securelegion.database.entities.Message.STATUS_SENT -> {
-                                        // Re-send fast-mode message if STATUS_SENT > 30s old without ACK.
-                                        // ACK was likely lost over Tor — receiver will dedup via
-                                        // receivedIdDao and fire a fresh MESSAGE_ACK.
+                                        // Re-send stale STATUS_SENT messages — the ACK was lost over Tor or
+                                        // the sender-side correlation state was wiped by a process restart.
+                                        // Receiver dedups via receivedIdDao and fires a fresh MESSAGE_ACK.
+                                        //
+                                        // Two retry strategies:
+                                        //   - Fast-mode (correlationId starts with "blob_"): re-send the
+                                        //     blob directly via sendMessageDirect. Threshold 30s.
+                                        //   - Legacy/non-blob (old format, pre-restart backlog): re-issue
+                                        //     the ping via MessageService.sendPingForMessage so the full
+                                        //     ping → pong → blob → ACK chain runs again. Threshold 2min
+                                        //     to avoid hammering the peer.
                                         val ageMs = System.currentTimeMillis() - message.timestamp
                                         val isFastMode = message.correlationId?.startsWith("blob_") == true
                                         if (isFastMode && ageMs > 30_000L) {
@@ -1006,8 +1068,16 @@ class TorService : Service() {
                                             } catch (e: Exception) {
                                                 Log.w(TAG, "Fast retry: re-send failed ${message.messageId}: ${e.message}")
                                             }
+                                        } else if (!isFastMode && ageMs > 120_000L) {
+                                            Log.i(TAG, "Fast retry: STATUS_SENT non-blob stale (${ageMs/1000}s), re-pinging ${message.messageId}")
+                                            try {
+                                                val result = messageService.sendPingForMessage(message)
+                                                if (result.isSuccess) retried++
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "Fast retry: re-ping failed ${message.messageId}: ${e.message}")
+                                            }
                                         } else {
-                                            Log.d(TAG, "Fast retry: STATUS_SENT fresh (${ageMs/1000}s), waiting for ACK ${message.messageId}")
+                                            Log.d(TAG, "Fast retry: STATUS_SENT fresh (${ageMs/1000}s, fastMode=$isFastMode), waiting for ACK ${message.messageId}")
                                         }
                                     }
                                     com.securelegion.database.entities.Message.STATUS_DELIVERED -> {
@@ -3183,16 +3253,62 @@ class TorService : Service() {
                     for (message in allMessages) {
                         // ============ STATUS-BASED FLOW CONTROL (Protocol v2) ============
 
-                        // Already delivered or blob sent → skip
-                        if (message.messageDelivered || message.status == com.securelegion.database.entities.Message.STATUS_SENT ||
+                        // Already delivered → skip
+                        if (message.messageDelivered ||
                             message.status == com.securelegion.database.entities.Message.STATUS_DELIVERED) {
-                            Log.d(TAG, "${message.messageId}: delivered/sent, skip")
+                            Log.d(TAG, "${message.messageId}: already delivered, skip")
                             continue
                         }
 
                         // PONG_RECEIVED → blob send in progress (retryAll already handled it)
                         if (message.status == com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED) {
                             Log.d(TAG, "${message.messageId}: PONG_RECEIVED, blob send handled by retryAll")
+                            continue
+                        }
+
+                        // STATUS_SENT → blob/ping was sent but no MESSAGE_ACK back. Peer is online
+                        // (TAP just arrived) — re-send to recover the lost ACK. Fast-mode replays
+                        // the blob, legacy re-pings the full chain.
+                        if (message.status == com.securelegion.database.entities.Message.STATUS_SENT) {
+                            val isFastMode = message.correlationId?.startsWith("blob_") == true
+                            if (isFastMode) {
+                                Log.i(TAG, "→ ${message.messageId}: STATUS_SENT blob — re-sending after TAP")
+                                try {
+                                    val encryptedBase64 = message.encryptedPayload
+                                    if (!encryptedBase64.isNullOrEmpty()) {
+                                        val encryptedBytes = android.util.Base64.decode(encryptedBase64, android.util.Base64.NO_WRAP)
+                                        val msgTypeByte: Byte = when (message.messageType) {
+                                            com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte()
+                                            else -> 0x03.toByte()
+                                        }
+                                        com.securelegion.crypto.RustBridge.sendMessageDirect(
+                                            contact.messagingOnion ?: "",
+                                            encryptedBytes,
+                                            msgTypeByte,
+                                            message.messageId,
+                                            message.pingId ?: ""
+                                        )
+                                        Log.i(TAG, "Re-sent blob for ${message.messageId} after TAP")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to re-send blob for ${message.messageId} after TAP", e)
+                                }
+                            } else {
+                                Log.i(TAG, "→ ${message.messageId}: STATUS_SENT non-blob — re-pinging after TAP")
+                                try {
+                                    val result = messageService.sendPingForMessage(message)
+                                    if (result.isSuccess) {
+                                        database.messageDao().updateRetryState(
+                                            message.id,
+                                            message.retryCount + 1,
+                                            System.currentTimeMillis()
+                                        )
+                                        Log.i(TAG, "Retried Ping for ${message.messageId} after TAP")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to retry Ping for non-blob ${message.messageId} after TAP", e)
+                                }
+                            }
                             continue
                         }
 
@@ -8833,7 +8949,10 @@ class TorService : Service() {
                         }
                     }
                     delayedRetryRunnable = retryRunnable
-                    reconnectHandler.postDelayed(retryRunnable, 5000) // 5s — worker has its own circuits-up gate
+                    // 5s gate reopen + NETWORK_CHANGE_TAP_WARMUP_MS for HS circuits to rebuild.
+                    // Without enough warmup the TAP burst times out because circuits to peer
+                    // .onions are still being constructed against the new transport.
+                    reconnectHandler.postDelayed(retryRunnable, 5000L + NETWORK_CHANGE_TAP_WARMUP_MS)
 
                     // Network just came back — kick worker now too. Worker waits on the
                     // transport gate internally and re-schedules itself in 5s if circuits
@@ -8951,7 +9070,10 @@ class TorService : Service() {
                         }
                     }
                     delayedRetryRunnable = retryRunnable
-                    reconnectHandler.postDelayed(retryRunnable, 5000) // 5s — worker has its own circuits-up gate
+                    // 5s gate reopen + NETWORK_CHANGE_TAP_WARMUP_MS for HS circuits to rebuild.
+                    // Without enough warmup the TAP burst times out because circuits to peer
+                    // .onions are still being constructed against the new transport.
+                    reconnectHandler.postDelayed(retryRunnable, 5000L + NETWORK_CHANGE_TAP_WARMUP_MS)
 
                     // Network just came back — kick worker now too. Worker waits on the
                     // transport gate internally and re-schedules itself in 5s if circuits
@@ -9073,8 +9195,19 @@ class TorService : Service() {
                     // Start listener when health check detects reconnection
                     startIncomingListener()
 
-                    // Send taps to all contacts to notify them we're online
-                    sendTapsToAllContacts()
+                    // Send taps to all contacts to notify them we're online —
+                    // delayed so HS circuits to peers warm up after network swap.
+                    // Without this, TAPs fire seconds after gate.open() and time out
+                    // because circuits are still being rebuilt to the new transport.
+                    serviceScope.launch {
+                        kotlinx.coroutines.delay(NETWORK_CHANGE_TAP_WARMUP_MS)
+                        if (gate.isOpenNow()) {
+                            Log.i(TAG, "Network reconnect: warmup complete, sending TAPs")
+                            sendTapsToAllContacts()
+                        } else {
+                            Log.w(TAG, "Network reconnect: gate closed during warmup, skipping TAP burst")
+                        }
+                    }
 
                     updateNotification("Connected to Tor")
                 }
@@ -9175,11 +9308,8 @@ class TorService : Service() {
 
                 Log.i(TAG, "Listeners restarted successfully")
                 updateNotification("Connected to Tor")
-
-                // Show toast to user
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    com.securelegion.utils.ThemedToast.show(this, "Connection reset - please try again")
-                }
+                // Toast suppressed — listener restart is internal recovery, not a user error.
+                // Users shouldn't be interrupted with "please try again" when nothing they did failed.
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to restart listeners", e)
                 updateNotification("Restart failed - check connection")

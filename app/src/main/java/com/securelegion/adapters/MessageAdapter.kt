@@ -206,6 +206,33 @@ class MessageAdapter(
             R.drawable.reply_quote_received_bg
         }
         quoteBlock.setBackgroundResource(bgRes)
+
+        // When the quote sits on the blue `reply_quote_self_bg` (received bubble
+        // quoting the user's own message), the received-theme colors collapse:
+        // the label is blue-on-blue (invisible) and the snippet is gray-on-blue
+        // (unreadable in dark mode). Force white for that one case.
+        val isOnBlueSelfBg = isQuotingSelf && !message.isSentByMe
+        if (isOnBlueSelfBg) {
+            val white = 0xFFFFFFFF.toInt()
+            quoteLabel.setTextColor(white)
+            quoteText.setTextColor(white)
+        } else {
+            // Keep theme-aware defaults for every other combination.
+            quoteLabel.setTextColor(
+                androidx.core.content.ContextCompat.getColor(
+                    ctx,
+                    if (message.isSentByMe) R.color.reply_quote_label_sent
+                    else R.color.reply_quote_label_received
+                )
+            )
+            quoteText.setTextColor(
+                androidx.core.content.ContextCompat.getColor(
+                    ctx,
+                    if (message.isSentByMe) R.color.reply_quote_text_sent
+                    else R.color.reply_quote_text_received
+                )
+            )
+        }
     }
 
     /** Decrypt stored content, returning plaintext. Falls back to raw value on error. */
@@ -409,6 +436,7 @@ class MessageAdapter(
         val replyQuoteLabel: TextView = view.findViewById(R.id.replyQuoteLabel)
         val replyQuoteText: TextView = view.findViewById(R.id.replyQuoteText)
         val editedLabel: TextView = view.findViewById(R.id.editedLabel)
+        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
     }
 
     class ReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -423,6 +451,7 @@ class MessageAdapter(
         val replyQuoteLabel: TextView = view.findViewById(R.id.replyQuoteLabel)
         val replyQuoteText: TextView = view.findViewById(R.id.replyQuoteText)
         val editedLabel: TextView = view.findViewById(R.id.editedLabel)
+        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
     }
 
     class PendingMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -447,6 +476,7 @@ class MessageAdapter(
         val timestampText: TextView = view.findViewById(R.id.timestampText)
         val statusIcon: ImageView = view.findViewById(R.id.statusIcon)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
     }
 
     class VoiceReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -457,6 +487,7 @@ class MessageAdapter(
         val durationText: TextView = view.findViewById(R.id.durationText)
         val timestampText: TextView = view.findViewById(R.id.timestampText)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
     }
 
     class ImageSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -466,6 +497,7 @@ class MessageAdapter(
         val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
     }
 
     class ImageReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -474,6 +506,7 @@ class MessageAdapter(
         val messageImage: ImageView = view.findViewById(R.id.messageImage)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
     }
 
     class StickerSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -770,6 +803,10 @@ class MessageAdapter(
         // Edited label
         holder.editedLabel.visibility = if (message.isEdited) View.VISIBLE else View.GONE
 
+        // Self-destruct timer indicator
+        holder.timerIndicator.visibility =
+            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
             setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, holder.messageStatus, position, isSent = true)
@@ -836,6 +873,10 @@ class MessageAdapter(
 
         // Edited label
         holder.editedLabel.visibility = if (message.isEdited) View.VISIBLE else View.GONE
+
+        // Self-destruct timer indicator
+        holder.timerIndicator.visibility =
+            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
@@ -940,6 +981,10 @@ class MessageAdapter(
         // Set status icon (same as text messages - circle system)
         holder.statusIcon.setImageResource(getStatusIcon(message))
 
+        // Self-destruct timer indicator
+        holder.timerIndicator.visibility =
+            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+
         // Set play/pause icon based on current playback state
         val isPlaying = currentlyPlayingMessageId == message.messageId
         holder.playButton.setImageResource(
@@ -1010,6 +1055,10 @@ class MessageAdapter(
             if (isPlaying) R.drawable.ic_pause_blue else R.drawable.ic_play_blue
         )
 
+        // Self-destruct timer indicator
+        holder.timerIndicator.visibility =
+            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+
         // Handle selection mode
         if (isSelectionMode) {
             holder.messageCheckbox.visibility = View.VISIBLE
@@ -1076,6 +1125,10 @@ class MessageAdapter(
 
         holder.messageStatus.setImageResource(getStatusIcon(message))
 
+        // Self-destruct timer indicator
+        holder.timerIndicator.visibility =
+            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
             holder.timestampHeader.visibility = View.VISIBLE
@@ -1139,6 +1192,10 @@ class MessageAdapter(
     private fun bindImageReceivedMessage(holder: ImageReceivedMessageViewHolder, message: Message, position: Int) {
         // Load image from attachmentData (Base64 encoded)
         loadImageIntoView(holder.messageImage, message.attachmentData)
+
+        // Self-destruct timer indicator
+        holder.timerIndicator.visibility =
+            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {

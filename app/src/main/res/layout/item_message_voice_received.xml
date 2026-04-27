@@ -6,16 +6,33 @@
     android:orientation="vertical"
     android:padding="8dp">
 
-    <!-- Timestamp (moved to top) -->
-    <TextView
-        android:id="@+id/timestampText"
+    <!-- Timestamp + timer (moved to top) -->
+    <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="12:34 PM"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="11sp"
+        android:orientation="horizontal"
         android:layout_gravity="start"
-        android:layout_marginBottom="4dp" />
+        android:layout_marginBottom="4dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/timestampText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="12:34 PM"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="11sp" />
+
+        <ImageView
+            android:id="@+id/timerIndicator"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:layout_marginStart="4dp"
+            android:src="@drawable/ic_timer"
+            android:tint="?attr/colorOnSurfaceVariant"
+            android:contentDescription="Disappearing message"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"

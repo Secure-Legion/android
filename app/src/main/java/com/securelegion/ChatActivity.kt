@@ -712,8 +712,8 @@ class ChatActivity : BaseActivity() {
             }
         )
 
-        // Fetch initial prices
-        fetchCryptoPrices()
+        // Payment cards are disabled across all flavors until wallet rollout.
+        // fetchCryptoPrices() / refreshPaymentPrice() retained below for that future wire-up.
 
         // Enable stable IDs BEFORE attaching adapter (must be done before observers register)
         messageAdapter.chatContactName = contactName
