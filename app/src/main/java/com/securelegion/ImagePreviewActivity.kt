@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 
 class ImagePreviewActivity : AppCompatActivity() {
 
@@ -54,6 +55,7 @@ class ImagePreviewActivity : AppCompatActivity() {
     private var pendingCropDestUri: Uri? = null
     private var isDrawMode = false
     private var currentBrushColor = Color.RED
+    private var hasEditorOverlays = false
 
     // UCrop result handler
     private val cropLauncher = registerForActivityResult(
@@ -216,6 +218,7 @@ class ImagePreviewActivity : AppCompatActivity() {
                 photoEditor.brushColor = currentBrushColor
                 photoEditor.brushSize = 8f
             }
+            hasEditorOverlays = true
             btnDraw.setBackgroundResource(R.drawable.bg_tool_button_active)
             colorStrip.visibility = View.VISIBLE
         } else {
@@ -341,6 +344,7 @@ class ImagePreviewActivity : AppCompatActivity() {
                 val text = input.text.toString().trim()
                 if (text.isNotEmpty()) {
                     photoEditor.addText(text, currentBrushColor)
+                    hasEditorOverlays = true
                     updateUndoRedoVisibility()
                 }
             }
@@ -353,7 +357,11 @@ class ImagePreviewActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val tempFile = withContext(Dispatchers.IO) {
-                    saveBitmapToTemp("edited_image")
+                    if (hasEditorOverlays) {
+                        saveBitmapToTemp("edited_image")
+                    } else {
+                        copyCurrentImageToTemp("image_send")
+                    }
                 }
                 if (tempFile != null && tempFile.exists() && tempFile.length() > 0) {
                     Log.d(TAG, "Saved edited image: ${tempFile.absolutePath}, size: ${tempFile.length()} bytes")
@@ -370,6 +378,23 @@ class ImagePreviewActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to save edited image", e)
                 ThemedToast.show(this@ImagePreviewActivity, "Failed to save image")
             }
+        }
+    }
+
+    private fun copyCurrentImageToTemp(prefix: String): File? {
+        val sourceUri = currentImageUri ?: return null
+        return try {
+            val imagesCacheDir = File(cacheDir, "images").apply { mkdirs() }
+            val tempFile = File(imagesCacheDir, "${prefix}_${System.currentTimeMillis()}.img")
+            contentResolver.openInputStream(sourceUri)?.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return null
+            tempFile
+        } catch (e: Exception) {
+            Log.e(TAG, "copyCurrentImageToTemp failed", e)
+            null
         }
     }
 

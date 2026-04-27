@@ -581,41 +581,78 @@ class MessageService(private val context: Context) {
             context.sendBroadcast(intent)
             Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
 
-            // Immediately attempt to send Ping
             Log.i(TAG, "Voice message queued successfully: $messageId (Ping ID: $pingId)")
-            Log.d(TAG, "Attempting immediate Ping send...")
 
+            // FAST-FIRST: try direct send (no PING/PONG) on a single Arti circuit.
+            // On any failure, fall back to the queued PING/PONG worker path.
+            var fastSucceeded = false
             try {
-                val sendResult = sendPingForMessage(savedMessage)
-                if (sendResult.isSuccess) {
-                    Log.i(TAG, "Ping sent successfully, will poll for Pong later")
+                Log.i(TAG, "[FAST_MODE] Attempting direct voice send: $messageId")
+                val resultJson = com.securelegion.crypto.RustBridge.sendMessageDirect(
+                    contact.messagingOnion ?: "",
+                    encryptedBytes,
+                    0x04.toByte(), // VOICE
+                    messageId,
+                    pingId
+                )
+                if (resultJson != null) {
+                    val json = org.json.JSONObject(resultJson)
+                    val success = json.optBoolean("success", false)
+                    val ackReceived = json.optBoolean("ackReceived", false)
+                    if (success && ackReceived) {
+                        Log.i(TAG, "[FAST_MODE] Voice sent + ACK received (same connection): $messageId")
+                        database.messageDao().updateMessageDeliveredStatus(savedMessage.id, true, Message.STATUS_DELIVERED)
+                        context.sendBroadcast(android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                            setPackage(context.packageName)
+                            putExtra("CONTACT_ID", contactId)
+                        })
+                        fastSucceeded = true
+                    } else if (success) {
+                        Log.i(TAG, "[FAST_MODE] Voice sent, ACK will arrive via listener: $messageId")
+                        database.messageDao().updatePingDeliveredStatus(savedMessage.id, pingDelivered = true, status = Message.STATUS_SENT)
+                        fastSucceeded = true
+                    } else {
+                        Log.w(TAG, "[FAST_MODE] Voice direct send returned success=false, falling back: $messageId")
+                    }
                 } else {
-                    val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.w(TAG, "Ping send failed: $errorMsg")
+                    Log.w(TAG, "[FAST_MODE] Voice direct send returned null, falling back: $messageId")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[FAST_MODE] Voice direct send threw, falling back to PING/PONG: ${e.message}")
+            }
 
-                    // Immediate retry with delay if Tor is warming up
-                    if (errorMsg.contains("warming up")) {
-                        val delayMs = Regex("retry in (\\d+)ms").find(errorMsg)?.groupValues?.get(1)?.toLongOrNull() ?: 2000L
-                        Log.i(TAG, "Scheduling immediate retry in ${delayMs}ms...")
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                            kotlinx.coroutines.delay(delayMs + 500)
-                            try {
-                                val retryResult = sendPingForMessage(savedMessage)
-                                if (retryResult.isSuccess) {
-                                    Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
-                                } else {
-                                    Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
+            if (!fastSucceeded) {
+                Log.d(TAG, "Voice fast-mode failed; attempting PING send for tracked fallback...")
+                try {
+                    val sendResult = sendPingForMessage(savedMessage)
+                    if (sendResult.isSuccess) {
+                        Log.i(TAG, "Ping sent successfully, will poll for Pong later")
+                    } else {
+                        val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
+                        Log.w(TAG, "Ping send failed: $errorMsg")
+
+                        if (errorMsg.contains("warming up")) {
+                            val delayMs = Regex("retry in (\\d+)ms").find(errorMsg)?.groupValues?.get(1)?.toLongOrNull() ?: 2000L
+                            Log.i(TAG, "Scheduling immediate retry in ${delayMs}ms...")
+                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                kotlinx.coroutines.delay(delayMs + 500)
+                                try {
+                                    val retryResult = sendPingForMessage(savedMessage)
+                                    if (retryResult.isSuccess) {
+                                        Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
+                                    } else {
+                                        Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Retry after warm-up threw exception: ${e.message}")
                                 }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Retry after warm-up threw exception: ${e.message}")
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
-
 
             Result.success(savedMessage)
 
@@ -793,41 +830,78 @@ class MessageService(private val context: Context) {
             context.sendBroadcast(intent)
             Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
 
-            // Immediately attempt to send Ping
             Log.i(TAG, "Image message queued successfully: $messageId (Ping ID: $pingId)")
-            Log.d(TAG, "Attempting immediate Ping send...")
 
+            // FAST-FIRST: try direct send (no PING/PONG) on a single Arti circuit.
+            // On any failure, fall back to the queued PING/PONG worker path.
+            var fastSucceeded = false
             try {
-                val sendResult = sendPingForMessage(savedMessage)
-                if (sendResult.isSuccess) {
-                    Log.i(TAG, "Ping sent successfully, will poll for Pong later")
+                Log.i(TAG, "[FAST_MODE] Attempting direct image send: $messageId")
+                val resultJson = com.securelegion.crypto.RustBridge.sendMessageDirect(
+                    contact.messagingOnion ?: "",
+                    encryptedBytes,
+                    0x09.toByte(), // IMAGE
+                    messageId,
+                    pingId
+                )
+                if (resultJson != null) {
+                    val json = org.json.JSONObject(resultJson)
+                    val success = json.optBoolean("success", false)
+                    val ackReceived = json.optBoolean("ackReceived", false)
+                    if (success && ackReceived) {
+                        Log.i(TAG, "[FAST_MODE] Image sent + ACK received (same connection): $messageId")
+                        database.messageDao().updateMessageDeliveredStatus(savedMessage.id, true, Message.STATUS_DELIVERED)
+                        context.sendBroadcast(android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                            setPackage(context.packageName)
+                            putExtra("CONTACT_ID", contactId)
+                        })
+                        fastSucceeded = true
+                    } else if (success) {
+                        Log.i(TAG, "[FAST_MODE] Image sent, ACK will arrive via listener: $messageId")
+                        database.messageDao().updatePingDeliveredStatus(savedMessage.id, pingDelivered = true, status = Message.STATUS_SENT)
+                        fastSucceeded = true
+                    } else {
+                        Log.w(TAG, "[FAST_MODE] Image direct send returned success=false, falling back: $messageId")
+                    }
                 } else {
-                    val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.w(TAG, "Ping send failed: $errorMsg")
+                    Log.w(TAG, "[FAST_MODE] Image direct send returned null, falling back: $messageId")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[FAST_MODE] Image direct send threw, falling back to PING/PONG: ${e.message}")
+            }
 
-                    // Immediate retry with delay if Tor is warming up
-                    if (errorMsg.contains("warming up")) {
-                        val delayMs = Regex("retry in (\\d+)ms").find(errorMsg)?.groupValues?.get(1)?.toLongOrNull() ?: 2000L
-                        Log.i(TAG, "Scheduling immediate retry in ${delayMs}ms...")
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                            kotlinx.coroutines.delay(delayMs + 500)
-                            try {
-                                val retryResult = sendPingForMessage(savedMessage)
-                                if (retryResult.isSuccess) {
-                                    Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
-                                } else {
-                                    Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
+            if (!fastSucceeded) {
+                Log.d(TAG, "Image fast-mode failed; attempting PING send for tracked fallback...")
+                try {
+                    val sendResult = sendPingForMessage(savedMessage)
+                    if (sendResult.isSuccess) {
+                        Log.i(TAG, "Ping sent successfully, will poll for Pong later")
+                    } else {
+                        val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
+                        Log.w(TAG, "Ping send failed: $errorMsg")
+
+                        if (errorMsg.contains("warming up")) {
+                            val delayMs = Regex("retry in (\\d+)ms").find(errorMsg)?.groupValues?.get(1)?.toLongOrNull() ?: 2000L
+                            Log.i(TAG, "Scheduling immediate retry in ${delayMs}ms...")
+                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                kotlinx.coroutines.delay(delayMs + 500)
+                                try {
+                                    val retryResult = sendPingForMessage(savedMessage)
+                                    if (retryResult.isSuccess) {
+                                        Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
+                                    } else {
+                                        Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Retry after warm-up threw exception: ${e.message}")
                                 }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Retry after warm-up threw exception: ${e.message}")
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
-
 
             Result.success(savedMessage)
 

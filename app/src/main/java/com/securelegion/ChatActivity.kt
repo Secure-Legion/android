@@ -1688,8 +1688,15 @@ class ChatActivity : BaseActivity() {
             // Save button — hand the ORIGINAL decrypted bytes to the saver so
             // GIFs keep their animation instead of being re-encoded as a
             // single-frame JPEG.
-            view.findViewById<View>(R.id.saveImageButton).setOnClickListener {
-                saveImageToGallery(imageBytes, bitmap)
+            val saveImageButton = view.findViewById<View>(R.id.saveImageButton)
+            val saveImageIcon = view.findViewById<ImageView>(R.id.saveImageIcon)
+            saveImageButton.setOnClickListener {
+                val saved = saveImageToGallery(imageBytes, bitmap)
+                if (saved) {
+                    saveImageIcon.setImageResource(R.drawable.ic_save_confirm)
+                    saveImageButton.isEnabled = false
+                    saveImageButton.isClickable = false
+                }
             }
 
             dialog.setContentView(view)
@@ -1733,8 +1740,8 @@ class ChatActivity : BaseActivity() {
      * preserved. Everything else is JPEG-encoded from the decoded bitmap
      * as before.
      */
-    private fun saveImageToGallery(originalBytes: ByteArray, bitmap: android.graphics.Bitmap) {
-        try {
+    private fun saveImageToGallery(originalBytes: ByteArray, bitmap: android.graphics.Bitmap): Boolean {
+        return try {
             val isGif = originalBytes.size >= 4 &&
                 originalBytes[0] == 'G'.code.toByte() &&
                 originalBytes[1] == 'I'.code.toByte() &&
@@ -1761,15 +1768,17 @@ class ChatActivity : BaseActivity() {
                         bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, outputStream)
                     }
                 }
-                ThemedToast.show(this, if (isGif) "GIF saved to gallery" else "Image saved to gallery")
                 Log.i(TAG, "Image saved to gallery: $filename (gif=$isGif)")
+                true
             } else {
                 ThemedToast.show(this, "Failed to save image")
                 Log.e(TAG, "Failed to create MediaStore entry")
+                false
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save image to gallery", e)
             ThemedToast.show(this, "Failed to save image: ${e.message}")
+            false
         }
     }
 
@@ -3385,5 +3394,3 @@ class ChatActivity : BaseActivity() {
     }
 
 }
-
-
