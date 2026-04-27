@@ -522,6 +522,15 @@ class MessageService(private val context: Context) {
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID: ${pingId.take(16)}... (timestamp: $pingTimestamp)")
 
+            // Compute blob_id for delivery-ACK matching from iOS receivers (parity with
+            // text/sticker sends). iOS ACKs with item_id = blob_<base64(SHA256(encrypted)).take(28)>;
+            // without correlationId set, handleIncomingAck cannot match and the row sticks
+            // at STATUS_SENT forever. See android-image-ack-fix handoff (2026-04-27).
+            val blobMessageId = run {
+                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+                "blob_" + Base64.encodeToString(hash, Base64.NO_WRAP).take(28)
+            }
+
             // Create message entity with VOICE type
             val message = Message(
                 contactId = contactId,
@@ -543,7 +552,8 @@ class MessageService(private val context: Context) {
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
-                lastRetryTimestamp = currentTime
+                lastRetryTimestamp = currentTime,
+                correlationId = blobMessageId
             )
 
             Log.d(TAG, "Voice message queued for persistent delivery (PING_SENT)")
@@ -715,6 +725,15 @@ class MessageService(private val context: Context) {
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID: $pingId")
 
+            // Compute blob_id for delivery-ACK matching. iOS sends MESSAGE_ACK with
+            // item_id = blob_<base64(SHA256(encrypted_payload)).take(28)>; without
+            // correlationId set, handleIncomingAck cannot match the ACK and the row
+            // stays at STATUS_SENT forever. Same formula as text/sticker sends.
+            val blobMessageId = run {
+                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+                "blob_" + Base64.encodeToString(hash, Base64.NO_WRAP).take(28)
+            }
+
             // Save image to file encrypted at rest (AES-256-GCM, prevents CursorWindow overflow)
             val imageDir = java.io.File(context.filesDir, "image_messages")
             imageDir.mkdirs()
@@ -745,7 +764,8 @@ class MessageService(private val context: Context) {
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
-                lastRetryTimestamp = currentTime
+                lastRetryTimestamp = currentTime,
+                correlationId = blobMessageId
             )
 
             Log.d(TAG, "Image message queued for persistent delivery (PING_SENT)")

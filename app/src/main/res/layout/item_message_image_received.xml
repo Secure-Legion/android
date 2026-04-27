@@ -49,9 +49,7 @@
             <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/messageImage"
                 android:layout_width="240dp"
-                android:layout_height="wrap_content"
-                android:adjustViewBounds="true"
-                android:maxHeight="300dp"
+                android:layout_height="300dp"
                 android:scaleType="centerCrop"
                 app:shapeAppearanceOverlay="@style/RoundedImageShape"
                 android:contentDescription="Image message" />
