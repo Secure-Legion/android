@@ -15,8 +15,9 @@
 ///   `crdtPrepareSyncChunks`, `crdtApplySyncChunk`
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jbyteArray, jstring, JNI_TRUE, JNI_FALSE};
+use jni::sys::{jboolean, jstring, JNI_TRUE, JNI_FALSE};
 use jni::JNIEnv;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::panic;
 use std::sync::Mutex;
@@ -31,9 +32,11 @@ use crate::crdt::ops::{
     MsgDeletePayload, ReactionSetPayload, MetadataSetPayload,
     generate_msg_id,
 };
-use crate::crdt::limits::{MAX_OP_PAYLOAD_BYTES, HARD_CAP_OPS_PER_GROUP};
+use crate::crdt::limits::{MAX_OP_PAYLOAD_BYTES, HARD_CAP_OPS_PER_GROUP, MAX_OPS_PER_SYNC_ROUND};
 use crate::crdt::apply::GroupState;
 use crate::crdt::messages::MessageEntry;
+use crate::crdt::sync::manager::{SyncManager, SyncBackend, StartError};
+use crate::crdt::sync::session::SyncAction;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,12 +58,59 @@ static GROUPS: OnceLock<Mutex<HashMap<GroupID, GroupState>>> = OnceLock::new();
 /// Per-group lamport counter for the local device.
 static MY_LAMPORT: OnceLock<Mutex<HashMap<GroupID, u64>>> = OnceLock::new();
 
+/// Phase 6 sync manager. `None` until `crdtSyncInit` is called.
+///
+/// **Reentrancy contract**: Kotlin code invoked via the `SyncBackend` callback
+/// (`syncBackendComputeDelta`) MUST NOT call any `crdtSync*` JNI function. Doing
+/// so will deadlock on this mutex. The callback is for op-log queries only.
+static SYNC_MGR: OnceLock<Mutex<Option<SyncManager>>> = OnceLock::new();
+
 fn get_groups() -> &'static Mutex<HashMap<GroupID, GroupState>> {
     GROUPS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn get_lamport_map() -> &'static Mutex<HashMap<GroupID, u64>> {
     MY_LAMPORT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_sync_mgr() -> &'static Mutex<Option<SyncManager>> {
+    SYNC_MGR.get_or_init(|| Mutex::new(None))
+}
+
+thread_local! {
+    /// Per-thread reentrancy flag. Set on entry to any `crdtSync*` function;
+    /// cleared on exit. If a Kotlin callback invoked via the SyncBackend tries
+    /// to re-enter, we detect it here BEFORE the SYNC_MGR mutex deadlocks.
+    static SYNC_REENTRANCY_GUARD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// RAII guard that enforces single-entry into the sync JNI surface per thread.
+/// `enter()` returns `Err(())` if the current thread is already inside a
+/// `crdtSync*` call (i.e. Kotlin re-entered via syncBackendComputeDelta).
+struct SyncReentrancyGuard;
+
+impl SyncReentrancyGuard {
+    fn enter() -> Result<Self, ()> {
+        SYNC_REENTRANCY_GUARD.with(|g| {
+            if g.get() {
+                log::error!(
+                    "SYNC: REENTRANCY DETECTED — Kotlin re-entered crdtSync* from \
+                     inside syncBackendComputeDelta. The callback MUST NOT call any \
+                     crdtSync* function. Aborting to prevent SYNC_MGR mutex deadlock."
+                );
+                Err(())
+            } else {
+                g.set(true);
+                Ok(SyncReentrancyGuard)
+            }
+        })
+    }
+}
+
+impl Drop for SyncReentrancyGuard {
+    fn drop(&mut self) {
+        SYNC_REENTRANCY_GUARD.with(|g| g.set(false));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -70,11 +120,6 @@ fn get_lamport_map() -> &'static Mutex<HashMap<GroupID, u64>> {
 fn jbytearray_to_vec(env: &mut JNIEnv, array: JByteArray) -> Result<Vec<u8>, String> {
     env.convert_byte_array(array)
         .map_err(|e| format!("Failed to convert byte array: {}", e))
-}
-
-fn vec_to_jbytearray<'a>(env: &mut JNIEnv<'a>, data: &[u8]) -> Result<JByteArray<'a>, String> {
-    env.byte_array_from_slice(data)
-        .map_err(|e| format!("Failed to create byte array: {}", e))
 }
 
 fn jstring_to_string(env: &mut JNIEnv, string: JString) -> Result<String, String> {
@@ -973,65 +1018,489 @@ fn message_to_json(msg: &MessageEntry) -> serde_json::Value {
 }
 
 // ===========================================================================
-// 6-9. Sync stubs (Phase 6 implementation)
+// 6. Sync — Phase 6 manager-backed implementation
 // ===========================================================================
+//
+// Six functions:
+//   crdtSyncInit            — set local DeviceID, allocate manager
+//   crdtSyncBuildHello      — start outbound (Initiator) session
+//   crdtSyncProcessFrame    — single inbound entrypoint
+//   crdtSyncTick            — periodic timeout sweep
+//   crdtSyncListSessions    — observability snapshot
+//   crdtSyncAbortGroup      — abort all sessions for a group
+//
+// All sync functions return JSON action arrays that Kotlin executes:
+//   [{"type":"SendFrame","wireType":51,"bytesB64":"..."},
+//    {"type":"PersistOps","opsBytesB64":"..."},   // length-prefixed packed ops
+//    {"type":"CloseSession","reason":"Normal"}]
+//
+// `crdtSyncProcessFrame` will, on inbound HELLO, call back into Kotlin via
+// `RustBridge.syncBackendComputeDelta(groupIdHex, headsJson, bloomB64, bloomK)`.
+// Kotlin returns a length-prefixed packed-ops byte[] of the delta. Reentrancy
+// is forbidden — see SYNC_MGR doc.
 
+/// JSON serialization of a heads map: `{"<deviceHex>": <lamport>, ...}`.
+fn heads_to_json(heads: &HashMap<DeviceID, u64>) -> String {
+    let map: serde_json::Map<String, serde_json::Value> = heads
+        .iter()
+        .map(|(d, l)| (d.to_hex(), serde_json::Value::from(*l)))
+        .collect();
+    serde_json::Value::Object(map).to_string()
+}
+
+/// Inverse of `heads_to_json`. Tolerant: ignores entries with bad hex/numbers.
+fn heads_from_json(s: &str) -> HashMap<DeviceID, u64> {
+    let mut out = HashMap::new();
+    let v: serde_json::Value = match serde_json::from_str(s) {
+        Ok(v) => v,
+        Err(_) => return out,
+    };
+    if let Some(obj) = v.as_object() {
+        for (k, v) in obj {
+            if let (Ok(d), Some(l)) = (DeviceID::from_hex(k), v.as_u64()) {
+                out.insert(d, l);
+            }
+        }
+    }
+    out
+}
+
+/// Length-prefix-pack a list of OpEnvelopes for transport across the JNI
+/// boundary. Same encoding as `decode_length_prefixed_ops` in this file.
+fn pack_ops_length_prefixed(ops: &[OpEnvelope]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for op in ops {
+        if let Ok(b) = op.to_bytes() {
+            out.extend_from_slice(&(b.len() as u32).to_be_bytes());
+            out.extend_from_slice(&b);
+        }
+    }
+    out
+}
+
+/// Convert a `Vec<SyncAction>` to the JSON wire format Kotlin parses.
+fn actions_to_json(actions: &[SyncAction]) -> String {
+    use serde_json::json;
+    let arr: Vec<serde_json::Value> = actions
+        .iter()
+        .map(|a| match a {
+            SyncAction::SendFrame { wire_type, bytes } => json!({
+                "type": "SendFrame",
+                "wireType": *wire_type as u32,
+                "bytesB64": B64.encode(bytes),
+            }),
+            SyncAction::PersistOps(ops) => json!({
+                "type": "PersistOps",
+                "opsBytesB64": B64.encode(pack_ops_length_prefixed(ops)),
+            }),
+            SyncAction::CloseSession { reason } => json!({
+                "type": "CloseSession",
+                "reason": format!("{:?}", reason),
+            }),
+        })
+        .collect();
+    serde_json::Value::Array(arr).to_string()
+}
+
+/// Bridge `SyncBackend::compute_delta` to a synchronous Kotlin static call.
+///
+/// **Reentrancy**: the Kotlin callback MUST NOT invoke any `crdtSync*`
+/// function (would deadlock SYNC_MGR). It is permitted to read the DAO
+/// and return a packed-ops byte[].
+struct JniBackend<'a, 'env> {
+    env: &'a mut JNIEnv<'env>,
+}
+
+impl<'a, 'env> SyncBackend for JniBackend<'a, 'env> {
+    fn compute_delta(
+        &mut self,
+        group_id: &GroupID,
+        peer_heads: &HashMap<DeviceID, u64>,
+        peer_bloom: &[u8],
+        peer_bloom_k: u8,
+    ) -> Vec<OpEnvelope> {
+        let group_hex = group_id.to_hex();
+        let heads_json = heads_to_json(peer_heads);
+        let bloom_b64 = B64.encode(peer_bloom);
+
+        let group_jstr = match self.env.new_string(&group_hex) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("JniBackend: new_string(group) failed: {:?}", e);
+                return vec![];
+            }
+        };
+        let heads_jstr = match self.env.new_string(&heads_json) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("JniBackend: new_string(heads) failed: {:?}", e);
+                return vec![];
+            }
+        };
+        let bloom_jstr = match self.env.new_string(&bloom_b64) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("JniBackend: new_string(bloom) failed: {:?}", e);
+                return vec![];
+            }
+        };
+        let bridge_class = match self.env.find_class("com/securelegion/crypto/RustBridge") {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("JniBackend: find_class(RustBridge) failed: {:?}", e);
+                return vec![];
+            }
+        };
+
+        use jni::objects::{JObject, JValue};
+        let group_obj = JObject::from(group_jstr);
+        let heads_obj = JObject::from(heads_jstr);
+        let bloom_obj = JObject::from(bloom_jstr);
+        let result = self.env.call_static_method(
+            &bridge_class,
+            "syncBackendComputeDelta",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)[B",
+            &[
+                JValue::Object(&group_obj),
+                JValue::Object(&heads_obj),
+                JValue::Object(&bloom_obj),
+                JValue::Int(peer_bloom_k as i32),
+            ],
+        );
+
+        let arr_obj = match result {
+            Ok(v) => match v.l() {
+                Ok(o) => o,
+                Err(e) => {
+                    log::error!("JniBackend: result.l() failed: {:?}", e);
+                    return vec![];
+                }
+            },
+            Err(e) => {
+                log::error!("JniBackend: call_static_method(syncBackendComputeDelta) failed: {:?}", e);
+                if self.env.exception_check().unwrap_or(false) {
+                    let _ = self.env.exception_clear();
+                }
+                return vec![];
+            }
+        };
+
+        if arr_obj.is_null() {
+            return vec![];
+        }
+        let arr = JByteArray::from(arr_obj);
+        let bytes = match self.env.convert_byte_array(&arr) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("JniBackend: convert_byte_array failed: {:?}", e);
+                return vec![];
+            }
+        };
+
+        match decode_length_prefixed_ops(&bytes, MAX_OPS_PER_SYNC_ROUND, MAX_SERIALIZED_OP_BYTES) {
+            Ok(ops) => ops,
+            Err(e) => {
+                log::error!("JniBackend: delta decode failed: {}", e);
+                vec![]
+            }
+        }
+    }
+}
+
+// -------------------- 6.0 crdtDeriveDeviceId --------------------
+
+/// Derive a CRDT DeviceID from an Ed25519 public key.
+/// Returns the 32-char hex of `BLAKE3(pubkey)[..16]`. Empty string on error.
 #[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtGenerateSyncHello(
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtDeriveDeviceId(
     mut env: JNIEnv,
     _class: JClass,
-    _peer_device_id_hex: JString,
-) -> jbyteArray {
+    pubkey_bytes: JByteArray,
+) -> jstring {
     catch_panic!(env, {
-        log::warn!("crdtGenerateSyncHello: stub — not implemented until Phase 6");
-        match vec_to_jbytearray(&mut env, &[]) {
-            Ok(arr) => arr.into_raw(),
+        let bytes = match jbytearray_to_vec(&mut env, pubkey_bytes) {
+            Ok(b) => b,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        if bytes.len() != 32 {
+            return std::ptr::null_mut();
+        }
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&bytes);
+        let device = DeviceID::from_pubkey(&pk);
+        match env.new_string(device.to_hex()) {
+            Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
 }
 
+// -------------------- 6.1 crdtSyncInit --------------------
+
+/// Initialize the global SyncManager. Caller passes the local Ed25519
+/// public key (32 bytes); Rust derives DeviceID via BLAKE3.
+///
+/// Idempotent: safe to call multiple times; later calls replace the manager
+/// (aborting any in-flight sessions).
 #[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtProcessSyncHello(
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtSyncInit(
     mut env: JNIEnv,
     _class: JClass,
-    _peer_device_id_hex: JString,
-    _hello_bytes: JByteArray,
-) -> jbyteArray {
+    local_pubkey_bytes: JByteArray,
+) -> jboolean {
     catch_panic!(env, {
-        log::warn!("crdtProcessSyncHello: stub — not implemented until Phase 6");
-        match vec_to_jbytearray(&mut env, &[]) {
-            Ok(arr) => arr.into_raw(),
+        let _guard = match SyncReentrancyGuard::enter() {
+            Ok(g) => g,
+            Err(_) => return JNI_FALSE,
+        };
+        let bytes = match jbytearray_to_vec(&mut env, local_pubkey_bytes) {
+            Ok(b) => b,
+            Err(e) => { log::error!("crdtSyncInit: {}", e); return JNI_FALSE; }
+        };
+        if bytes.len() != 32 {
+            log::error!("crdtSyncInit: pubkey must be 32 bytes, got {}", bytes.len());
+            return JNI_FALSE;
+        }
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&bytes);
+        let device = DeviceID::from_pubkey(&pk);
+        let mut guard = get_sync_mgr().lock().unwrap();
+        if let Some(old) = guard.as_mut() {
+            let _ = old.abort_all();
+        }
+        *guard = Some(SyncManager::new(device));
+        log::info!("crdtSyncInit: SyncManager initialized for device={}", device.to_hex());
+        JNI_TRUE
+    }, JNI_FALSE)
+}
+
+// -------------------- 6.2 crdtSyncBuildHello --------------------
+
+/// Start an outbound (Initiator) sync session.
+///
+/// Returns a JSON action array. On error (peer == self, cap reached, etc.)
+/// returns `[{"type":"Error","kind":"<StartError>"}]`.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtSyncBuildHello(
+    mut env: JNIEnv,
+    _class: JClass,
+    group_id_hex: JString,
+    peer_device_id_hex: JString,
+    heads_json: JString,
+    bloom_b64: JString,
+    bloom_k: jni::sys::jint,
+    bloom_n: jni::sys::jint,
+    session_id: jni::sys::jlong,
+    now_ms: jni::sys::jlong,
+) -> jstring {
+    catch_panic!(env, {
+        let _guard = match SyncReentrancyGuard::enter() {
+            Ok(g) => g,
+            Err(_) => throw_state!(env, "crdtSyncBuildHello: reentrant call"),
+        };
+        let gid = match parse_group_id(&mut env, group_id_hex) {
+            Ok(g) => g,
+            Err(e) => throw_arg!(env, format!("crdtSyncBuildHello: {}", e)),
+        };
+        let peer_hex = match jstring_to_string(&mut env, peer_device_id_hex) {
+            Ok(s) => s,
+            Err(e) => throw_arg!(env, format!("crdtSyncBuildHello: {}", e)),
+        };
+        let peer = match DeviceID::from_hex(&peer_hex) {
+            Ok(d) => d,
+            Err(e) => throw_arg!(env, format!("crdtSyncBuildHello peer: {}", e)),
+        };
+        let heads_str = jstring_to_string(&mut env, heads_json).unwrap_or_default();
+        let heads = heads_from_json(&heads_str);
+        let bloom_str = jstring_to_string(&mut env, bloom_b64).unwrap_or_default();
+        let bloom = B64.decode(&bloom_str).unwrap_or_default();
+
+        let mut guard = get_sync_mgr().lock().unwrap();
+        let mgr = match guard.as_mut() {
+            Some(m) => m,
+            None => throw_state!(env, "SyncManager not initialized — call crdtSyncInit first"),
+        };
+
+        let actions_or_err = mgr.start_initiator(
+            gid, peer, heads, bloom,
+            bloom_k as u8,
+            bloom_n.max(0) as u32,
+            session_id as u64,
+            now_ms as u64,
+        );
+
+        let json = match actions_or_err {
+            Ok(actions) => actions_to_json(&actions),
+            Err(e) => {
+                let kind = match e {
+                    StartError::GlobalCapReached => "GlobalCapReached",
+                    StartError::SessionAlreadyExists => "SessionAlreadyExists",
+                    StartError::PeerRateLimited => "PeerRateLimited",
+                    StartError::EncodeError(_) => "EncodeError",
+                    StartError::SelfPeer => "SelfPeer",
+                };
+                format!("[{{\"type\":\"Error\",\"kind\":\"{}\"}}]", kind)
+            }
+        };
+        drop(guard);
+
+        match env.new_string(&json) {
+            Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
 }
 
+// -------------------- 6.3 crdtSyncProcessFrame --------------------
+
+/// Process an inbound transport frame.
+///
+/// `wire_type` is the Tor byte (0x31..0x34). `body_bytes` is the decoded
+/// transport body (no transport envelope, no signature — the manager parses
+/// the bincode SyncFrame directly).
+///
+/// Returns a JSON action array.
 #[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtPrepareSyncChunks(
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtSyncProcessFrame(
     mut env: JNIEnv,
     _class: JClass,
-    _request_bytes: JByteArray,
-) -> jbyteArray {
+    peer_device_id_hex: JString,
+    wire_type: jni::sys::jint,
+    body_bytes: JByteArray,
+    now_ms: jni::sys::jlong,
+) -> jstring {
     catch_panic!(env, {
-        log::warn!("crdtPrepareSyncChunks: stub — not implemented until Phase 6");
-        match vec_to_jbytearray(&mut env, &[]) {
-            Ok(arr) => arr.into_raw(),
+        let _guard = match SyncReentrancyGuard::enter() {
+            Ok(g) => g,
+            Err(_) => throw_state!(env, "crdtSyncProcessFrame: reentrant call"),
+        };
+        let peer_hex = match jstring_to_string(&mut env, peer_device_id_hex) {
+            Ok(s) => s,
+            Err(e) => throw_arg!(env, format!("crdtSyncProcessFrame: {}", e)),
+        };
+        let peer = match DeviceID::from_hex(&peer_hex) {
+            Ok(d) => d,
+            Err(e) => throw_arg!(env, format!("crdtSyncProcessFrame peer: {}", e)),
+        };
+        let body = match jbytearray_to_vec(&mut env, body_bytes) {
+            Ok(b) => b,
+            Err(e) => throw_arg!(env, format!("crdtSyncProcessFrame body: {}", e)),
+        };
+
+        let actions = {
+            let mut backend = JniBackend { env: &mut env };
+            let mut guard = get_sync_mgr().lock().unwrap();
+            let mgr = match guard.as_mut() {
+                Some(m) => m,
+                None => {
+                    drop(guard);
+                    throw_state!(env, "SyncManager not initialized — call crdtSyncInit first")
+                }
+            };
+            mgr.process_frame(
+                &mut backend,
+                peer,
+                wire_type as u8,
+                &body,
+                now_ms as u64,
+            )
+        };
+
+        let json = actions_to_json(&actions);
+        match env.new_string(&json) {
+            Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
 }
 
+// -------------------- 6.4 crdtSyncTick --------------------
+
+/// Periodic tick (caller drives, e.g. once per second from a background loop).
+/// Fires timeout transitions for stale sessions and returns CloseSession
+/// actions for any harvested.
 #[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtApplySyncChunk(
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtSyncTick(
     mut env: JNIEnv,
     _class: JClass,
-    _chunk_bytes: JByteArray,
-) -> jbyteArray {
+    now_ms: jni::sys::jlong,
+) -> jstring {
     catch_panic!(env, {
-        log::warn!("crdtApplySyncChunk: stub — not implemented until Phase 6");
-        match vec_to_jbytearray(&mut env, &[]) {
-            Ok(arr) => arr.into_raw(),
+        let _guard = match SyncReentrancyGuard::enter() {
+            Ok(g) => g,
+            Err(_) => throw_state!(env, "crdtSyncTick: reentrant call"),
+        };
+        let actions = {
+            let mut guard = get_sync_mgr().lock().unwrap();
+            match guard.as_mut() {
+                Some(m) => m.tick(now_ms as u64),
+                None => vec![],
+            }
+        };
+        let json = actions_to_json(&actions);
+        match env.new_string(&json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+// -------------------- 6.5 crdtSyncListSessions --------------------
+
+/// Observability snapshot. Returns a JSON array of `SessionInfo`.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtSyncListSessions(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        let _guard = match SyncReentrancyGuard::enter() {
+            Ok(g) => g,
+            Err(_) => throw_state!(env, "crdtSyncListSessions: reentrant call"),
+        };
+        let snapshot = {
+            let guard = get_sync_mgr().lock().unwrap();
+            match guard.as_ref() {
+                Some(m) => m.list_sessions(),
+                None => vec![],
+            }
+        };
+        let json = serde_json::to_string(&snapshot).unwrap_or_else(|_| "[]".into());
+        match env.new_string(&json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+// -------------------- 6.6 crdtSyncAbortGroup --------------------
+
+/// Abort all sessions for a group (e.g. on group deletion).
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtSyncAbortGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    group_id_hex: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let _guard = match SyncReentrancyGuard::enter() {
+            Ok(g) => g,
+            Err(_) => throw_state!(env, "crdtSyncAbortGroup: reentrant call"),
+        };
+        let gid = match parse_group_id(&mut env, group_id_hex) {
+            Ok(g) => g,
+            Err(e) => throw_arg!(env, format!("crdtSyncAbortGroup: {}", e)),
+        };
+        let actions = {
+            let mut guard = get_sync_mgr().lock().unwrap();
+            match guard.as_mut() {
+                Some(m) => m.abort_group(&gid),
+                None => vec![],
+            }
+        };
+        let json = actions_to_json(&actions);
+        match env.new_string(&json) {
+            Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
