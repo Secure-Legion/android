@@ -163,15 +163,20 @@
                     android:layout_marginTop="2dp"
                     android:visibility="gone" />
 
-                <!-- Self-destruct timer indicator -->
-                <ImageView
+                <!-- Self-destruct timer indicator (fire icon + live countdown) -->
+                <TextView
                     android:id="@+id/timerIndicator"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/ic_timer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:layout_gravity="end"
-                    android:tint="?attr/colorOnSurfaceVariant"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="10sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:drawableStart="@drawable/ic_fire"
+                    android:drawableTint="?attr/colorOnSurfaceVariant"
+                    android:drawablePadding="2dp"
+                    android:gravity="center_vertical"
                     android:contentDescription="Disappearing message"
                     android:visibility="gone" />
 

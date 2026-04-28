@@ -25,10 +25,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * CRDT Group Manager — singleton orchestrator for all CRDT group operations.
@@ -52,6 +54,32 @@ class CrdtGroupManager private constructor(private val context: Context) {
                 INSTANCE ?: CrdtGroupManager(context.applicationContext).also {
                     INSTANCE = it
                 }
+            }
+        }
+
+        /**
+         * Static entrypoint invoked by the Rust SyncManager (via
+         * `RustBridge.syncBackendComputeDelta`) when an inbound HELLO requires
+         * the local op-log delta. MUST NOT call any crdtSync* function.
+         *
+         * Returns length-prefixed packed ops; empty byte[] if the manager
+         * isn't yet initialized or the group has no ops.
+         */
+        @JvmStatic
+        fun computeDeltaForSync(
+            groupIdHex: String,
+            headsJson: String,
+            @Suppress("UNUSED_PARAMETER") bloomB64: String,
+            @Suppress("UNUSED_PARAMETER") bloomK: Int
+        ): ByteArray {
+            val mgr = INSTANCE ?: return ByteArray(0)
+            return try {
+                runBlocking(Dispatchers.IO) {
+                    mgr.computeDeltaImpl(groupIdHex, headsJson)
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "computeDeltaForSync error for group=${groupIdHex.take(16)}", e)
+                ByteArray(0)
             }
         }
     }
@@ -88,9 +116,37 @@ class CrdtGroupManager private constructor(private val context: Context) {
     /** Long-lived scope for background tasks (pending delivery retry, etc.) */
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** True once `crdtSyncInit` has been called successfully. */
+    private val syncManagerInitialized = AtomicBoolean(false)
+
     init {
         startPendingDeliveryRetryLoop()
         startRoutingReconciliationLoop()
+    }
+
+    /**
+     * Lazily initialize the Rust SyncManager. Idempotent. Safe to call from
+     * any thread. Failure (e.g. KeyManager not yet ready) leaves the flag
+     * unset so the next call retries.
+     */
+    private fun ensureSyncManagerInit() {
+        if (syncManagerInitialized.get()) return
+        try {
+            val pubkey = keyManager.getSigningPublicKey()
+            if (pubkey.size != 32) {
+                Log.w(TAG, "ensureSyncManagerInit: pubkey wrong size ${pubkey.size}")
+                return
+            }
+            val ok = RustBridge.crdtSyncInit(pubkey)
+            if (ok) {
+                syncManagerInitialized.set(true)
+                Log.i(TAG, "ensureSyncManagerInit: SyncManager initialized")
+            } else {
+                Log.e(TAG, "ensureSyncManagerInit: crdtSyncInit returned false")
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "ensureSyncManagerInit failed", e)
+        }
     }
 
     // ==================== Routing Resolution ====================
@@ -119,7 +175,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
     }
 
     /**
-     * Resolve onion address by X25519 public key. Used for SYNC_REQUEST reply routing.
+     * Resolve onion address by X25519 public key.
      * Tries Contact first, falls back to GroupPeer.
      */
     suspend fun resolveOnionByX25519(x25519B64: String, groupIdHex: String): String? {
@@ -143,7 +199,6 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
     /**
      * Resolve Ed25519 pubkey (hex) from X25519 pubkey.
-     * Used to queue reliable retries for SYNC_CHUNK (0x33) replies.
      */
     suspend fun resolvePubkeyByX25519(x25519B64: String, groupIdHex: String): String? {
         val db = getDatabase()
@@ -317,6 +372,18 @@ class CrdtGroupManager private constructor(private val context: Context) {
                 } catch (e: Exception) {
                     Log.e(TAG, "ROUTING_RECONCILE: sweep error", e)
                 }
+
+                // Drive the Rust SyncManager's tick — fires session timeouts.
+                // Returned actions are CloseSession only (no peer dispatch needed).
+                try {
+                    if (syncManagerInitialized.get()) {
+                        val tickJson = RustBridge.crdtSyncTick(System.currentTimeMillis())
+                        executeSyncActions(tickJson, groupId = "", peerOnion = null, peerPubkeyHex = null)
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "SYNC tick failed", e)
+                }
+
                 delay(60_000L) // run every 60s (matches CRDT plan poll interval)
             }
         }
@@ -465,7 +532,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
     /**
      * Send a raw payload to all accepted group members with a given wire type.
-     * Used by both broadcastOpToGroup (0x30) and requestSyncToAllPeers (0x32).
+     * Used by broadcastOpToGroup (0x30).
      */
     private suspend fun broadcastRaw(groupId: String, wireType: Byte, payload: ByteArray) {
         val db = getDatabase()
@@ -1295,23 +1362,200 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
     /**
      * Request missing ops from all peers for a group.
-     * Sends 0x32 SYNC_REQUEST with our max lamport as cursor.
-     * Call this on group open and optionally on app resume.
      *
-     * Wire payload: [groupId:32][afterLamport:u64 BE][limit:u32 BE]
+     * Builds per-author lamport heads from the local op log and emits a
+     * HELLO to each accepted member via the Rust SyncManager. Returned
+     * actions (the HELLO bytes for each peer) are dispatched here.
      */
+    @Suppress("UNUSED_PARAMETER")
     suspend fun requestSyncToAllPeers(groupId: String, limit: Int = 2048) {
+        ensureSyncManagerInit()
         val db = getDatabase()
-        val afterLamport = db.crdtOpLogDao().getMaxLamport(groupId) ?: 0L
+        val members = queryMembers(groupId).filter { it.accepted && !it.removed }
+        val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
 
-        val buf = java.io.ByteArrayOutputStream()
-        buf.write(hexToBytes(groupId))                     // 32 bytes
-        buf.write(u64be(afterLamport))                     // 8 bytes
-        buf.write(u32be(limit))                            // 4 bytes
-        val payload = buf.toByteArray()
+        // Build per-author heads from our op log: max lamport per author.
+        val allOps = db.crdtOpLogDao().getOpsForGroup(groupId)
+        val heads = HashMap<String, Long>()
+        for (op in allOps) {
+            val author = op.opId.substringBefore(':')
+            val curr = heads[author] ?: 0L
+            if (op.lamport > curr) heads[author] = op.lamport
+        }
+        val headsJson = headsMapToJson(heads)
+        val nowMs = System.currentTimeMillis()
 
-        Log.i(TAG, "SYNC_REQUEST: group=${groupId.take(16)} afterLamport=$afterLamport limit=$limit")
-        broadcastRaw(groupId, 0x32.toByte(), payload)
+        for (m in members) {
+            if (m.pubkeyHex == localPubkeyHex) continue
+            val routing = resolveRouting(db, m.pubkeyHex, groupId) ?: continue
+            try {
+                val sessionId = secureRandom.nextLong()
+                val actionsJson = RustBridge.crdtSyncBuildHello(
+                    groupId,
+                    m.deviceIdHex,
+                    headsJson,
+                    "",   // no bloom in v1
+                    0, 0, // bloom_k, bloom_n
+                    sessionId,
+                    nowMs
+                )
+                executeSyncActions(actionsJson, groupId, routing.onion, m.pubkeyHex)
+            } catch (e: Throwable) {
+                Log.e(TAG, "SYNC: BuildHello failed for ${m.deviceIdHex.take(8)}", e)
+            }
+        }
+    }
+
+    /**
+     * Handle an inbound sync frame received from the transport layer.
+     *
+     * `senderDeviceIdHex` is the 32-char DeviceID of the peer (derive via
+     * `RustBridge.crdtDeriveDeviceId(senderEd25519Pubkey)`).
+     * `wireType` is 0x31..0x34. `body` is the bincode SyncFrame body
+     * (no transport envelope, no signature).
+     */
+    suspend fun handleSyncFrame(
+        senderDeviceIdHex: String,
+        wireType: Int,
+        body: ByteArray,
+        senderOnion: String?,
+        senderPubkeyHex: String?
+    ) {
+        ensureSyncManagerInit()
+        val nowMs = System.currentTimeMillis()
+        val actionsJson = try {
+            RustBridge.crdtSyncProcessFrame(senderDeviceIdHex, wireType, body, nowMs)
+        } catch (e: Throwable) {
+            Log.e(TAG, "SYNC ProcessFrame failed", e)
+            return
+        }
+        // groupId is unknown at this layer; passing "" is OK — sync retries
+        // are protocol-driven (HELLO timeout + new session), not pending-queue-driven.
+        executeSyncActions(actionsJson, groupId = "", peerOnion = senderOnion, peerPubkeyHex = senderPubkeyHex)
+    }
+
+    /**
+     * Compute the delta a peer is missing, given their per-author lamport heads.
+     * Called by `RustBridge.syncBackendComputeDelta` (Rust→Kotlin callback).
+     *
+     * Returns length-prefixed packed ops (4-byte BE len + op bytes, repeated).
+     */
+    private suspend fun computeDeltaImpl(groupIdHex: String, headsJson: String): ByteArray {
+        val heads = parseHeadsJson(headsJson)
+        val db = getDatabase()
+        val allOps = db.crdtOpLogDao().getOpsForGroup(groupIdHex)
+        val out = ByteArrayOutputStream()
+        for (op in allOps) {
+            val author = op.opId.substringBefore(':')
+            val peerCeil = heads[author] ?: 0L
+            if (op.lamport > peerCeil) {
+                out.write(u32be(op.opBytes.size))
+                out.write(op.opBytes)
+            }
+        }
+        return out.toByteArray()
+    }
+
+    /**
+     * Execute a JSON action array returned by any `crdtSync*` function.
+     *
+     * `peerOnion` and `peerPubkeyHex` give the destination context for any
+     * `SendFrame` actions — every action emitted by a single sync call is
+     * for the same peer (the one that triggered the call). For tick-driven
+     * actions (only `CloseSession` ever emitted) both are null.
+     */
+    suspend fun executeSyncActions(
+        jsonStr: String,
+        groupId: String,
+        peerOnion: String?,
+        peerPubkeyHex: String?
+    ) {
+        val arr = try { JSONArray(jsonStr) } catch (e: Throwable) {
+            Log.e(TAG, "SYNC: malformed actions JSON", e); return
+        }
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            when (obj.optString("type")) {
+                "SendFrame" -> {
+                    val wireType = obj.optInt("wireType").toByte()
+                    val bytes = try {
+                        Base64.decode(obj.optString("bytesB64"), Base64.NO_WRAP)
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "SYNC SendFrame: bad base64", e); continue
+                    }
+                    if (peerOnion.isNullOrEmpty()) {
+                        Log.w(TAG, "SYNC SendFrame skipped — no peer onion (group=${groupId.take(16)})")
+                        continue
+                    }
+                    try {
+                        val ok = RustBridge.sendMessageBlob(peerOnion, bytes, wireType)
+                        if (!ok) {
+                            if (!peerPubkeyHex.isNullOrEmpty()) {
+                                queuePendingDelivery(groupId, peerPubkeyHex, wireType, bytes)
+                            } else {
+                                Log.w(TAG, "SYNC SendFrame: send failed and no pubkey to retry")
+                            }
+                        }
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "SYNC SendFrame: exception", e)
+                        if (!peerPubkeyHex.isNullOrEmpty()) {
+                            queuePendingDelivery(groupId, peerPubkeyHex, wireType, bytes)
+                        }
+                    }
+                }
+                "PersistOps" -> {
+                    val packed = try {
+                        Base64.decode(obj.optString("opsBytesB64"), Base64.NO_WRAP)
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "SYNC PersistOps: bad base64", e); continue
+                    }
+                    try {
+                        val result = applyReceivedOps(groupId, packed)
+                        Log.i(TAG, "SYNC PersistOps applied=${result.applied} rejected=${result.rejected} fromOthers=${result.appliedMessagesFromOthers}")
+                        if (result.appliedMessagesFromOthers > 0) {
+                            context.sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
+                                setPackage(context.packageName)
+                                putExtra("GROUP_ID", groupId)
+                            })
+                        }
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "SYNC PersistOps failed", e)
+                    }
+                }
+                "CloseSession" -> {
+                    Log.i(TAG, "SYNC session closed: reason=${obj.optString("reason")} group=${groupId.take(16)}")
+                }
+                "Error" -> {
+                    Log.w(TAG, "SYNC error: kind=${obj.optString("kind")} group=${groupId.take(16)}")
+                }
+                else -> {
+                    Log.w(TAG, "SYNC unknown action type: ${obj.optString("type")}")
+                }
+            }
+        }
+    }
+
+    /** Build {"<deviceHex>": <lamport>, ...} from a heads map. */
+    private fun headsMapToJson(heads: Map<String, Long>): String {
+        val obj = JSONObject()
+        for ((k, v) in heads) obj.put(k, v)
+        return obj.toString()
+    }
+
+    /** Parse {"<deviceHex>": <lamport>, ...} into a map. Tolerant. */
+    private fun parseHeadsJson(s: String): Map<String, Long> {
+        return try {
+            val obj = JSONObject(s)
+            val out = HashMap<String, Long>(obj.length())
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                out[k] = obj.optLong(k, 0L)
+            }
+            out
+        } catch (e: Throwable) {
+            emptyMap()
+        }
     }
 
     /**
@@ -1441,64 +1685,6 @@ class CrdtGroupManager private constructor(private val context: Context) {
         } else {
             queuePendingDelivery(groupId, target.pubkeyHex, 0x30.toByte(), payload)
             Log.w(TAG, "REINVITE: send failed, queued for retry")
-        }
-    }
-
-    /**
-     * Handle an incoming 0x32 SYNC_REQUEST from a peer.
-     * Reads the cursor, fetches ops from DB, sends 0x33 SYNC_CHUNK back.
-     *
-     * @param groupId hex (64 chars)
-     * @param requestBytes [afterLamport:u64 BE][limit:u32 BE] (12 bytes)
-     * @param senderOnion the peer's .onion address to reply to
-     */
-    suspend fun handleSyncRequest(
-        groupId: String,
-        requestBytes: ByteArray,
-        senderOnion: String,
-        senderPubkeyHex: String? = null
-    ) {
-        if (requestBytes.size < 12) {
-            Log.w(TAG, "SYNC_REQUEST requestBytes too short: ${requestBytes.size}")
-            return
-        }
-        val afterLamport = readU64be(requestBytes, 0)
-        val limit = readU32be(requestBytes, 8)
-        Log.i(TAG, "SYNC_REQUEST: group=${groupId.take(16)} afterLamport=$afterLamport limit=$limit from $senderOnion")
-
-        val db = getDatabase()
-        val ops = db.crdtOpLogDao().getOpsAfter(groupId, afterLamport, limit)
-        if (ops.isEmpty()) {
-            Log.d(TAG, "SYNC_REQUEST: no ops to send (peer is up to date)")
-            return
-        }
-
-        // Build SYNC_CHUNK payload: [groupId:32][packedOps]
-        val packed = packOps(ops)
-        val payload = hexToBytes(groupId) + packed
-        Log.i(TAG, "SYNC_CHUNK: sending ${ops.size} ops (${payload.size} bytes) to $senderOnion")
-
-        try {
-            val success = RustBridge.sendMessageBlob(senderOnion, payload, 0x33.toByte())
-            if (success) {
-                Log.i(TAG, "SYNC_CHUNK sent successfully")
-            } else {
-                Log.w(TAG, "SYNC_CHUNK sendMessageBlob returned false")
-                if (!senderPubkeyHex.isNullOrEmpty()) {
-                    queuePendingDelivery(groupId, senderPubkeyHex, 0x33.toByte(), payload)
-                    Log.i(TAG, "SYNC_CHUNK queued for retry to ${senderPubkeyHex.take(8)}")
-                } else {
-                    Log.w(TAG, "SYNC_CHUNK retry queue skipped: sender pubkey unknown")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "SYNC_CHUNK send failed", e)
-            if (!senderPubkeyHex.isNullOrEmpty()) {
-                queuePendingDelivery(groupId, senderPubkeyHex, 0x33.toByte(), payload)
-                Log.i(TAG, "SYNC_CHUNK queued for retry after exception to ${senderPubkeyHex.take(8)}")
-            } else {
-                Log.w(TAG, "SYNC_CHUNK retry queue skipped after exception: sender pubkey unknown")
-            }
         }
     }
 

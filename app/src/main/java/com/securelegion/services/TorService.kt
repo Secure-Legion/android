@@ -5371,18 +5371,79 @@ class TorService : Service() {
                 return
             }
 
-            // Intercept CRDT wire types (0x30, 0x32, 0x33) BEFORE decryption.
+            // Intercept CRDT wire types BEFORE decryption.
             // CRDT messages are NOT per-member X25519 encrypted — they are:
             //   - Ed25519-signed (integrity + authorship in op envelopes)
             //   - XChaCha20 group-secret encrypted (message content confidentiality)
             //   - Tor .onion encrypted (transport)
             // Wire format from sendMessageBlob: [type][senderX25519:32][payload...]
             // The senderX25519 is always prepended by Rust sendMessageBlob — we skip it here.
-            //   0x30 CRDT_OPS:      payload = [groupId:32][packedOps]
-            //   0x32 SYNC_REQUEST:  payload = [groupId:32][afterLamport:u64 BE][limit:u32 BE]
-            //   0x33 SYNC_CHUNK:    payload = [groupId:32][packedOps]
+            //   0x30 CRDT_OPS:               payload = [groupId:32][packedOps]
+            //   0x31/0x32/0x33/0x34 SYNC:    payload = [bincode SyncFrame] (group_id inside)
             val wireType = encryptedMessageWire[0].toInt() and 0xFF
-            if (wireType == 0x30 || wireType == 0x32 || wireType == 0x33 || wireType == 0x35 || wireType == 0x36 || wireType == 0x37) {
+
+            // Phase 6 sync frames — body is a bincode SyncFrame; no groupId prefix.
+            if (wireType in 0x31..0x34) {
+                val minSize = 1 + 32 + 64 // type + X25519 + signature; body must be > 0
+                if (encryptedMessageWire.size <= minSize) {
+                    Log.e(TAG, "SYNC wire 0x${"%02x".format(wireType)} too short: ${encryptedMessageWire.size} bytes")
+                    return
+                }
+                val senderX25519 = encryptedMessageWire.copyOfRange(1, 33)
+                val body = encryptedMessageWire.copyOfRange(33, encryptedMessageWire.size - 64)
+                Log.i(TAG, "SYNC 0x${"%02x".format(wireType)} intercepted: body=${body.size} bytes")
+                serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        val mgr = CrdtGroupManager.getInstance(this@TorService)
+                        val senderX25519B64 = android.util.Base64.encodeToString(senderX25519, android.util.Base64.NO_WRAP)
+                        // Resolve sender's Ed25519 pubkey + onion + DeviceID.
+                        // Without the pubkey we can't derive DeviceID → can't dispatch.
+                        val senderPubkeyHex = mgr.resolvePubkeyByX25519(senderX25519B64, "")
+                        if (senderPubkeyHex.isNullOrEmpty()) {
+                            Log.w(TAG, "SYNC: unknown sender X25519 — dropping")
+                            return@launch
+                        }
+                        val pubkeyBytes = try {
+                            if (senderPubkeyHex.length != 64) {
+                                Log.w(TAG, "SYNC: sender pubkey hex wrong length ${senderPubkeyHex.length}")
+                                return@launch
+                            }
+                            ByteArray(32) { i ->
+                                senderPubkeyHex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+                            }
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "SYNC: pubkey hex decode failed", e)
+                            return@launch
+                        }
+                        // Transport-layer signature verification.
+                        // Wire layout: [type:1][senderX25519:32][body][signature:64]
+                        // Signature is over [type][senderX25519][body] (everything before sig).
+                        val signedRegion = encryptedMessageWire.copyOfRange(0, encryptedMessageWire.size - 64)
+                        val signature = encryptedMessageWire.copyOfRange(encryptedMessageWire.size - 64, encryptedMessageWire.size)
+                        val sigOk = try {
+                            RustBridge.verifySignature(signedRegion, signature, pubkeyBytes)
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "SYNC: verifySignature threw", e); false
+                        }
+                        if (!sigOk) {
+                            Log.w(TAG, "SYNC 0x${"%02x".format(wireType)}: bad signature from ${senderPubkeyHex.take(16)} — dropping")
+                            return@launch
+                        }
+                        val senderDeviceIdHex = RustBridge.crdtDeriveDeviceId(pubkeyBytes)
+                        if (senderDeviceIdHex.isNullOrEmpty()) {
+                            Log.w(TAG, "SYNC: deriveDeviceId returned empty for ${senderPubkeyHex.take(16)}")
+                            return@launch
+                        }
+                        val senderOnion = mgr.resolveOnionByX25519(senderX25519B64, "")
+                        mgr.handleSyncFrame(senderDeviceIdHex, wireType, body, senderOnion, senderPubkeyHex)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing SYNC 0x${"%02x".format(wireType)}", e)
+                    }
+                }
+                return
+            }
+
+            if (wireType == 0x30 || wireType == 0x35 || wireType == 0x36 || wireType == 0x37) {
                 val minSize = 1 + 32 + CRDT_GROUP_ID_LEN + 64 // type + X25519 + groupId + signature
                 if (encryptedMessageWire.size < minSize) {
                     Log.e(TAG, "CRDT wire 0x${"%02x".format(wireType)} too short: ${encryptedMessageWire.size} bytes (need >= $minSize)")
@@ -5412,47 +5473,6 @@ class TorService : Service() {
                                 })
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error processing CRDT_OPS", e)
-                            }
-                        }
-                    }
-                    0x32 -> {
-                        // SYNC_REQUEST: peer wants ops after a lamport cursor
-                        Log.i(TAG, "SYNC_REQUEST: group=${groupIdHex.take(16)}... payload=${rest.size} bytes")
-                        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            try {
-                                // Look up sender's onion by X25519 pubkey (Contact → GroupPeer fallback)
-                                val senderX25519B64 = android.util.Base64.encodeToString(senderX25519, android.util.Base64.NO_WRAP)
-                                val mgr = CrdtGroupManager.getInstance(this@TorService)
-                                val senderOnion = mgr.resolveOnionByX25519(senderX25519B64, groupIdHex)
-                                val senderPubkeyHex = mgr.resolvePubkeyByX25519(senderX25519B64, groupIdHex)
-                                if (senderOnion.isNullOrEmpty()) {
-                                    Log.w(TAG, "SYNC_REQUEST from unknown peer — no onion to reply")
-                                    return@launch
-                                }
-                                mgr.handleSyncRequest(groupIdHex, rest, senderOnion, senderPubkeyHex)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error handling SYNC_REQUEST", e)
-                            }
-                        }
-                    }
-                    0x33 -> {
-                        // SYNC_CHUNK: receive ops from sync peer — same as 0x30
-                        Log.i(TAG, "SYNC_CHUNK: group=${groupIdHex.take(16)}... payload=${rest.size} bytes")
-                        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            try {
-                                val mgr = CrdtGroupManager.getInstance(this@TorService)
-                                val result = mgr.applyReceivedOps(groupIdHex, rest)
-                                Log.i(TAG, "SYNC_CHUNK applied=${result.applied} rejected=${result.rejected} msgsFromOthers=${result.appliedMessagesFromOthers} group=${groupIdHex.take(16)}...")
-                                // Sync chunks don't ring — only backfill unread badge and poke the UI.
-                                handleAppliedGroupOps(groupIdHex, result, allowNotification = false)
-                                if (result.applied > 0) {
-                                    sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
-                                        setPackage(packageName)
-                                        putExtra("GROUP_ID", groupIdHex)
-                                    })
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error processing SYNC_CHUNK", e)
                             }
                         }
                     }

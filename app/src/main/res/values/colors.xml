@@ -82,7 +82,7 @@
     <color name="reply_accent">#1E90FF</color>
     <color name="reply_quote_bg_sent">#E8E8ED</color>
     <color name="reply_quote_bg_received">#D8D8DD</color>
-    <color name="reply_quote_bg_self">#E8E8ED</color>
+    <color name="reply_quote_bg_self">#000000</color>
     <color name="reply_quote_border">#1E90FF</color>
     <!-- Split variants so the sent bubble (solid blue) can use a contrasting border. -->
     <color name="reply_quote_border_sent">#1E90FF</color>

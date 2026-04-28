@@ -436,7 +436,7 @@ class MessageAdapter(
         val replyQuoteLabel: TextView = view.findViewById(R.id.replyQuoteLabel)
         val replyQuoteText: TextView = view.findViewById(R.id.replyQuoteText)
         val editedLabel: TextView = view.findViewById(R.id.editedLabel)
-        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
+        val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
     }
 
     class ReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -451,7 +451,7 @@ class MessageAdapter(
         val replyQuoteLabel: TextView = view.findViewById(R.id.replyQuoteLabel)
         val replyQuoteText: TextView = view.findViewById(R.id.replyQuoteText)
         val editedLabel: TextView = view.findViewById(R.id.editedLabel)
-        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
+        val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
     }
 
     class PendingMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -476,7 +476,7 @@ class MessageAdapter(
         val timestampText: TextView = view.findViewById(R.id.timestampText)
         val statusIcon: ImageView = view.findViewById(R.id.statusIcon)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
-        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
+        val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
     }
 
     class VoiceReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -487,7 +487,7 @@ class MessageAdapter(
         val durationText: TextView = view.findViewById(R.id.durationText)
         val timestampText: TextView = view.findViewById(R.id.timestampText)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
-        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
+        val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
     }
 
     class ImageSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -497,7 +497,7 @@ class MessageAdapter(
         val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
-        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
+        val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
     }
 
     class ImageReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -506,7 +506,7 @@ class MessageAdapter(
         val messageImage: ImageView = view.findViewById(R.id.messageImage)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
-        val timerIndicator: ImageView = view.findViewById(R.id.timerIndicator)
+        val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
     }
 
     class StickerSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -803,9 +803,8 @@ class MessageAdapter(
         // Edited label
         holder.editedLabel.visibility = if (message.isEdited) View.VISIBLE else View.GONE
 
-        // Self-destruct timer indicator
-        holder.timerIndicator.visibility =
-            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+        // Self-destruct timer indicator (fire icon + live countdown text)
+        bindTimerIndicator(holder.timerIndicator, message)
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
@@ -874,9 +873,8 @@ class MessageAdapter(
         // Edited label
         holder.editedLabel.visibility = if (message.isEdited) View.VISIBLE else View.GONE
 
-        // Self-destruct timer indicator
-        holder.timerIndicator.visibility =
-            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+        // Self-destruct timer indicator (fire icon + live countdown text)
+        bindTimerIndicator(holder.timerIndicator, message)
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
@@ -981,9 +979,8 @@ class MessageAdapter(
         // Set status icon (same as text messages - circle system)
         holder.statusIcon.setImageResource(getStatusIcon(message))
 
-        // Self-destruct timer indicator
-        holder.timerIndicator.visibility =
-            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+        // Self-destruct timer indicator (fire icon + live countdown text)
+        bindTimerIndicator(holder.timerIndicator, message)
 
         // Set play/pause icon based on current playback state
         val isPlaying = currentlyPlayingMessageId == message.messageId
@@ -1055,9 +1052,8 @@ class MessageAdapter(
             if (isPlaying) R.drawable.ic_pause_blue else R.drawable.ic_play_blue
         )
 
-        // Self-destruct timer indicator
-        holder.timerIndicator.visibility =
-            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+        // Self-destruct timer indicator (fire icon + live countdown text)
+        bindTimerIndicator(holder.timerIndicator, message)
 
         // Handle selection mode
         if (isSelectionMode) {
@@ -1125,9 +1121,8 @@ class MessageAdapter(
 
         holder.messageStatus.setImageResource(getStatusIcon(message))
 
-        // Self-destruct timer indicator
-        holder.timerIndicator.visibility =
-            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+        // Self-destruct timer indicator (fire icon + live countdown text)
+        bindTimerIndicator(holder.timerIndicator, message)
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -1193,9 +1188,8 @@ class MessageAdapter(
         // Load image from attachmentData (Base64 encoded)
         loadImageIntoView(holder.messageImage, message.attachmentData)
 
-        // Self-destruct timer indicator
-        holder.timerIndicator.visibility =
-            if (message.selfDestructTtl != null || message.selfDestructAt != null) View.VISIBLE else View.GONE
+        // Self-destruct timer indicator (fire icon + live countdown text)
+        bindTimerIndicator(holder.timerIndicator, message)
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -2153,13 +2147,76 @@ class MessageAdapter(
 
     private var recyclerView: RecyclerView? = null
 
+    // Self-destruct timer tick: updates the visible bubble countdown text every second
+    // without re-binding the rest of the cell. Drives both pending-TTL and active
+    // selfDestructAt readouts off a single 1Hz handler.
+    private val timerTickHandler = Handler(Looper.getMainLooper())
+    private val timerTickRunnable = object : Runnable {
+        override fun run() {
+            recyclerView?.let { rv ->
+                for (i in 0 until rv.childCount) {
+                    val child = rv.getChildAt(i)
+                    val vh = rv.getChildViewHolder(child) ?: continue
+                    val pos = vh.bindingAdapterPosition
+                    if (pos == RecyclerView.NO_POSITION) continue
+                    val item = currentList.getOrNull(pos) as? ChatListItem.MessageItem ?: continue
+                    val timer = child.findViewById<TextView>(R.id.timerIndicator) ?: continue
+                    val text = formatSelfDestructRemaining(item.message)
+                    if (text != null) {
+                        timer.visibility = View.VISIBLE
+                        timer.text = text
+                    } else {
+                        timer.visibility = View.GONE
+                    }
+                }
+            }
+            timerTickHandler.postDelayed(this, 1000L)
+        }
+    }
+
     override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
         super.onAttachedToRecyclerView(recyclerView)
         this.recyclerView = recyclerView
+        timerTickHandler.postDelayed(timerTickRunnable, 1000L)
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         super.onDetachedFromRecyclerView(recyclerView)
+        timerTickHandler.removeCallbacks(timerTickRunnable)
         this.recyclerView = null
+    }
+
+    /**
+     * Format the self-destruct remaining time. Returns null if the message has
+     * no TTL set. Pre-activation messages (selfDestructTtl set, selfDestructAt
+     * null) display the static duration; activated messages show a live countdown
+     * computed from selfDestructAt - now.
+     */
+    private fun formatSelfDestructRemaining(message: Message): String? {
+        val now = System.currentTimeMillis()
+        val remainingMs = when {
+            message.selfDestructAt != null ->
+                (message.selfDestructAt - now).coerceAtLeast(0L)
+            message.selfDestructTtl != null ->
+                (message.selfDestructTtl * 1000.0).toLong()
+            else -> return null
+        }
+        val totalSec = remainingMs / 1000
+        return when {
+            totalSec >= 86400 -> "${totalSec / 86400}d"
+            totalSec >= 3600 -> "${totalSec / 3600}h"
+            totalSec >= 60 -> "${totalSec / 60}m"
+            else -> "${totalSec}s"
+        }
+    }
+
+    private fun bindTimerIndicator(view: TextView, message: Message) {
+        val text = formatSelfDestructRemaining(message)
+        if (text != null) {
+            view.visibility = View.VISIBLE
+            view.text = text
+        } else {
+            view.visibility = View.GONE
+        }
     }
 }

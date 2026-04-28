@@ -5,6 +5,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -107,6 +109,8 @@ class ImagePreviewActivity : AppCompatActivity() {
         photoEditorView = findViewById(R.id.photoEditorView)
         btnUndo = findViewById(R.id.btnUndo)
         btnRedo = findViewById(R.id.btnRedo)
+        photoEditorView.source.scaleType = ImageView.ScaleType.FIT_CENTER
+        photoEditorView.source.adjustViewBounds = true
 
         // Apply system bar insets to top bar and bottom bar
         val topBar = findViewById<View>(R.id.topBar)
@@ -148,6 +152,9 @@ class ImagePreviewActivity : AppCompatActivity() {
             inputStream?.close()
             if (bitmap != null) {
                 photoEditorView.source.setImageBitmap(bitmap)
+                photoEditorView.source.scaleType = ImageView.ScaleType.FIT_CENTER
+                photoEditorView.source.adjustViewBounds = true
+                photoEditorView.source.requestLayout()
             } else {
                 Log.e(TAG, "Failed to decode image")
                 ThemedToast.show(this, "Failed to load image")
@@ -415,8 +422,9 @@ class ImagePreviewActivity : AppCompatActivity() {
             )
             when (result) {
                 is SaveFileResult.Success -> {
-                    Log.d(TAG, "PhotoEditor save success: ${tempFile.absolutePath}, size: ${tempFile.length()}")
-                    tempFile
+                    val croppedFile = cropSavedEditorBitmapToImageBounds(tempFile)
+                    Log.d(TAG, "PhotoEditor save success: ${croppedFile.absolutePath}, size: ${croppedFile.length()}")
+                    croppedFile
                 }
                 is SaveFileResult.Failure -> {
                     Log.e(TAG, "PhotoEditor saveAsFile failed: ${result.exception.message}")
@@ -426,6 +434,60 @@ class ImagePreviewActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "saveBitmapToTemp failed", e)
             null
+        }
+    }
+
+    private fun cropSavedEditorBitmapToImageBounds(savedFile: File): File {
+        return try {
+            val sourceView = photoEditorView.source
+            val drawable = sourceView.drawable ?: return savedFile
+            val viewWidth = sourceView.width
+            val viewHeight = sourceView.height
+            if (viewWidth <= 0 || viewHeight <= 0) return savedFile
+
+            val displayedRect = RectF(
+                0f,
+                0f,
+                drawable.intrinsicWidth.toFloat(),
+                drawable.intrinsicHeight.toFloat()
+            )
+            sourceView.imageMatrix.mapRect(displayedRect)
+
+            val savedBitmap = BitmapFactory.decodeFile(savedFile.absolutePath) ?: return savedFile
+            val scaleX = savedBitmap.width.toFloat() / viewWidth.toFloat()
+            val scaleY = savedBitmap.height.toFloat() / viewHeight.toFloat()
+
+            val cropRect = Rect(
+                (displayedRect.left * scaleX).toInt().coerceIn(0, savedBitmap.width - 1),
+                (displayedRect.top * scaleY).toInt().coerceIn(0, savedBitmap.height - 1),
+                kotlin.math.ceil(displayedRect.right * scaleX).toInt().coerceIn(1, savedBitmap.width),
+                kotlin.math.ceil(displayedRect.bottom * scaleY).toInt().coerceIn(1, savedBitmap.height)
+            )
+
+            if (cropRect.width() <= 0 || cropRect.height() <= 0) {
+                savedBitmap.recycle()
+                return savedFile
+            }
+
+            val croppedBitmap = Bitmap.createBitmap(
+                savedBitmap,
+                cropRect.left,
+                cropRect.top,
+                cropRect.width(),
+                cropRect.height()
+            )
+            if (croppedBitmap != savedBitmap) {
+                savedBitmap.recycle()
+            }
+
+            FileOutputStream(savedFile).use { output ->
+                croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)
+            }
+            croppedBitmap.recycle()
+            savedFile
+        } catch (e: Exception) {
+            Log.e(TAG, "cropSavedEditorBitmapToImageBounds failed", e)
+            savedFile
         }
     }
 }

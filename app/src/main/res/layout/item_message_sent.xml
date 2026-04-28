@@ -160,16 +160,21 @@
 
                 </LinearLayout>
 
-                <!-- Self-destruct timer indicator - left of delivery status -->
-                <ImageView
+                <!-- Self-destruct timer indicator (fire icon + live countdown) - left of delivery status -->
+                <TextView
                     android:id="@+id/timerIndicator"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/ic_timer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:layout_marginStart="4dp"
                     android:layout_marginBottom="2dp"
                     android:layout_gravity="bottom"
-                    android:tint="#FFFFFF"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:drawableStart="@drawable/ic_fire"
+                    android:drawableTint="#FFFFFF"
+                    android:drawablePadding="2dp"
+                    android:gravity="center_vertical"
                     android:contentDescription="Disappearing message"
                     android:visibility="gone" />
 

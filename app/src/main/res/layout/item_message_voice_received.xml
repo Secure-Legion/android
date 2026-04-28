@@ -23,13 +23,18 @@
             android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="11sp" />
 
-        <ImageView
+        <TextView
             android:id="@+id/timerIndicator"
-            android:layout_width="12dp"
-            android:layout_height="12dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_marginStart="4dp"
-            android:src="@drawable/ic_timer"
-            android:tint="?attr/colorOnSurfaceVariant"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="10sp"
+            android:fontFamily="@font/poppins_medium"
+            android:drawableStart="@drawable/ic_fire"
+            android:drawableTint="?attr/colorOnSurfaceVariant"
+            android:drawablePadding="2dp"
+            android:gravity="center_vertical"
             android:contentDescription="Disappearing message"
             android:visibility="gone" />
     </LinearLayout>

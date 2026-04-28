@@ -1590,11 +1590,91 @@ object RustBridge {
      */
     external fun crdtQuery(groupIdHex: String, queryType: String, paramsJson: String): String
 
-    // Sync stubs (Phase 6 — not implemented yet)
-    external fun crdtGenerateSyncHello(peerDeviceIdHex: String): ByteArray
-    external fun crdtProcessSyncHello(peerDeviceIdHex: String, helloBytes: ByteArray): ByteArray
-    external fun crdtPrepareSyncChunks(requestBytes: ByteArray): ByteArray
-    external fun crdtApplySyncChunk(chunkBytes: ByteArray): ByteArray
+    /**
+     * Derive a CRDT DeviceID from an Ed25519 public key.
+     * Returns 32-char hex (BLAKE3(pubkey)[..16]). Empty/null on error.
+     */
+    external fun crdtDeriveDeviceId(pubkeyBytes: ByteArray): String?
+
+    // ==================== CRDT GROUP SYNC (Phase 6) ====================
+    //
+    // All sync entrypoints return a JSON action array that the caller must
+    // execute in order:
+    //   [{"type":"SendFrame","wireType":51,"bytesB64":"..."},
+    //    {"type":"PersistOps","opsBytesB64":"..."},
+    //    {"type":"CloseSession","reason":"Normal"},
+    //    {"type":"Error","kind":"GlobalCapReached"}]
+    //
+    // Wire types (decimal): 51=HELLO 52=REQUEST 53=CHUNK 54=ACK
+    //
+    // Reentrancy: `syncBackendComputeDelta` (the Rust→Kotlin callback) is
+    // invoked synchronously from inside `crdtSyncProcessFrame` and MUST NOT
+    // call any other crdtSync* function — doing so deadlocks the manager.
+
+    /**
+     * Initialize the SyncManager with the local device's Ed25519 public key.
+     * Rust derives the DeviceID via BLAKE3. Idempotent — replaces any prior
+     * manager and aborts its in-flight sessions.
+     */
+    external fun crdtSyncInit(localPubkeyBytes: ByteArray): Boolean
+
+    /** Start an outbound (Initiator) sync session. */
+    external fun crdtSyncBuildHello(
+        groupIdHex: String,
+        peerDeviceIdHex: String,
+        headsJson: String,
+        bloomB64: String,
+        bloomK: Int,
+        bloomN: Int,
+        sessionId: Long,
+        nowMs: Long
+    ): String
+
+    /**
+     * Process an inbound transport frame. `wireType` is the Tor byte
+     * (0x31..0x34). `bodyBytes` is the bincode body (no transport envelope,
+     * no signature — those are validated by the transport layer).
+     */
+    external fun crdtSyncProcessFrame(
+        peerDeviceIdHex: String,
+        wireType: Int,
+        bodyBytes: ByteArray,
+        nowMs: Long
+    ): String
+
+    /** Periodic timeout sweep. Caller invokes periodically (e.g. every 60s). */
+    external fun crdtSyncTick(nowMs: Long): String
+
+    /** Observability snapshot. Returns a JSON array of SessionInfo objects. */
+    external fun crdtSyncListSessions(): String
+
+    /** Abort all sessions for a group (e.g. on group deletion). */
+    external fun crdtSyncAbortGroup(groupIdHex: String): String
+
+    /**
+     * Rust→Kotlin callback for op-log delta queries. Called from inside
+     * `crdtSyncProcessFrame` whenever an inbound HELLO triggers Responder
+     * construction. MUST NOT call any crdtSync* function (would deadlock
+     * the manager mutex).
+     *
+     * @param headsJson `{"<deviceHex>": <lamport>, ...}` — peer's per-author
+     *                  lamport ceiling (peer claims to have everything <=).
+     * @param bloomB64  Base64-encoded bloom filter of OpIDs the peer has.
+     *                  Empty string when no bloom is in use.
+     * @param bloomK    Number of hash functions the peer used (0 if no bloom).
+     * @return Length-prefixed packed ops: [4-byte BE len][op bytes]...
+     *         Empty byte[] on error or no delta.
+     */
+    @JvmStatic
+    fun syncBackendComputeDelta(
+        groupIdHex: String,
+        headsJson: String,
+        bloomB64: String,
+        bloomK: Int
+    ): ByteArray {
+        return com.securelegion.services.CrdtGroupManager
+            .computeDeltaForSync(groupIdHex, headsJson, bloomB64, bloomK)
+    }
 
     // ==================== XCHACHA20 SYMMETRIC ENCRYPTION ====================
 

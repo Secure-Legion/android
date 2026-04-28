@@ -987,16 +987,18 @@ class AddFriendActivity : BaseActivity() {
             val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
             val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
 
-            // Cancel the system notification for this friend request
+            // Collect every UI request id we're about to drop so we can also delete
+            // its matching Room retry row. (Several entries may share the same CID.)
+            val removedUiIds = mutableListOf<String>()
             for (requestJson in pendingRequestsV2) {
                 try {
                     val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
                     if (request.ipfsCid == cid) {
+                        if (request.id.isNotBlank()) removedUiIds.add(request.id)
                         val notificationId = 5000 + Math.abs(request.displayName.hashCode() % 10000)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager.cancel(notificationId)
                         Log.d(TAG, "Cancelled friend request notification for ${request.displayName} (ID: $notificationId)")
-                        break
                     }
                 } catch (e: Exception) { /* ignore parse errors */ }
             }
@@ -1015,6 +1017,8 @@ class AddFriendActivity : BaseActivity() {
             prefs.edit()
                 .putStringSet("pending_requests_v2", updatedRequests)
                 .apply()
+
+            removedUiIds.forEach { deleteRetryRowForUiRequest(it) }
 
             Log.d(TAG, "Removed friend request with CID=$cid - ${updatedRequests.size} remaining")
 
@@ -1893,6 +1897,9 @@ class AddFriendActivity : BaseActivity() {
                 .putStringSet("pending_requests_v2", newSet)
                 .apply()
 
+            // Drop the matching Room retry row so the worker doesn't revive it.
+            deleteRetryRowForUiRequest(request.id)
+
             Log.d(TAG, "Removed pending friend request for ${request.displayName}")
 
             // Reload the UI
@@ -1977,6 +1984,35 @@ class AddFriendActivity : BaseActivity() {
         }
     }
 
+    /**
+     * Delete the Room retry row tied to a UI request id (the UUID we stored in
+     * FRIEND_RETRY_PREFS via rememberRetryDbId). Without this, cancel/delete in
+     * the UI orphans the row — FriendRequestWorker.markAllPendingNeedRetry then
+     * revives it on every Tor reconnect and re-fires Phase 1/2/3 forever.
+     */
+    private fun deleteRetryRowForUiRequest(uiRequestId: String) {
+        if (uiRequestId.isBlank()) return
+        val mapPrefs = getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
+        val dbId = mapPrefs.getLong(uiRequestId, -1L)
+        if (dbId <= 0L) {
+            mapPrefs.edit().remove(uiRequestId).apply()
+            return
+        }
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@AddFriendActivity, dbPassphrase)
+                database.pendingFriendRequestDao().deleteById(dbId)
+                Log.d(TAG, "Deleted Room retry row dbId=$dbId for ui=$uiRequestId")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete Room retry row dbId=$dbId", e)
+            } finally {
+                mapPrefs.edit().remove(uiRequestId).apply()
+            }
+        }
+    }
+
     private fun enterDeleteMode() {
         isDeleteMode = true
         selectedRequests.clear()
@@ -2016,6 +2052,18 @@ class AddFriendActivity : BaseActivity() {
             val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
             val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
 
+            // Collect UI ids of every entry we're about to drop so we can clean up
+            // their Room retry rows too. (selectedRequests stores ipfsCids.)
+            val removedUiIds = mutableListOf<String>()
+            for (requestJson in pendingRequestsV2) {
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    if (selectedRequests.contains(request.ipfsCid) && request.id.isNotBlank()) {
+                        removedUiIds.add(request.id)
+                    }
+                } catch (_: Exception) { /* ignore */ }
+            }
+
             // Remove selected requests
             val updatedRequests = pendingRequestsV2.filter { requestJson ->
                 try {
@@ -2027,6 +2075,8 @@ class AddFriendActivity : BaseActivity() {
             }.toMutableSet()
 
             prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
+
+            removedUiIds.forEach { deleteRetryRowForUiRequest(it) }
 
             ThemedToast.show(this, "Deleted ${selectedRequests.size} request(s)")
 

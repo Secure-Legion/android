@@ -104,6 +104,13 @@ interface PendingFriendRequestDao {
     suspend fun getByRecipientOnion(onionAddress: String): PendingFriendRequest?
 
     /**
+     * Delete a single friend request by primary key. Used by UI cancel/delete
+     * handlers that look up the dbId via the requestId→dbId SharedPreferences map.
+     */
+    @Query("DELETE FROM pending_friend_requests WHERE id = :requestId")
+    suspend fun deleteById(requestId: Long)
+
+    /**
      * Delete all friend requests (for testing or account wipe)
      */
     @Query("DELETE FROM pending_friend_requests")
