@@ -33,6 +33,17 @@ import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * Thrown by `sendMessage`/`editMessage` when the group's `needs_rekey` flag
+ * is set (a member was kicked and the GroupSecret hasn't been rotated yet).
+ *
+ * Caller should surface a clear "this group needs to be rekeyed before you
+ * can send" message — actual rotation lands with Phase 3 of the roadmap.
+ */
+class GroupNeedsRekeyException(val groupId: String) : IllegalStateException(
+    "Group needs rekey — a member was kicked. Sending is paused until an admin rotates the group key."
+)
+
+/**
  * CRDT Group Manager — singleton orchestrator for all CRDT group operations.
  *
  * All group mutations (create, invite, message, etc.) go through this class.
@@ -2115,6 +2126,13 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val group = getDatabase().groupDao().getGroupById(groupId)
             ?: throw IllegalStateException("Group $groupId not found")
 
+        // Block sends when the group needs rekey (a member was kicked but the
+        // group secret hasn't been rotated yet — sending would let kicked
+        // members keep decrypting). Real key rotation lands in a follow-up.
+        if (groupNeedsRekey(groupId)) {
+            throw GroupNeedsRekeyException(groupId)
+        }
+
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2174,6 +2192,10 @@ class CrdtGroupManager private constructor(private val context: Context) {
     suspend fun editMessage(groupId: String, msgIdHex: String, newPlaintext: String): ByteArray {
         val group = getDatabase().groupDao().getGroupById(groupId)
             ?: throw IllegalStateException("Group $groupId not found")
+
+        if (groupNeedsRekey(groupId)) {
+            throw GroupNeedsRekeyException(groupId)
+        }
 
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
@@ -2461,6 +2483,25 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * Query group members from in-memory CRDT state.
      * Group must be loaded first via loadGroup() / ensureLoaded().
      */
+    /**
+     * Returns true if any active member of the group has `rekey_required` set
+     * (i.e. someone was kicked and the GroupSecret hasn't been rotated).
+     *
+     * Sends/edits are blocked while this is true so kicked members who
+     * exfiltrated the GroupSecret can't keep decrypting future messages.
+     * Cleared only when actual key rotation lands (Phase 3 of roadmap).
+     */
+    suspend fun groupNeedsRekey(groupId: String): Boolean {
+        if (!ensureLoaded(groupId)) return false
+        return try {
+            val json = RustBridge.crdtQuery(groupId, "needs_rekey", "{}")
+            JSONObject(json).optBoolean("needs_rekey", false)
+        } catch (e: Throwable) {
+            Log.w(TAG, "groupNeedsRekey query failed for ${groupId.take(16)}", e)
+            false
+        }
+    }
+
     suspend fun queryMembers(groupId: String): List<CrdtMember> {
         if (!ensureLoaded(groupId)) return emptyList()
         val json = RustBridge.crdtQuery(groupId, "members", "{}")
