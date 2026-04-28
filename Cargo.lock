@@ -211,6 +211,7 @@ dependencies = [
  "tor-dircommon",
  "tor-dirmgr",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-hsclient",
  "tor-hscrypto",
@@ -568,6 +569,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aebf35691d1bfb0ac386a69bac2fde4dd276fb618cf8bf4f5318fe285e821bb2"
 dependencies = [
  "find-msvc-tools",
+ "jobserver",
+ "libc",
  "shlex",
 ]
 
@@ -731,6 +734,9 @@ checksum = "eb7b51a7d9c967fc26773061ba86150f19c50c0d65c887cb1fbe295fd16619b7"
 dependencies = [
  "compression-core",
  "flate2",
+ "liblzma",
+ "zstd",
+ "zstd-safe",
 ]
 
 [[package]]
@@ -1077,7 +1083,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caef6056a5788d05d173cdc3c562ac28ae093828f851f69378b74e4e3d578e41"
 dependencies = [
  "heck",
- "indexmap 1.9.3",
+ "indexmap 2.13.0",
  "itertools 0.14.0",
  "proc-macro-crate",
  "proc-macro2",
@@ -1740,8 +1746,6 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "allocator-api2",
- "equivalent",
  "foldhash 0.1.5",
 ]
 
@@ -1751,6 +1755,8 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
 ]
 
@@ -2092,6 +2098,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
+name = "jobserver"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
+dependencies = [
+ "getrandom 0.3.4",
+ "libc",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2172,6 +2188,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
+name = "liblzma"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6033b77c21d1f56deeae8014eb9fbe7bdf1765185a6c508b5ca82eeaed7f899"
+dependencies = [
+ "liblzma-sys",
+]
+
+[[package]]
+name = "liblzma-sys"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a60851d15cd8c5346eca4ab8babff585be2ae4bc8097c067291d3ffe2add3b6"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2223,11 +2259,11 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lru"
-version = "0.12.5"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
+checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
 dependencies = [
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -2999,6 +3035,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rangemap"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
+
+[[package]]
 name = "rayon"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3372,9 +3414,13 @@ dependencies = [
  "tokio-util",
  "tor-cell",
  "tor-config-path",
+ "tor-dirmgr",
+ "tor-geoip",
  "tor-hscrypto",
  "tor-hsservice",
+ "tor-linkspec",
  "tor-llcrypto",
+ "tor-netdir",
  "tor-proto",
  "tor-rtcompat",
  "uuid",
@@ -4280,6 +4326,7 @@ dependencies = [
  "tor-config",
  "tor-dircommon",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-linkspec",
  "tor-memquota",
@@ -4449,6 +4496,7 @@ dependencies = [
  "tor-dirclient",
  "tor-dircommon",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-llcrypto",
  "tor-netdir",
@@ -4486,6 +4534,17 @@ dependencies = [
  "derive_more",
  "thiserror 2.0.18",
  "void",
+]
+
+[[package]]
+name = "tor-geoip"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed852e4099d67fa209e4f963734dce20818888d9e88a8afbee9883a42fd54a80"
+dependencies = [
+ "derive_more",
+ "rangemap",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4874,6 +4933,7 @@ dependencies = [
  "time",
  "tor-basic-utils",
  "tor-error",
+ "tor-geoip",
  "tor-hscrypto",
  "tor-linkspec",
  "tor-llcrypto",
@@ -4882,6 +4942,7 @@ dependencies = [
  "tor-units",
  "tracing",
  "typed-index-collections",
+ "visibility",
 ]
 
 [[package]]
@@ -5068,6 +5129,7 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "tor-basic-utils",
+ "tor-geoip",
  "tor-linkspec",
  "tor-netdir",
  "tor-netdoc",
@@ -6169,3 +6231,31 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.16+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+dependencies = [
+ "cc",
+ "pkg-config",
+]

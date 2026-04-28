@@ -288,7 +288,7 @@ pub struct MetadataSetPayload {
 /// This is the fundamental unit of replication. Every group action (create,
 /// invite, message, edit, delete, react, metadata change) is wrapped in an
 /// OpEnvelope, signed by the author, and stored in the append-only op log.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct OpEnvelope {
     pub group_id: GroupID,
     pub op_id: OpID,

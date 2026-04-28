@@ -13,6 +13,7 @@
 /// - `messages` — Message add/edit/delete/react with LWW edits and permanent tombstones
 /// - `metadata` — LWW registers for group name, avatar, topic
 /// - `apply` — Unified apply engine (GroupState, rebuild, state_hash)
+/// - `sync` — Phase 6 sync protocol (frames, session machine, manager, digest)
 
 pub mod ids;
 pub mod ops;
@@ -21,6 +22,7 @@ pub mod membership;
 pub mod messages;
 pub mod metadata;
 pub mod apply;
+pub mod sync;
 
 // Re-export core types for convenience
 pub use ids::{DeviceID, GroupID, OpID};
