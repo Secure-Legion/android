@@ -879,6 +879,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtQuery(
                 "deleted": state.group_deleted,
                 "delete_reason": state.delete_reason,
             }),
+            "needs_rekey" => serde_json::json!({
+                "needs_rekey": state.membership.needs_rekey(),
+            }),
             other => throw_arg!(env, format!("Unknown query type: {}", other)),
         };
 
