@@ -3767,6 +3767,13 @@ class TorService : Service() {
             // Show "Friend request accepted" notification
             showFriendRequestAcceptedNotification(contactCard.displayName)
 
+            // Wake up AddFriendActivity so its UI navigates off the stale Cancel page.
+            // Without this, the initiator sits on the pending-request screen even
+            // though the request has already succeeded.
+            val completedIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_COMPLETED")
+            completedIntent.setPackage(packageName)
+            sendBroadcast(completedIntent)
+
             Log.i(TAG, "Phase 2 complete - ${contactCard.displayName} added to contacts")
 
             // Send Phase 3 ACK back to sender's friend-request .onion

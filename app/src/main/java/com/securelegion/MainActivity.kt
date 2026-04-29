@@ -2197,7 +2197,7 @@ class MainActivity : BaseActivity() {
                         com.securelegion.utils.BrandedQrGenerator.QrOptions(
                             content = qrContent,
                             size = 512,
-                            showLogo = true,
+                            showLogo = false,
                             mintText = mintText,
                             expiryText = expiryText,
                             showWebsite = true

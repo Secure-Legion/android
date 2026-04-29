@@ -430,11 +430,6 @@
 -keep class com.journeyapps.barcodescanner.** { *; }
 -dontwarn com.google.zxing.**
 
-# ==================== ML KIT ====================
-
--keep class com.google.mlkit.** { *; }
--dontwarn com.google.mlkit.**
-
 # ==================== CAMERAX ====================
 
 -keep class androidx.camera.** { *; }

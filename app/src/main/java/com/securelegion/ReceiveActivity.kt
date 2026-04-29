@@ -345,7 +345,7 @@ class ReceiveActivity : BaseActivity() {
                 com.securelegion.utils.BrandedQrGenerator.QrOptions(
                     content = text,
                     size = 512,
-                    showLogo = true,
+                    showLogo = false,
                     mintText = null,
                     expiryText = null,
                     showWebsite = true
@@ -357,7 +357,10 @@ class ReceiveActivity : BaseActivity() {
             currentAddress = text
 
             if (bitmap != null) {
-                findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(bitmap)
+                findViewById<ImageView>(R.id.qrCodeImage).apply {
+                    setImageBitmap(bitmap)
+                    (drawable as? android.graphics.drawable.BitmapDrawable)?.isFilterBitmap = false
+                }
             }
             Log.i("ReceiveActivity", "Branded QR code generated successfully")
 

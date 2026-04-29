@@ -38,7 +38,7 @@ object BrandedQrGenerator {
         val mintText: String? = null,     // e.g. "1/5"
         val expiryText: String? = null,   // e.g. "12h 30m"
         val showWebsite: Boolean = true,
-        val cornerRadiusPx: Float = 3f    // Rounded module corners
+        val cornerRadiusPx: Float = 0f    // Sharp-square modules — scanners need crisp 1:1:3:1:1 ratio
     )
 
     /**
@@ -49,20 +49,16 @@ object BrandedQrGenerator {
         return try {
             // --- 1. Generate QR bit matrix with high error correction ---
             val hints = mapOf(
-                EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
-                EncodeHintType.MARGIN to 2
+                EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
+                EncodeHintType.MARGIN to 4
             )
             val writer = QRCodeWriter()
             val bitMatrix = writer.encode(options.content, BarcodeFormat.QR_CODE, options.size, options.size, hints)
             val matrixWidth = bitMatrix.width
             val matrixHeight = bitMatrix.height
 
-            // --- 2. Calculate layout dimensions ---
-            // Extra space below QR for footer text
-            val footerHeight = if (options.showWebsite || options.expiryText != null) 36 else 0
-            val totalHeight = matrixHeight + footerHeight
-
-            val bitmap = Bitmap.createBitmap(matrixWidth, totalHeight, Bitmap.Config.ARGB_8888)
+            // --- 2. Layout dimensions: square bitmap, no footer ---
+            val bitmap = Bitmap.createBitmap(matrixWidth, matrixHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
 
             val bgColor = qrBgColor(context)
@@ -71,28 +67,18 @@ object BrandedQrGenerator {
             // --- 3. Fill background ---
             canvas.drawColor(bgColor)
 
-            // --- 4. Draw rounded QR modules ---
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = moduleColor
-                style = Paint.Style.FILL
-            }
-            val moduleWidth = matrixWidth.toFloat() / bitMatrix.width
-            val moduleHeight = matrixHeight.toFloat() / bitMatrix.height
-            val radius = options.cornerRadiusPx
-
-            for (x in 0 until bitMatrix.width) {
-                for (y in 0 until bitMatrix.height) {
-                    if (bitMatrix[x, y]) {
-                        val left = x * moduleWidth
-                        val top = y * moduleHeight
-                        val rect = RectF(left, top, left + moduleWidth, top + moduleHeight)
-                        canvas.drawRoundRect(rect, radius, radius, paint)
-                    }
+            // --- 4. Paint QR modules pixel-perfect ---
+            // ZXing returns a BitMatrix sized exactly to (matrixWidth, matrixHeight),
+            // so each cell maps to one bitmap pixel. setPixels avoids any rasterizer
+            // sub-pixel fuzz that drawRect/drawRoundRect introduce when module width
+            // is non-integer.
+            val rowPixels = IntArray(matrixWidth)
+            for (y in 0 until matrixHeight) {
+                for (x in 0 until matrixWidth) {
+                    rowPixels[x] = if (bitMatrix[x, y]) moduleColor else bgColor
                 }
+                bitmap.setPixels(rowPixels, 0, matrixWidth, 0, y, matrixWidth, 1)
             }
-
-            // --- 5. Draw finder pattern accents (the three corner squares) ---
-            drawFinderPatterns(canvas, bitMatrix, matrixWidth, matrixHeight, moduleWidth, moduleHeight, bgColor, moduleColor)
 
             // --- 6. Overlay center logo ---
             if (options.showLogo) {
@@ -104,11 +90,6 @@ object BrandedQrGenerator {
                 drawMintBadge(context, canvas, matrixWidth, options.mintText)
             }
 
-            // --- 8. Draw footer (website + expiry) ---
-            if (footerHeight > 0) {
-                drawFooter(canvas, matrixWidth, matrixHeight, totalHeight, options)
-            }
-
             bitmap
         } catch (e: Exception) {
             android.util.Log.e("BrandedQrGenerator", "Failed to generate branded QR", e)
@@ -116,11 +97,15 @@ object BrandedQrGenerator {
         }
     }
 
-    /**
-     * Redraw the three finder patterns (corner squares) with standard high-contrast colors.
-     * Finder patterns must be easily detectable — they're how scanners locate the QR code.
-     * Uses white (QR_MODULE_COLOR) on dark background for maximum contrast and scanner compatibility.
-     */
+    /** True when (x,y) is inside any of the three 7×7 finder-pattern regions. */
+    private fun isInFinderPattern(x: Int, y: Int, w: Int, h: Int): Boolean {
+        val s = 7
+        return (x < s && y < s) ||
+            (x >= w - s && y < s) ||
+            (x < s && y >= h - s)
+    }
+
+    @Suppress("unused")
     private fun drawFinderPatterns(
         canvas: Canvas, bitMatrix: com.google.zxing.common.BitMatrix,
         canvasWidth: Int, canvasHeight: Int,

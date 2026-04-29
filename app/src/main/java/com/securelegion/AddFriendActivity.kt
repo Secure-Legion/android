@@ -500,35 +500,8 @@ class AddFriendActivity : BaseActivity() {
                 return
             }
 
-            // Pass EXIF rotation to ML Kit (camera path does this via CameraX rotationDegrees)
-            val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, rotationDegrees)
-            val options = com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
-                .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE)
-                .build()
-            val scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient(options)
-
-            // Pre-rotate bitmap for ZXing fallback (ML Kit handles rotation internally)
             val rotatedBitmap = rotateBitmap(bitmap, rotationDegrees)
-
-            scanner.process(image)
-                .addOnSuccessListener { barcodes ->
-                    if (barcodes.isNotEmpty()) {
-                        val qrData = barcodes[0].rawValue
-                        if (!qrData.isNullOrEmpty()) {
-                            handleScannedQrData(qrData)
-                        } else {
-                            ThemedToast.show(this, "QR code is empty")
-                            if (isAutoMode) finish()
-                        }
-                    } else {
-                        // ML Kit failed — try ZXing with rotation-corrected bitmap
-                        tryZxingFallback(rotatedBitmap)
-                    }
-                }
-                .addOnFailureListener { e ->
-                    Log.e(TAG, "ML Kit failed, trying ZXing fallback", e)
-                    tryZxingFallback(rotatedBitmap)
-                }
+            tryZxingFallback(rotatedBitmap)
         } catch (e: Exception) {
             Log.e(TAG, "Error processing gallery image", e)
             ThemedToast.show(this, "Failed to process image")

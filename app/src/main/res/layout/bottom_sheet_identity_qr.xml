@@ -57,25 +57,15 @@
         android:gravity="center"
         android:layout_marginBottom="24dp" />
 
-    <!-- QR Code Card -->
-    <androidx.cardview.widget.CardView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+    <!-- QR Code (no background card) -->
+    <ImageView
+        android:id="@+id/qrCodeImage"
+        android:layout_width="340dp"
+        android:layout_height="340dp"
         android:layout_marginBottom="16dp"
         android:layout_gravity="center"
-        app:cardBackgroundColor="#1A1A1A"
-        app:cardCornerRadius="16dp"
-        app:cardElevation="4dp">
-
-        <ImageView
-            android:id="@+id/qrCodeImage"
-            android:layout_width="240dp"
-            android:layout_height="240dp"
-            android:padding="8dp"
-            android:scaleType="fitCenter"
-            android:contentDescription="Contact Card QR Code" />
-
-    </androidx.cardview.widget.CardView>
+        android:scaleType="fitCenter"
+        android:contentDescription="Contact Card QR Code" />
 
     <!-- Address & PIN section (hidden by default, toggle in Settings) -->
     <LinearLayout

@@ -1,154 +1,79 @@
 package com.securelegion
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
-import android.view.MotionEvent
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.*
-import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageProxy
+import androidx.camera.view.CameraController
+import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
+import com.google.zxing.InvertedLuminanceSource
+import com.google.zxing.NotFoundException
+import com.google.zxing.PlanarYUVLuminanceSource
+import com.google.zxing.common.GlobalHistogramBinarizer
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.qrcode.QRCodeReader
 import com.securelegion.utils.ThemedToast
+import java.util.EnumMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 class QRScannerActivity : AppCompatActivity() {
-    private lateinit var cameraExecutor: ExecutorService
-    private var imageAnalyzer: ImageAnalysis? = null
-    private var camera: Camera? = null
-    private val autoFocusHandler = Handler(Looper.getMainLooper())
-    private var autoFocusRunnable: Runnable? = null
+    private lateinit var previewView: PreviewView
+    private lateinit var cameraController: LifecycleCameraController
+    private lateinit var analyzerExecutor: ExecutorService
+    @Volatile private var fired = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_qr_scanner)
+        previewView = findViewById(R.id.previewView)
+        analyzerExecutor = Executors.newSingleThreadExecutor()
 
-        cameraExecutor = Executors.newSingleThreadExecutor()
+        cameraController = LifecycleCameraController(this).apply {
+            setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
+            cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            isTapToFocusEnabled = true
+        }
 
-        // Check camera permission
+        cameraController.setImageAnalysisAnalyzer(
+            analyzerExecutor,
+            QRCodeAnalyzer(QRCodeReader()) { text -> onQRCodeScanned(text) }
+        )
+
+        previewView.controller = cameraController
+
+        findViewById<View>(R.id.backButton).setOnClickListener { finish() }
+
         if (allPermissionsGranted()) {
-            startCamera()
+            cameraController.bindToLifecycle(this)
         } else {
             ActivityCompat.requestPermissions(
                 this, arrayOf(Manifest.permission.CAMERA), REQUEST_CODE_PERMISSIONS
             )
         }
+    }
 
-        // Back button
-        findViewById<View>(R.id.backButton).setOnClickListener {
+    private fun onQRCodeScanned(text: String) {
+        if (fired) return
+        fired = true
+        Log.i(TAG, "QR Code scanned")
+        runOnUiThread {
+            val intent = Intent().apply { putExtra("SCANNED_ADDRESS", text) }
+            setResult(RESULT_OK, intent)
             finish()
         }
-    }
-
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        val previewView = findViewById<PreviewView>(R.id.previewView)
-
-        cameraProviderFuture.addListener({
-            val cameraProvider = cameraProviderFuture.get()
-
-            // Preview
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.setSurfaceProvider(previewView.surfaceProvider)
-                }
-
-            // Image analyzer for QR code scanning
-            imageAnalyzer = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-                .also {
-                    it.setAnalyzer(cameraExecutor, QRCodeAnalyzer { qrCode ->
-                        runOnUiThread {
-                            onQRCodeScanned(qrCode)
-                        }
-                    })
-                }
-
-            // Select back camera
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                cameraProvider.unbindAll()
-                camera = cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageAnalyzer
-                )
-
-                // Tap-to-focus: user touches screen → camera refocuses at that point
-                setupTapToFocus(previewView)
-
-                // Periodic auto-refocus every 2s (helps Samsung close-range scanning)
-                startPeriodicAutoFocus(previewView)
-
-            } catch (exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
-            }
-
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    @Suppress("ClickableViewAccessibility")
-    private fun setupTapToFocus(previewView: PreviewView) {
-        previewView.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                triggerFocusAt(previewView, event.x, event.y)
-            }
-            true
-        }
-    }
-
-    private fun triggerFocusAt(previewView: PreviewView, x: Float, y: Float) {
-        val cam = camera ?: return
-        val factory = previewView.meteringPointFactory
-        val point = factory.createPoint(x, y)
-        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
-            .setAutoCancelDuration(3, TimeUnit.SECONDS)
-            .build()
-        cam.cameraControl.startFocusAndMetering(action)
-        Log.d(TAG, "Tap-to-focus triggered at ($x, $y)")
-    }
-
-    private fun startPeriodicAutoFocus(previewView: PreviewView) {
-        autoFocusRunnable = object : Runnable {
-            override fun run() {
-                val cam = camera ?: return
-                // Focus on center of preview
-                val centerX = previewView.width / 2f
-                val centerY = previewView.height / 2f
-                if (centerX > 0 && centerY > 0) {
-                    val factory = previewView.meteringPointFactory
-                    val centerPoint = factory.createPoint(centerX, centerY)
-                    val action = FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
-                        .setAutoCancelDuration(2, TimeUnit.SECONDS)
-                        .build()
-                    cam.cameraControl.startFocusAndMetering(action)
-                }
-                autoFocusHandler.postDelayed(this, AUTO_FOCUS_INTERVAL_MS)
-            }
-        }
-        autoFocusHandler.postDelayed(autoFocusRunnable!!, AUTO_FOCUS_INTERVAL_MS)
-    }
-
-    private fun onQRCodeScanned(qrCode: String) {
-        Log.i(TAG, "QR Code scanned: $qrCode")
-
-        // Return the scanned address
-        val resultIntent = Intent()
-        resultIntent.putExtra("SCANNED_ADDRESS", qrCode)
-        setResult(RESULT_OK, resultIntent)
-        finish()
     }
 
     private fun allPermissionsGranted() = arrayOf(Manifest.permission.CAMERA).all {
@@ -161,7 +86,7 @@ class QRScannerActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
             if (allPermissionsGranted()) {
-                startCamera()
+                cameraController.bindToLifecycle(this)
             } else {
                 ThemedToast.show(this, "Camera permission required to scan QR codes")
                 finish()
@@ -171,44 +96,128 @@ class QRScannerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        autoFocusRunnable?.let { autoFocusHandler.removeCallbacks(it) }
-        cameraExecutor.shutdown()
+        cameraController.clearImageAnalysisAnalyzer()
+        cameraController.unbind()
+        analyzerExecutor.shutdown()
     }
 
-    private class QRCodeAnalyzer(private val onQRCodeScanned: (String) -> Unit) : ImageAnalysis.Analyzer {
-        private val scanner = BarcodeScanning.getClient()
+    /**
+     * QR analyzer: four binarization passes (Hybrid, GlobalHistogram, plus inverted
+     * variants for white-on-dark QRs). Handles arbitrary rowStride/pixelStride from
+     * the YUV_420_888 Y plane.
+     */
+    private class QRCodeAnalyzer(
+        private val qrCodeReader: QRCodeReader,
+        private val onBarcodeScanned: (String) -> Unit,
+    ) : androidx.camera.core.ImageAnalysis.Analyzer {
 
-        @androidx.camera.core.ExperimentalGetImage
-        override fun analyze(imageProxy: ImageProxy) {
-            val mediaImage = imageProxy.image
-            if (mediaImage != null) {
-                val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+        @SuppressLint("UnsafeOptInUsageError")
+        override fun analyze(image: ImageProxy) {
+            try {
+                val srcW = image.width
+                val srcH = image.height
+                val yPlane = image.planes[0]
+                val rowStride = yPlane.rowStride
+                val pixelStride = yPlane.pixelStride
+                val buf = yPlane.buffer
+                buf.rewind()
 
-                scanner.process(image)
-                    .addOnSuccessListener { barcodes ->
-                        for (barcode in barcodes) {
-                            when (barcode.valueType) {
-                                Barcode.TYPE_TEXT -> {
-                                    barcode.rawValue?.let { value ->
-                                        onQRCodeScanned(value)
-                                    }
-                                }
-                                Barcode.TYPE_URL -> {
-                                    barcode.rawValue?.let { value ->
-                                        onQRCodeScanned(value)
-                                    }
-                                }
+                // 1. Tightly-pack Y plane into srcW*srcH (strip stride padding).
+                val ySrc = ByteArray(srcW * srcH)
+                if (pixelStride == 1 && rowStride == srcW) {
+                    buf.get(ySrc, 0, ySrc.size)
+                } else {
+                    val dup = buf.duplicate()
+                    var dst = 0
+                    for (row in 0 until srcH) {
+                        val rowStart = row * rowStride
+                        if (pixelStride == 1) {
+                            dup.position(rowStart)
+                            dup.get(ySrc, dst, srcW)
+                            dst += srcW
+                        } else {
+                            for (col in 0 until srcW) {
+                                ySrc[dst++] = dup.get(rowStart + col * pixelStride)
                             }
                         }
                     }
-                    .addOnFailureListener {
-                        Log.e(TAG, "Barcode scanning failed", it)
+                }
+
+                // 2. Rotate buffer to match display orientation. CameraX delivers
+                //    analysis frames in sensor orientation (typically landscape) —
+                //    ZXing's row-major detector is more reliable on upright frames.
+                val rotation = image.imageInfo.rotationDegrees
+                val (yRot, w, h) = rotateLuminance(ySrc, srcW, srcH, rotation)
+
+                // 3. Center-crop to ~60% of the shorter side so we ignore the dim
+                //    overlay edges and any background clutter outside the aim box.
+                val side = (minOf(w, h) * 0.6f).toInt().coerceAtLeast(1)
+                val left = ((w - side) / 2).coerceAtLeast(0)
+                val top = ((h - side) / 2).coerceAtLeast(0)
+
+                val base = PlanarYUVLuminanceSource(yRot, w, h, left, top, side, side, false)
+                val hints = EnumMap<DecodeHintType, Any>(DecodeHintType::class.java).apply {
+                    put(DecodeHintType.TRY_HARDER, true)
+                    put(DecodeHintType.POSSIBLE_FORMATS, listOf(BarcodeFormat.QR_CODE))
+                }
+
+                val attempts = listOf(
+                    BinaryBitmap(HybridBinarizer(base)),
+                    BinaryBitmap(GlobalHistogramBinarizer(base)),
+                    BinaryBitmap(HybridBinarizer(InvertedLuminanceSource(base))),
+                    BinaryBitmap(GlobalHistogramBinarizer(InvertedLuminanceSource(base))),
+                )
+
+                for (bb in attempts) {
+                    try {
+                        val result = qrCodeReader.decode(bb, hints)
+                        onBarcodeScanned(result.text)
+                        return
+                    } catch (_: NotFoundException) {
+                        qrCodeReader.reset()
                     }
-                    .addOnCompleteListener {
-                        imageProxy.close()
+                }
+            } catch (e: Exception) {
+                Log.e("QR", "Analyzer error", e)
+            } finally {
+                qrCodeReader.reset()
+                image.close()
+            }
+        }
+
+        private fun rotateLuminance(
+            src: ByteArray, w: Int, h: Int, degrees: Int
+        ): Triple<ByteArray, Int, Int> {
+            val deg = ((degrees % 360) + 360) % 360
+            return when (deg) {
+                0 -> Triple(src, w, h)
+                90 -> {
+                    val out = ByteArray(src.size)
+                    for (yi in 0 until h) {
+                        val rowStart = yi * w
+                        for (xi in 0 until w) {
+                            out[xi * h + (h - 1 - yi)] = src[rowStart + xi]
+                        }
                     }
-            } else {
-                imageProxy.close()
+                    Triple(out, h, w)
+                }
+                180 -> {
+                    val out = ByteArray(src.size)
+                    val n = src.size
+                    for (i in 0 until n) out[n - 1 - i] = src[i]
+                    Triple(out, w, h)
+                }
+                270 -> {
+                    val out = ByteArray(src.size)
+                    for (yi in 0 until h) {
+                        val rowStart = yi * w
+                        for (xi in 0 until w) {
+                            out[(w - 1 - xi) * h + yi] = src[rowStart + xi]
+                        }
+                    }
+                    Triple(out, h, w)
+                }
+                else -> Triple(src, w, h)
             }
         }
     }
@@ -216,6 +225,5 @@ class QRScannerActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "QRScannerActivity"
         private const val REQUEST_CODE_PERMISSIONS = 10
-        private const val AUTO_FOCUS_INTERVAL_MS = 2000L
     }
 }

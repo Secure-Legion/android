@@ -132,9 +132,10 @@
             <!-- QR Code -->
             <ImageView
                 android:id="@+id/qrCodeImage"
-                android:layout_width="220dp"
-                android:layout_height="220dp"
+                android:layout_width="340dp"
+                android:layout_height="340dp"
                 android:layout_marginBottom="48dp"
+                android:scaleType="fitCenter"
                 android:contentDescription="QR Code" />
 
             <!-- Address Type Selector (Only for ZEC) -->

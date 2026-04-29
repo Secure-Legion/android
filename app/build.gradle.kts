@@ -25,7 +25,7 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 19
+        versionCode = 20
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -295,9 +295,6 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
-
-    // ML Kit Barcode Scanning (latest version)
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     // Base58 encoding for Solana addresses
     implementation("org.bitcoinj:bitcoinj-core:0.16.2")

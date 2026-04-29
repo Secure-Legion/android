@@ -95,9 +95,11 @@ class WalletIdentityActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        // Tap QR code → goes to QrSettingsActivity
-        findViewById<View>(R.id.qrCodeCard).setOnClickListener {
-            startActivity(Intent(this, QrSettingsActivity::class.java))
+        // QR code is non-interactive — tap does nothing.
+        findViewById<View>(R.id.qrCodeCard).apply {
+            setOnClickListener(null)
+            isClickable = false
+            isFocusable = false
         }
 
         // Share button — directly share the QR code via Android's share sheet.
@@ -107,7 +109,6 @@ class WalletIdentityActivity : AppCompatActivity() {
         }
 
         loadUsername()
-        setupBottomNavigation()
         setupProfilePhoto()
         // QR loaded in onResume via cache-first approach
     }
@@ -130,7 +131,10 @@ class WalletIdentityActivity : AppCompatActivity() {
     private fun loadOrGenerateQrCode() {
         // Show cached bitmap immediately (prevents blank screen)
         if (cachedQrBitmap != null) {
-            findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(cachedQrBitmap)
+            findViewById<ImageView>(R.id.qrCodeImage).apply {
+                setImageBitmap(cachedQrBitmap)
+                (drawable as? android.graphics.drawable.BitmapDrawable)?.isFilterBitmap = false
+            }
             currentQrBitmap = cachedQrBitmap
             currentFriendRequestOnion = cachedFriendRequestOnion
         }
@@ -229,7 +233,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                     com.securelegion.utils.BrandedQrGenerator.QrOptions(
                         content = qrContent,
                         size = 512,
-                        showLogo = true,
+                        showLogo = false,
                         mintText = mintText,
                         expiryText = null,
                         showWebsite = true
@@ -250,8 +254,11 @@ class WalletIdentityActivity : AppCompatActivity() {
 
                 currentQrBitmap = result.bitmap
                 currentFriendRequestOnion = result.friendRequestOnion
-                result.bitmap?.let {
-                    findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(it)
+                result.bitmap?.let { bmp ->
+                    findViewById<ImageView>(R.id.qrCodeImage).apply {
+                        setImageBitmap(bmp)
+                        (drawable as? android.graphics.drawable.BitmapDrawable)?.isFilterBitmap = false
+                    }
                 }
                 startExpiryCountdown(result.expiryMs)
             }
