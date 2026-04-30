@@ -619,8 +619,9 @@ pub async fn arti_connect_to_onion(
             }
             Err(e) => {
                 last_err = e.to_string();
-                log::warn!("Arti connect to {}:{} attempt {}/{} failed: {}",
-                    onion_address, port, attempt + 1, MAX_RETRIES, last_err);
+                let detailed = format_arti_error_chain(&e);
+                log::warn!("Arti connect to {}:{} attempt {}/{} failed: {} | chain: {}",
+                    onion_address, port, attempt + 1, MAX_RETRIES, last_err, detailed);
 
                 if attempt + 1 < MAX_RETRIES {
                     let delay = BACKOFF_SECS[attempt as usize];
@@ -669,6 +670,37 @@ pub async fn arti_connect_to_onion(
     }
 
     Err(format!("Arti connect failed: {}", last_err).into())
+}
+
+/// Format an Arti error and its full source chain for diagnostic logs.
+///
+/// Walks `std::error::Error::source()` to expose nested errors, and includes
+/// both Display (`{}`) and Debug (`{:?}`) at the top level. This is required
+/// to surface Arti-internal variants like
+/// `Guard(AllGuardsDown { n_accepted: 0, n_rejected: 60 })` and
+/// `circuit_timeouts.json` references — those are only visible via Debug,
+/// never via Display, so the shortened user-facing
+/// `tor: Onion Service not found: Failed to obtain hidden service circuit`
+/// string hides whether the underlying cause is a peer/offline descriptor
+/// miss (normal) or local guard-state poisoning (recovery requires guard
+/// reset, not just NEWNYM). See ARTI_GUARD_STATE_RESET_HANDOFF_ANDROID.md.
+fn format_arti_error_chain<E: std::error::Error + ?Sized>(err: &E) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = write!(&mut out, "{}", err);
+    let _ = write!(&mut out, " | debug={:?}", err);
+    let mut src: Option<&(dyn std::error::Error)> = err.source();
+    let mut depth = 1usize;
+    while let Some(e) = src {
+        let _ = write!(&mut out, " | source[{}]={} | source[{}]_debug={:?}", depth, e, depth, e);
+        src = e.source();
+        depth += 1;
+        if depth > 8 { // prevent runaway logs from cyclic chains
+            let _ = write!(&mut out, " | source_truncated_at_depth_{}", depth);
+            break;
+        }
+    }
+    out
 }
 
 /// Arti stream wrapper — replaces TorConnection (which held a TcpStream from SOCKS5).
