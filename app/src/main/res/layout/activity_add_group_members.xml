@@ -58,19 +58,19 @@
                 android:textColor="#FFFFFF"
                 android:gravity="center" />
 
-            <!-- Done Button (white bg, black text) -->
+            <!-- Done Button (dark bg, white text — matches primary buttons) -->
             <TextView
                 android:id="@+id/doneButton"
                 android:layout_width="wrap_content"
                 android:layout_height="35dp"
                 android:gravity="center"
                 android:text="Done"
-                android:textColor="#000000"
+                android:textColor="#FFFFFF"
                 android:textSize="15sp"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:paddingStart="16dp"
                 android:paddingEnd="16dp"
-                android:background="@drawable/create_button_bg"
+                android:background="@drawable/lock_button_bg"
                 android:clickable="true"
                 android:focusable="true" />
 

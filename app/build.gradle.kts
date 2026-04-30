@@ -15,6 +15,14 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// Solana dApp Store — separate signing key required by Solana Mobile policy
+// (cannot reuse Play Store signing key per docs.solanamobile.com).
+val solanaKeystorePropertiesFile = rootProject.file("solana-keystore.properties")
+val solanaKeystoreProperties = Properties()
+if (solanaKeystorePropertiesFile.exists()) {
+    solanaKeystoreProperties.load(FileInputStream(solanaKeystorePropertiesFile))
+}
+
 android {
     namespace = "com.securelegion"
     compileSdk = 36
@@ -25,7 +33,7 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 20
+        versionCode = 23
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -35,11 +43,35 @@ android {
             "\"${keystoreProperties.getProperty("jupiterApiKey", "")}\"")
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+        // Solana dApp Store has its own keystore (Solana Mobile policy forbids
+        // reusing the Play Store signing key). Only the `solanadapp` flavor's
+        // release variant is wired to this config.
+        create("solanaDappStore") {
+            if (solanaKeystorePropertiesFile.exists()) {
+                storeFile = rootProject.file(solanaKeystoreProperties.getProperty("storeFile"))
+                storePassword = solanaKeystoreProperties.getProperty("storePassword")
+                keyAlias = solanaKeystoreProperties.getProperty("keyAlias")
+                keyPassword = solanaKeystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     productFlavors {
         create("master") {
             dimension = "version"
             applicationId = "com.securelegion.master"
             // versionNameSuffix = "-master"
+
+            signingConfig = signingConfigs.getByName("release")
 
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
@@ -65,11 +97,16 @@ android {
             applicationId = "com.securelegion.solana"
             versionNameSuffix = "-solana"
 
+            // Flag set is intentionally identical to `googleplay` — this is the
+            // audited, beta-stable feature surface. Solana-specific features
+            // (wallet, voice, IPFS, VPN) stay off here until they're audited and
+            // ready. Solana dApp Store gets the same restricted experience as
+            // Play, just shipped via a different store + signed with its own key.
             buildConfigField("boolean", "ENABLE_TOR", "true")
-            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "false")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
             buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
-            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "false")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
             buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "false")
@@ -77,8 +114,12 @@ android {
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Solana dApp\"")
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
-            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "true")
-            buildConfigField("boolean", "ENABLE_VPN", "true")
+            buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
+            buildConfigField("boolean", "ENABLE_VPN", "false")
+            // Sign with the Solana-only keystore (Solana Mobile policy forbids
+            // reusing the Play Store signing key). Works because buildTypes.release
+            // intentionally does NOT set a signingConfig — each flavor decides.
+            signingConfig = signingConfigs.getByName("solanaDappStore")
         }
 
 
@@ -86,6 +127,8 @@ android {
             dimension = "version"
             applicationId = "com.securelegion.starnet.hackathon"
             versionNameSuffix = "-starnet-hackathon"
+
+            signingConfig = signingConfigs.getByName("release")
 
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
@@ -107,6 +150,8 @@ android {
         create("googleplay") {
             dimension = "version"
             applicationId = "org.securelegion"
+
+            signingConfig = signingConfigs.getByName("release")
 
             buildConfigField("boolean", "ENABLE_TOR", "true")
             // Voice CALLING only — not voice messages. Voice messages use MediaRecorder
@@ -137,6 +182,8 @@ android {
             applicationId = "com.securelegion.demo"
             versionNameSuffix = "-demo"
 
+            signingConfig = signingConfigs.getByName("release")
+
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
@@ -160,6 +207,8 @@ android {
             applicationId = "com.securelegion.fdroid"
             versionNameSuffix = "-fdroid"
 
+            signingConfig = signingConfigs.getByName("release")
+
             // Mirrors the googleplay flavor's feature set. Only identity fields
             // (applicationId, versionNameSuffix, FLAVOR_NAME) and any future
             // F-Droid-specific divergences differ.
@@ -178,17 +227,6 @@ android {
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
             buildConfigField("boolean", "ENABLE_CRUST_IPFS", "false")
             buildConfigField("boolean", "ENABLE_VPN", "true")
-        }
-    }
-
-    signingConfigs {
-        create("release") {
-            if (keystorePropertiesFile.exists()) {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
-            }
         }
     }
 
@@ -224,9 +262,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            // NOTE: no signingConfig set here — each flavor specifies its own
+            // (release vs Solana dApp Store key). See productFlavors above.
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

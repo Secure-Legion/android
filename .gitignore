@@ -66,6 +66,7 @@ README MAIN.md
 *.keystore
 keystore.properties
 release-keystore.jks
+solana-keystore.properties
 *.bat
 *.png
 notification_*.png

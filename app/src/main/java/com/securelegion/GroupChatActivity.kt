@@ -621,11 +621,11 @@ class GroupChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 // Step 1: Persist locally (synchronous Room write)
-                val (opBytes, mgr) = withContext(Dispatchers.IO) {
+                val (opBytes, opId, mgr) = withContext(Dispatchers.IO) {
                     val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
-                    val (opBytes, msgIdHex) = mgr.sendMessage(currentGroupId, messageText)
+                    val (opBytes, msgIdHex, opId) = mgr.sendMessage(currentGroupId, messageText)
                     Log.i(TAG, "Message persisted: $msgIdHex (${opBytes.size} bytes)")
-                    Pair(opBytes, mgr)
+                    Triple(opBytes, opId, mgr)
                 }
 
                 // Step 2: Refresh UI immediately — message is in DB, show it now
@@ -637,10 +637,10 @@ class GroupChatActivity : BaseActivity() {
                     if (count > 0) messagesRecyclerView.smoothScrollToPosition(count - 1)
                 }
 
-                // Step 3: Broadcast to peers (fire-and-forget — network failure is non-fatal)
+                // Step 3: Broadcast to peers (durable ACK tracking handles targeted resend)
                 withContext(Dispatchers.IO) {
                     try {
-                        mgr.broadcastOpToGroup(currentGroupId, opBytes)
+                        mgr.broadcastTrackedLocalOp(currentGroupId, opBytes, opId)
                     } catch (e: Exception) {
                         Log.w(TAG, "Broadcast failed (message saved locally, sync will retry): ${e.message}")
                     }

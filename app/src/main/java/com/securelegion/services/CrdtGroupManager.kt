@@ -12,6 +12,7 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.CrdtOpLog
 import com.securelegion.database.entities.Group
 import com.securelegion.database.entities.GroupPeer
+import com.securelegion.database.entities.PendingGroupApplyAck
 import com.securelegion.database.entities.PendingGroupDelivery
 import org.json.JSONArray
 import org.json.JSONObject
@@ -132,6 +133,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
     init {
         startPendingDeliveryRetryLoop()
+        startApplyAckRetryLoop()
         startRoutingReconciliationLoop()
     }
 
@@ -320,6 +322,158 @@ class CrdtGroupManager private constructor(private val context: Context) {
         }
     }
 
+    suspend fun queryAuthorHeadForAck(groupId: String, authorDeviceIdHex: String): Long {
+        if (!ensureLoaded(groupId)) return 0L
+        return try {
+            val headsObj = JSONObject(RustBridge.crdtQuery(groupId, "heads", "{}"))
+            val perAuthor = headsObj.optJSONObject("per_author_lamport") ?: return 0L
+            perAuthor.optLong(authorDeviceIdHex, 0L)
+        } catch (e: Exception) {
+            Log.w(TAG, "queryAuthorHead failed for ${groupId.take(16)} ${authorDeviceIdHex.take(8)}", e)
+            0L
+        }
+    }
+
+    suspend fun sendGroupApplyAck(
+        groupId: String,
+        recipientPubkeyHex: String,
+        authorDeviceIdHex: String,
+        appliedLamport: Long
+    ) {
+        val routing = resolveRouting(getDatabase(), recipientPubkeyHex, groupId) ?: return
+        val senderPubkey = keyManager.getSigningPublicKey()
+        val senderPrivkey = keyManager.getSigningKeyBytes()
+
+        val innerPayload = ByteArrayOutputStream().apply {
+            write(hexToBytes(authorDeviceIdHex))
+            write(byteArrayOf(
+                ((appliedLamport ushr 56) and 0xFF).toByte(),
+                ((appliedLamport ushr 48) and 0xFF).toByte(),
+                ((appliedLamport ushr 40) and 0xFF).toByte(),
+                ((appliedLamport ushr 32) and 0xFF).toByte(),
+                ((appliedLamport ushr 24) and 0xFF).toByte(),
+                ((appliedLamport ushr 16) and 0xFF).toByte(),
+                ((appliedLamport ushr 8) and 0xFF).toByte(),
+                (appliedLamport and 0xFF).toByte()
+            ))
+        }.toByteArray()
+        val signature = RustBridge.signData(innerPayload, senderPrivkey)
+        val payload = ByteArrayOutputStream().apply {
+            write(hexToBytes(groupId))
+            write(senderPubkey)
+            write(signature)
+            write(innerPayload)
+        }.toByteArray()
+
+        try {
+            RustBridge.sendMessageBlob(routing.onion, payload, 0x38.toByte())
+        } catch (e: Exception) {
+            Log.w(TAG, "sendGroupApplyAck failed for ${recipientPubkeyHex.take(8)}", e)
+        }
+    }
+
+    suspend fun handleGroupApplyAck(groupId: String, data: ByteArray) {
+        if (data.size < 32 + 64 + 16 + 8) {
+            Log.w(TAG, "GROUP_APPLY_ACK too short: ${data.size} bytes")
+            return
+        }
+
+        val senderPubkey = data.copyOfRange(0, 32)
+        val signature = data.copyOfRange(32, 96)
+        val innerPayload = data.copyOfRange(96, data.size)
+        if (!RustBridge.verifySignature(innerPayload, signature, senderPubkey)) {
+            Log.e(TAG, "GROUP_APPLY_ACK invalid signature")
+            return
+        }
+
+        val senderPubkeyHex = bytesToHex(senderPubkey)
+        try {
+            ensureLoaded(groupId)
+            val senderMember = queryMembers(groupId).find { it.pubkeyHex == senderPubkeyHex }
+            if (senderMember == null || !senderMember.accepted || senderMember.removed) {
+                Log.w(TAG, "GROUP_APPLY_ACK from non-member ${senderPubkeyHex.take(8)} dropped")
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "GROUP_APPLY_ACK membership check failed", e)
+            return
+        }
+
+        val authorDeviceIdHex = bytesToHex(innerPayload.copyOfRange(0, 16))
+        val lamport = ((innerPayload[16].toLong() and 0xFF) shl 56) or
+            ((innerPayload[17].toLong() and 0xFF) shl 48) or
+            ((innerPayload[18].toLong() and 0xFF) shl 40) or
+            ((innerPayload[19].toLong() and 0xFF) shl 32) or
+            ((innerPayload[20].toLong() and 0xFF) shl 24) or
+            ((innerPayload[21].toLong() and 0xFF) shl 16) or
+            ((innerPayload[22].toLong() and 0xFF) shl 8) or
+            (innerPayload[23].toLong() and 0xFF)
+
+        getDatabase().pendingGroupApplyAckDao().acknowledgeUpTo(
+            groupId = groupId,
+            authorDeviceIdHex = authorDeviceIdHex,
+            lamport = lamport,
+            targetPeerPubkeyHex = senderPubkeyHex
+        )
+    }
+
+    private fun startApplyAckRetryLoop() {
+        managerScope.launch {
+            while (isActive) {
+                delay(5_000L)
+                try {
+                    val now = System.currentTimeMillis()
+                    val db = getDatabase()
+                    db.pendingGroupApplyAckDao().purgeStale(now - 3_600_000L)
+                    val due = db.pendingGroupApplyAckDao().getDueForRetry(now)
+                    if (due.isEmpty()) continue
+
+                    for (pending in due) {
+                        if (pending.attemptCount >= 3) {
+                            Log.w(
+                                TAG,
+                                "GROUP_ACK_TIMEOUT group=${pending.groupId.take(16)} author=${pending.authorDeviceIdHex.take(8)} lamport=${pending.lamport} peer=${pending.targetPeerPubkeyHex.take(8)}"
+                            )
+                            db.pendingGroupApplyAckDao().deleteOne(
+                                pending.groupId,
+                                pending.authorDeviceIdHex,
+                                pending.lamport,
+                                pending.targetPeerPubkeyHex
+                            )
+                            continue
+                        }
+
+                        val routing = resolveRouting(db, pending.targetPeerPubkeyHex, pending.groupId)
+                        if (routing != null) {
+                            try {
+                                val success = RustBridge.sendMessageBlob(routing.onion, pending.payload, 0x30.toByte())
+                                if (!success) {
+                                    queuePendingDelivery(pending.groupId, pending.targetPeerPubkeyHex, 0x30.toByte(), pending.payload)
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "GROUP_ACK_RETRY failed for ${pending.targetPeerPubkeyHex.take(8)}", e)
+                                queuePendingDelivery(pending.groupId, pending.targetPeerPubkeyHex, 0x30.toByte(), pending.payload)
+                            }
+                        } else {
+                            queuePendingDelivery(pending.groupId, pending.targetPeerPubkeyHex, 0x30.toByte(), pending.payload)
+                        }
+
+                        db.pendingGroupApplyAckDao().updateRetry(
+                            groupId = pending.groupId,
+                            authorDeviceIdHex = pending.authorDeviceIdHex,
+                            lamport = pending.lamport,
+                            targetPeerPubkeyHex = pending.targetPeerPubkeyHex,
+                            attemptCount = pending.attemptCount + 1,
+                            nextRetryAt = now + 5_000L
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "GROUP_ACK_RETRY loop error", e)
+                }
+            }
+        }
+    }
+
     /**
      * Periodic routing reconciliation — every 5 minutes, compare accepted members
      * vs resolved routing. For any member with no route (Contact or GroupPeer),
@@ -459,6 +613,14 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @param opBytes raw serialized op bytes (single op)
      */
     suspend fun broadcastOpToGroup(groupId: String, opBytes: ByteArray) {
+        broadcastTrackedOpToGroup(groupId, opBytes, null)
+    }
+
+    suspend fun broadcastTrackedLocalOp(groupId: String, opBytes: ByteArray, opId: String) {
+        broadcastTrackedOpToGroup(groupId, opBytes, parseAuthorAndLamport(opId))
+    }
+
+    private suspend fun broadcastTrackedOpToGroup(groupId: String, opBytes: ByteArray, ackTracking: Pair<String, Long>?) {
         val db = getDatabase()
         val members = queryMembers(groupId).filter { it.accepted && !it.removed }
         val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
@@ -523,6 +685,26 @@ class CrdtGroupManager private constructor(private val context: Context) {
             }
         }
 
+        if (ackTracking != null) {
+            val successfulPeers = results.filter { it.success }.map { it.pubkeyHex }
+            if (successfulPeers.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                db.pendingGroupApplyAckDao().insertAll(
+                    successfulPeers.map { peerPubkeyHex ->
+                        PendingGroupApplyAck(
+                            groupId = groupId,
+                            authorDeviceIdHex = ackTracking.first,
+                            lamport = ackTracking.second,
+                            targetPeerPubkeyHex = peerPubkeyHex,
+                            payload = payload,
+                            nextRetryAt = now + 5_000L,
+                            createdAt = now
+                        )
+                    }
+                )
+            }
+        }
+
         // Self-healing: request full routing directory when members are unreachable.
         // One all-zeros request fetches the entire directory (faster convergence than per-member).
         if (unreachable.isNotEmpty() && targets.isNotEmpty()) {
@@ -535,6 +717,13 @@ class CrdtGroupManager private constructor(private val context: Context) {
                 Log.e(TAG, "SELF_HEAL: full routing directory request failed", e)
             }
         }
+    }
+
+    private fun parseAuthorAndLamport(opId: String): Pair<String, Long>? {
+        val parts = opId.split(':')
+        if (parts.size < 3) return null
+        val lamport = parts[1].toLongOrNull(16) ?: return null
+        return parts[0] to lamport
     }
 
     private fun hexToBytes(hex: String): ByteArray {
@@ -1523,6 +1712,17 @@ class CrdtGroupManager private constructor(private val context: Context) {
                     try {
                         val result = applyReceivedOps(groupId, packed)
                         Log.i(TAG, "SYNC PersistOps applied=${result.applied} rejected=${result.rejected} fromOthers=${result.appliedMessagesFromOthers}")
+                        if (!peerPubkeyHex.isNullOrEmpty()) {
+                            val peerDeviceIdHex = try {
+                                RustBridge.crdtDeriveDeviceId(hexToBytes(peerPubkeyHex))
+                            } catch (_: Exception) { null }
+                            if (!peerDeviceIdHex.isNullOrBlank()) {
+                                    val appliedLamport = queryAuthorHeadForAck(groupId, peerDeviceIdHex)
+                                if (appliedLamport > 0) {
+                                    sendGroupApplyAck(groupId, peerPubkeyHex, peerDeviceIdHex, appliedLamport)
+                                }
+                            }
+                        }
                         if (result.appliedMessagesFromOthers > 0) {
                             context.sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                 setPackage(context.packageName)
@@ -2120,9 +2320,9 @@ class CrdtGroupManager private constructor(private val context: Context) {
     /**
      * Send a message to the group.
      * Encrypts plaintext with group secret via XChaCha20-Poly1305.
-     * @return Pair(raw op bytes for Tor broadcast, msg_id hex)
+     * @return Triple(raw op bytes for Tor broadcast, msg_id hex, op_id)
      */
-    suspend fun sendMessage(groupId: String, plaintext: String): Pair<ByteArray, String> {
+    suspend fun sendMessage(groupId: String, plaintext: String): Triple<ByteArray, String, String> {
         val group = getDatabase().groupDao().getGroupById(groupId)
             ?: throw IllegalStateException("Group $groupId not found")
 
@@ -2155,6 +2355,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
         val result = JSONObject(resultJson)
         val msgIdHex = result.optString("msg_id_hex", "")
+        val opId = result.getString("op_id")
         val opBytes = storeOpFromResult(resultJson, groupId, "MsgAdd")
 
         val db = getDatabase()
@@ -2165,7 +2366,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val preview = if (previewBase.length > 80) previewBase.take(80) + "..." else previewBase
         db.groupDao().updateLastMessagePreview(groupId, preview)
 
-        return Pair(opBytes, msgIdHex)
+        return Triple(opBytes, msgIdHex, opId)
     }
 
     /** Remove system-message prefixes so previews/UI never show the tag. */
@@ -2180,7 +2381,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         // stripped before display. Unlike "[SYSTEM] " this leaves no visible
         // artifact if the stripping step is ever missed.
         val systemText = "\u0002$text"
-        val (opBytes, _) = sendMessage(groupId, systemText)
+        val (opBytes, _, _) = sendMessage(groupId, systemText)
         broadcastOpToGroup(groupId, opBytes)
         return opBytes
     }
@@ -2782,7 +2983,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * This keeps the MetadataSet op well under the 64KB CRDT payload limit.
      * Returns compressed base64 or null on failure.
      */
-    private fun compressAvatarForCrdt(iconBase64: String): String? {
+    internal fun compressAvatarForCrdt(iconBase64: String): String? {
         return try {
             val rawBytes = Base64.decode(iconBase64, Base64.NO_WRAP)
             val bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return null

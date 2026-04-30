@@ -17,6 +17,7 @@ import com.securelegion.database.dao.CrdtOpLogDao
 import com.securelegion.database.dao.MessageDao
 import com.securelegion.database.dao.MessageReactionDao
 import com.securelegion.database.dao.PendingFriendRequestDao
+import com.securelegion.database.dao.PendingGroupApplyAckDao
 import com.securelegion.database.dao.PendingGroupDeliveryDao
 import com.securelegion.database.dao.PendingPingDao
 import com.securelegion.database.dao.PingInboxDao
@@ -34,6 +35,7 @@ import com.securelegion.database.entities.CrdtOpLog
 import com.securelegion.database.entities.Message
 import com.securelegion.database.entities.MessageReaction
 import com.securelegion.database.entities.PendingFriendRequest
+import com.securelegion.database.entities.PendingGroupApplyAck
 import com.securelegion.database.entities.PendingGroupDelivery
 import com.securelegion.database.entities.PendingPing
 import com.securelegion.database.entities.PingInbox
@@ -58,8 +60,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class],
-    version = 54,
+    entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class],
+    version = 55,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -81,6 +83,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun pendingPingDao(): PendingPingDao
     abstract fun groupPeerDao(): GroupPeerDao
     abstract fun pendingGroupDeliveryDao(): PendingGroupDeliveryDao
+    abstract fun pendingGroupApplyAckDao(): PendingGroupApplyAckDao
     abstract fun pendingProfilePhotoDao(): com.securelegion.database.dao.PendingProfilePhotoDao
     abstract fun vaultItemDao(): com.securelegion.database.dao.VaultItemDao
 
@@ -1152,6 +1155,33 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_54_55 = object : Migration(54, 55) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS pending_group_apply_ack (" +
+                        "groupId TEXT NOT NULL, " +
+                        "authorDeviceIdHex TEXT NOT NULL, " +
+                        "lamport INTEGER NOT NULL, " +
+                        "targetPeerPubkeyHex TEXT NOT NULL, " +
+                        "payload BLOB NOT NULL, " +
+                        "attemptCount INTEGER NOT NULL DEFAULT 0, " +
+                        "nextRetryAt INTEGER NOT NULL, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(groupId, authorDeviceIdHex, lamport, targetPeerPubkeyHex)" +
+                        ")"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_pending_group_apply_ack_nextRetryAt " +
+                        "ON pending_group_apply_ack(nextRetryAt)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_pending_group_apply_ack_createdAt " +
+                        "ON pending_group_apply_ack(createdAt)"
+                )
+                Log.i(TAG, "Migration 54→55: added pending_group_apply_ack table")
+            }
+        }
+
         /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
@@ -1170,7 +1200,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45,
             MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48,
             MIGRATION_48_49, MIGRATION_49_50,
-            MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54
+            MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
+            MIGRATION_54_55
         )
 
         /**
@@ -1267,7 +1298,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 54) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 55) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

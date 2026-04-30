@@ -267,7 +267,7 @@ class WalletIdentityActivity : AppCompatActivity() {
 
     /**
      * Live countdown that ticks every second inside the QR card footer.
-     * When it hits zero, auto-regenerates the QR.
+     * When it hits zero, force a PIN rotation and regenerate the QR.
      */
     private fun startExpiryCountdown(expiryMs: Long) {
         countdownTimer?.cancel()
@@ -280,8 +280,12 @@ class WalletIdentityActivity : AppCompatActivity() {
 
         val remaining = expiryMs - System.currentTimeMillis()
         if (remaining <= 0) {
+            // Already expired on entry (e.g. user opened the screen after the
+            // rotation interval already elapsed). Don't sit on a dead "Expired"
+            // label — kick a rotation+regen so the UI self-heals.
             countdownText.text = "Expired"
             countdownText.visibility = View.VISIBLE
+            rotateAndRegenerate()
             return
         }
 
@@ -304,11 +308,34 @@ class WalletIdentityActivity : AppCompatActivity() {
 
             override fun onFinish() {
                 countdownText.text = "Expired"
-                // Invalidate cache and regenerate
-                cachedQrBitmap = null
-                generateQrCode()
+                rotateAndRegenerate()
             }
         }.start()
+    }
+
+    /**
+     * Run an unconditional PIN rotation, then regenerate the QR. Without the
+     * forced rotation, generateQrCode() reads the same stale
+     * getPinRotationTimestamp() and produces the same expired expiryMs, leaving
+     * the footer stuck on "Expired" forever (the bug fixed here).
+     */
+    private fun rotateAndRegenerate() {
+        cachedQrBitmap = null
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
+                    val cardManager = ContactCardManager(this@WalletIdentityActivity)
+                    val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                    val intervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+                    val maxDecrypts = securityPrefs.getInt("pin_max_uses", 5)
+                    keyManager.rotatePinIfNeeded(cardManager, intervalMs, maxDecrypts)
+                }
+            } catch (e: Exception) {
+                Log.w("WalletIdentity", "Forced PIN rotation failed before QR regen", e)
+            }
+            generateQrCode()
+        }
     }
 
     private fun showChangeIdentityConfirmation() {

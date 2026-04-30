@@ -93,7 +93,6 @@ class TorHealthActivity : AppCompatActivity() {
             }.start()
         }
 
-        BottomNavigationHelper.setupBottomNavigation(this)
     }
 
     override fun onResume() {

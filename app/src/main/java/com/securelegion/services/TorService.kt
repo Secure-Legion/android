@@ -5450,7 +5450,7 @@ class TorService : Service() {
                 return
             }
 
-            if (wireType == 0x30 || wireType == 0x35 || wireType == 0x36 || wireType == 0x37) {
+            if (wireType == 0x30 || wireType == 0x35 || wireType == 0x36 || wireType == 0x37 || wireType == 0x38) {
                 val minSize = 1 + 32 + CRDT_GROUP_ID_LEN + 64 // type + X25519 + groupId + signature
                 if (encryptedMessageWire.size < minSize) {
                     Log.e(TAG, "CRDT wire 0x${"%02x".format(wireType)} too short: ${encryptedMessageWire.size} bytes (need >= $minSize)")
@@ -5473,6 +5473,18 @@ class TorService : Service() {
                                 val mgr = CrdtGroupManager.getInstance(this@TorService)
                                 val result = mgr.applyReceivedOps(groupIdHex, rest)
                                 Log.i(TAG, "CRDT_OPS applied=${result.applied} rejected=${result.rejected} msgsFromOthers=${result.appliedMessagesFromOthers} group=${groupIdHex.take(16)}...")
+                                val senderX25519B64 = android.util.Base64.encodeToString(senderX25519, android.util.Base64.NO_WRAP)
+                                val senderPubkeyHex = mgr.resolvePubkeyByX25519(senderX25519B64, groupIdHex)
+                                if (senderPubkeyHex != null) {
+                                    val senderPubkeyBytes = senderPubkeyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                                    val senderDeviceIdHex = RustBridge.crdtDeriveDeviceId(senderPubkeyBytes)
+                                    if (!senderDeviceIdHex.isNullOrBlank()) {
+                                        val appliedHead = mgr.queryAuthorHeadForAck(groupIdHex, senderDeviceIdHex)
+                                        if (appliedHead > 0) {
+                                            mgr.sendGroupApplyAck(groupIdHex, senderPubkeyHex, senderDeviceIdHex, appliedHead)
+                                        }
+                                    }
+                                }
                                 handleAppliedGroupOps(groupIdHex, result)
                                 sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                     setPackage(packageName)
@@ -5522,6 +5534,17 @@ class TorService : Service() {
                                 mgr.handleGroupProfilePhoto(groupIdHex, rest)
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error processing GROUP_PROFILE_PHOTO", e)
+                            }
+                        }
+                    }
+                    0x38 -> {
+                        Log.i(TAG, "GROUP_APPLY_ACK: group=${groupIdHex.take(16)}... payload=${rest.size} bytes")
+                        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val mgr = CrdtGroupManager.getInstance(this@TorService)
+                                mgr.handleGroupApplyAck(groupIdHex, rest)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error processing GROUP_APPLY_ACK", e)
                             }
                         }
                     }
@@ -9999,5 +10022,3 @@ class TorService : Service() {
         }
     }
 }
-
-

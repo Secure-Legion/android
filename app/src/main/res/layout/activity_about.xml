@@ -92,11 +92,12 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Secure Legion"
-                android:textSize="28sp"
+                android:text="SECURE"
+                android:textSize="40sp"
                 android:textStyle="bold"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:textColor="@color/text_primary"
+                android:letterSpacing="0.05"
                 android:layout_marginBottom="8dp" />
 
             <!-- Version — populated from BuildConfig.VERSION_NAME at runtime -->

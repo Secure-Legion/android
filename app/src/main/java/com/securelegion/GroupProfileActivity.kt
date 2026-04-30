@@ -649,9 +649,33 @@ class GroupProfileActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
                     val keyManager = KeyManager.getInstance(this@GroupProfileActivity)
                     val db = SecureLegionDatabase.getInstance(this@GroupProfileActivity, keyManager.getDatabasePassphrase())
-                    db.groupDao().updateGroupIcon(currentGroupId, base64 ?: "")
+
+                    // Author a CRDT MetadataSet("Avatar") op so the change converges
+                    // to iOS + other Android peers. Local-only DB write is not enough.
+                    val avatarValue: String = if (base64 != null) {
+                        val compressed = mgr.compressAvatarForCrdt(base64)
+                        if (compressed == null) {
+                            Log.w(TAG, "saveGroupIcon: failed to compress avatar — aborting")
+                            return@withContext
+                        }
+                        compressed
+                    } else {
+                        ""  // empty value = icon removed
+                    }
+
+                    val opBytes = mgr.setMetadata(currentGroupId, "Avatar", avatarValue)
+                    db.groupDao().updateGroupIcon(currentGroupId, avatarValue)
+
+                    // Broadcast to peers. Failure is non-fatal — the op is in the
+                    // local op log and converges via CRDT sync on the next round.
+                    try {
+                        mgr.broadcastOpToGroup(currentGroupId, opBytes)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "saveGroupIcon: broadcast failed (op saved locally, sync will retry): ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save group icon", e)
