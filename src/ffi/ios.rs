@@ -54,8 +54,9 @@ static RUNTIME: Lazy<tokio::runtime::Runtime> =
 static FR_SERVER_STARTED: AtomicBool = AtomicBool::new(false);
 static ARTI_STREAMS: Lazy<Mutex<HashMap<u64, crate::network::arti::ArtiStream>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+static ARTI_LAST_ERROR: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 static NEXT_ARTI_STREAM_ID: AtomicU64 = AtomicU64::new(1);
-const IOS_ARTI_DIRECT_CONNECT_TIMEOUT_MS: u64 = 10_000;
+const IOS_ARTI_DIRECT_CONNECT_TIMEOUT_MS: u64 = 90_000;
 const IOS_ARTI_DIRECT_WRITE_TIMEOUT_MS: u64 = 8_000;
 const IOS_ARTI_DIRECT_ACK_TIMEOUT_MS: u64 = 15_000;
 
@@ -111,6 +112,16 @@ unsafe fn write_bytes_with_len(out_ptr: *mut u8, out_len_ptr: *mut u32, data: &[
     ptr::copy_nonoverlapping(data.as_ptr(), out_ptr, data.len());
     *out_len_ptr = data.len() as u32;
     0
+}
+
+fn set_arti_last_error(message: impl Into<String>) {
+    let mut guard = ARTI_LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = message.into();
+}
+
+fn clear_arti_last_error() {
+    let mut guard = ARTI_LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner());
+    guard.clear();
 }
 
 unsafe fn write_cstr_to_buf(out_ptr: *mut c_char, data: &str, max_without_nul: usize) -> i32 {
@@ -1637,6 +1648,516 @@ pub unsafe extern "C" fn securelegion_device_id_from_pubkey(
     0
 }
 
+// ----- Group wire-protocol helpers for iOS -----
+
+/// Validate that `data` consists of well-formed length-prefixed op frames:
+/// [4-byte BE len][op bytes]{repeat}. Returns 1 for valid (including empty),
+/// 0 for malformed.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_validate_packed_ops(
+    data: *const u8,
+    data_len: u32,
+) -> i32 {
+    if data.is_null() && data_len > 0 {
+        return 0;
+    }
+    if data_len == 0 {
+        return 1;
+    }
+    let bytes = std::slice::from_raw_parts(data, data_len as usize);
+    let mut offset = 0usize;
+    while offset + 4 <= bytes.len() {
+        let mut len_buf = [0u8; 4];
+        len_buf.copy_from_slice(&bytes[offset..offset + 4]);
+        let len = u32::from_be_bytes(len_buf) as usize;
+        offset += 4;
+        if len == 0 || len > MAX_SERIALIZED_OP_BYTES {
+            return 0;
+        }
+        if offset + len > bytes.len() {
+            return 0;
+        }
+        offset += len;
+    }
+    if offset == bytes.len() { 1 } else { 0 }
+}
+
+/// Encrypt a group message: XChaCha20-Poly1305 with random nonce.
+/// Returns JSON {"ciphertext_b64":"...","nonce_b64":"..."} in result_out.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_encrypt_group_message(
+    plaintext: *const u8,
+    plaintext_len: u32,
+    group_secret: *const u8,
+    result_json_out: *mut u8,
+    result_json_len: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let pt = match bytes_from_ptr(plaintext, plaintext_len as usize) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let key = match copy_fixed::<32>(group_secret) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let cipher = match XChaCha20Poly1305::new_from_slice(&key) {
+            Ok(c) => c,
+            Err(_) => return -1,
+        };
+        let mut nonce_bytes = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = XNonce::from_slice(&nonce_bytes);
+        let ciphertext = match cipher.encrypt(nonce, pt) {
+            Ok(ct) => ct,
+            Err(_) => return -1,
+        };
+        let json = serde_json::json!({
+            "ciphertext_b64": B64.encode(&ciphertext),
+            "nonce_b64": B64.encode(&nonce_bytes),
+        });
+        write_bytes_with_len(result_json_out, result_json_len, json.to_string().as_bytes())
+    }))
+    .unwrap_or(-1)
+}
+
+/// Decrypt a group message given base64-encoded ciphertext and nonce.
+/// Returns plaintext bytes in plaintext_out.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_decrypt_group_message(
+    ciphertext_b64: *const c_char,
+    nonce_b64: *const c_char,
+    group_secret: *const u8,
+    plaintext_out: *mut u8,
+    plaintext_len_out: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let ct_str = match cstr_to_string(ciphertext_b64) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let nonce_str = match cstr_to_string(nonce_b64) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let ct = match B64.decode(&ct_str) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let nonce_bytes = match B64.decode(&nonce_str) {
+            Ok(v) if v.len() == 24 => {
+                let mut arr = [0u8; 24];
+                arr.copy_from_slice(&v);
+                arr
+            }
+            _ => return -1,
+        };
+        let key = match copy_fixed::<32>(group_secret) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let cipher = match XChaCha20Poly1305::new_from_slice(&key) {
+            Ok(c) => c,
+            Err(_) => return -1,
+        };
+        let nonce = XNonce::from_slice(&nonce_bytes);
+        let plaintext = match cipher.decrypt(nonce, ct.as_ref()) {
+            Ok(pt) => pt,
+            Err(_) => return -1,
+        };
+        write_bytes_with_len(plaintext_out, plaintext_len_out, &plaintext)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Check if a loaded group needs key rotation. Returns 1 if rekey needed,
+/// 0 if not, -1 if group not loaded.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_needs_rekey(
+    group_id_hex: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid_s = match cstr_to_string(group_id_hex) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let gid = match GroupID::from_hex(&gid_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let groups = get_groups().lock().unwrap_or_else(|e| e.into_inner());
+        let state = match groups.get(&gid) {
+            Some(s) => s,
+            None => return -1,
+        };
+        if state.membership.needs_rekey() { 1 } else { 0 }
+    }))
+    .unwrap_or(-1)
+}
+
+/// Strip wire framing from an inbound group ops body. Handles all 4 format
+/// combinations: +/-24-byte ping_id prefix, +/-64-byte transport sig suffix.
+/// Returns [groupId:32][packedOps...] in body_out as one contiguous buffer.
+/// Returns 0 on success, -1 if no valid format found.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_parse_group_ops_body(
+    data: *const u8,
+    data_len: u32,
+    body_out: *mut u8,
+    body_len_out: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let raw = match bytes_from_ptr(data, data_len as usize) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        for (strip_sig, strip_ping) in [(true, false), (true, true), (false, true), (false, false)] {
+            let mut body = raw;
+            if strip_ping && body.len() >= 24 {
+                body = &body[24..];
+            }
+            if strip_sig && body.len() >= 64 {
+                body = &body[..body.len() - 64];
+            }
+            if body.len() < 32 {
+                continue;
+            }
+            let potential_ops = &body[32..];
+            let valid = if potential_ops.is_empty() {
+                false
+            } else {
+                securelegion_validate_packed_ops(potential_ops.as_ptr(), potential_ops.len() as u32) == 1
+            };
+            if valid {
+                return write_bytes_with_len(body_out, body_len_out, body);
+            }
+        }
+        -1
+    }))
+    .unwrap_or(-1)
+}
+
+/// Build a complete group ops wire frame:
+/// [type=0x30][x25519_pub:32][groupId:32][packedOps][transportSig:64]
+/// `packed_ops` is already length-prefixed: [4BE len][op bytes]...
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_pack_group_ops_frame(
+    group_id: *const u8,            // 32 bytes raw
+    packed_ops: *const u8,
+    packed_ops_len: u32,
+    sender_x25519_pub: *const u8,   // 32 bytes
+    sender_ed25519_seed: *const u8, // 32 bytes (signs body)
+    frame_out: *mut u8,
+    frame_len_out: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid = match bytes_from_ptr(group_id, 32) { Ok(v) => v, Err(_) => return -1 };
+        let ops = bytes_from_ptr_opt(packed_ops, packed_ops_len as usize);
+        let x25519 = match bytes_from_ptr(sender_x25519_pub, 32) { Ok(v) => v, Err(_) => return -1 };
+        let seed = match copy_fixed::<32>(sender_ed25519_seed) { Ok(v) => v, Err(_) => return -1 };
+
+        let mut body = Vec::with_capacity(32 + ops.len());
+        body.extend_from_slice(gid);
+        body.extend_from_slice(ops);
+
+        let sig = match sign_data(&body, &seed) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let mut frame = Vec::with_capacity(1 + 32 + body.len() + 64);
+        frame.push(0x30u8);
+        frame.extend_from_slice(x25519);
+        frame.extend_from_slice(&body);
+        frame.extend_from_slice(&sig);
+
+        write_bytes_with_len(frame_out, frame_len_out, &frame)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Parse a routing update payload and return JSON array of peer entries.
+/// Input: raw body after type+x25519 strip: [groupId:32][senderEd:32][innerSig:64][count:u16BE][entries...]
+/// Returns JSON: {"group_id_hex":"...","sender_ed_hex":"...","verified":bool,"peers":[{...}]}
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_parse_routing_update(
+    data: *const u8,
+    data_len: u32,
+    result_json_out: *mut u8,
+    result_json_len: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let raw = match bytes_from_ptr(data, data_len as usize) { Ok(v) => v, Err(_) => return -1 };
+        if raw.len() < 32 + 32 + 64 + 2 { return -1; }
+
+        let group_id_hex = hex::encode(&raw[..32]);
+        let sender_ed = &raw[32..64];
+        let sender_ed_hex = hex::encode(sender_ed);
+        let inner_sig = &raw[64..128];
+        let inner = &raw[128..];
+
+        // Verify inner signature
+        let verified = verify_signature(inner, inner_sig, sender_ed).unwrap_or(false);
+
+        if inner.len() < 2 { return -1; }
+        let count = u16::from_be_bytes([inner[0], inner[1]]) as usize;
+        let mut offset = 2usize;
+        let mut peers = Vec::new();
+
+        for _ in 0..count {
+            if offset + 32 + 32 + 2 > inner.len() { break; }
+            let ed_hex = hex::encode(&inner[offset..offset + 32]);
+            offset += 32;
+            let x25519_hex = hex::encode(&inner[offset..offset + 32]);
+            offset += 32;
+
+            if offset + 2 > inner.len() { break; }
+            let onion_len = u16::from_be_bytes([inner[offset], inner[offset + 1]]) as usize;
+            offset += 2;
+            if offset + onion_len > inner.len() { break; }
+            let onion = String::from_utf8_lossy(&inner[offset..offset + onion_len]).to_string();
+            offset += onion_len;
+
+            if offset + 2 > inner.len() { break; }
+            let name_len = u16::from_be_bytes([inner[offset], inner[offset + 1]]) as usize;
+            offset += 2;
+            if offset + name_len > inner.len() { break; }
+            let name = String::from_utf8_lossy(&inner[offset..offset + name_len]).to_string();
+            offset += name_len;
+
+            peers.push(serde_json::json!({
+                "ed25519_hex": ed_hex,
+                "x25519_hex": x25519_hex,
+                "onion": onion,
+                "display_name": name,
+            }));
+        }
+
+        let result = serde_json::json!({
+            "group_id_hex": group_id_hex,
+            "sender_ed_hex": sender_ed_hex,
+            "verified": verified,
+            "peers": peers,
+        });
+        write_bytes_with_len(result_json_out, result_json_len, result.to_string().as_bytes())
+    }))
+    .unwrap_or(-1)
+}
+
+/// Build a routing update wire frame:
+/// [type=0x35][x25519:32][groupId:32][senderEd:32][innerSig:64][count:u16BE][entries...][transportSig:64]
+/// `entries_json` is a JSON array of {"ed25519_hex","x25519_hex","onion","display_name"}.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_build_routing_update(
+    group_id: *const u8,            // 32 bytes raw
+    entries_json: *const c_char,    // JSON array
+    sender_x25519_pub: *const u8,   // 32 bytes
+    sender_ed25519_pub: *const u8,  // 32 bytes
+    sender_ed25519_seed: *const u8, // 32 bytes
+    frame_out: *mut u8,
+    frame_len_out: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid = match bytes_from_ptr(group_id, 32) { Ok(v) => v, Err(_) => return -1 };
+        let x25519 = match bytes_from_ptr(sender_x25519_pub, 32) { Ok(v) => v, Err(_) => return -1 };
+        let ed_pub = match bytes_from_ptr(sender_ed25519_pub, 32) { Ok(v) => v, Err(_) => return -1 };
+        let seed = match copy_fixed::<32>(sender_ed25519_seed) { Ok(v) => v, Err(_) => return -1 };
+        let json_str = match cstr_to_string(entries_json) { Ok(v) => v, Err(_) => return -1 };
+
+        let entries: Vec<serde_json::Value> = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+
+        // Serialize entries first, then write actual count
+        let mut entry_data = Vec::new();
+        let mut serialized_count: u16 = 0;
+
+        for entry in &entries {
+            let ed_hex = entry["ed25519_hex"].as_str().unwrap_or("");
+            let x_hex = entry["x25519_hex"].as_str().unwrap_or("");
+            let onion = entry["onion"].as_str().unwrap_or("");
+            let name = entry["display_name"].as_str().unwrap_or("");
+
+            let ed_bytes = match hex::decode(ed_hex) { Ok(v) if v.len() == 32 => v, _ => continue };
+            let x_bytes = match hex::decode(x_hex) { Ok(v) if v.len() == 32 => v, _ => continue };
+
+            let onion_bytes = onion.trim().to_lowercase().as_bytes().to_vec();
+            let name_bytes = name.as_bytes().to_vec();
+
+            entry_data.extend_from_slice(&ed_bytes);
+            entry_data.extend_from_slice(&x_bytes);
+            entry_data.extend_from_slice(&(onion_bytes.len() as u16).to_be_bytes());
+            entry_data.extend_from_slice(&onion_bytes);
+            entry_data.extend_from_slice(&(name_bytes.len() as u16).to_be_bytes());
+            entry_data.extend_from_slice(&name_bytes);
+            serialized_count += 1;
+        }
+
+        // Build inner: [count:u16BE][entries...] -- count matches actual serialized entries
+        let mut inner = Vec::new();
+        inner.extend_from_slice(&serialized_count.to_be_bytes());
+        inner.extend_from_slice(&entry_data);
+
+        let inner_sig = match sign_data(&inner, &seed) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let mut body = Vec::new();
+        body.extend_from_slice(gid);
+        body.extend_from_slice(ed_pub);
+        body.extend_from_slice(&inner_sig);
+        body.extend_from_slice(&inner);
+
+        let transport_sig = match sign_data(&body, &seed) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        // Full frame: [0x35][x25519:32][body][transportSig:64]
+        let mut frame = Vec::new();
+        frame.push(0x35u8);
+        frame.extend_from_slice(x25519);
+        frame.extend_from_slice(&body);
+        frame.extend_from_slice(&transport_sig);
+
+        write_bytes_with_len(frame_out, frame_len_out, &frame)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Build a routing request wire frame:
+/// [type=0x36][x25519:32][groupId:32][senderEd:32][innerSig:64][requestedEd:32][transportSig:64]
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_build_routing_request(
+    group_id: *const u8,              // 32 bytes
+    requested_ed25519: *const u8,     // 32 bytes (all-zero = request full directory)
+    sender_x25519_pub: *const u8,     // 32 bytes
+    sender_ed25519_pub: *const u8,    // 32 bytes
+    sender_ed25519_seed: *const u8,   // 32 bytes
+    frame_out: *mut u8,
+    frame_len_out: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid = match bytes_from_ptr(group_id, 32) { Ok(v) => v, Err(_) => return -1 };
+        let requested = match bytes_from_ptr(requested_ed25519, 32) { Ok(v) => v, Err(_) => return -1 };
+        let x25519 = match bytes_from_ptr(sender_x25519_pub, 32) { Ok(v) => v, Err(_) => return -1 };
+        let ed_pub = match bytes_from_ptr(sender_ed25519_pub, 32) { Ok(v) => v, Err(_) => return -1 };
+        let seed = match copy_fixed::<32>(sender_ed25519_seed) { Ok(v) => v, Err(_) => return -1 };
+
+        let inner_sig = match sign_data(requested, &seed) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let mut body = Vec::new();
+        body.extend_from_slice(gid);
+        body.extend_from_slice(ed_pub);
+        body.extend_from_slice(&inner_sig);
+        body.extend_from_slice(requested);
+
+        let transport_sig = match sign_data(&body, &seed) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let mut frame = Vec::new();
+        frame.push(0x36u8);
+        frame.extend_from_slice(x25519);
+        frame.extend_from_slice(&body);
+        frame.extend_from_slice(&transport_sig);
+
+        write_bytes_with_len(frame_out, frame_len_out, &frame)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Build a sync request wire frame:
+/// [type=0x32][x25519:32][groupId:32][senderEd:32][sig(groupId):64][transportSig:64]
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_pack_sync_request(
+    group_id: *const u8,              // 32 bytes
+    sender_x25519_pub: *const u8,     // 32 bytes
+    sender_ed25519_pub: *const u8,    // 32 bytes
+    sender_ed25519_seed: *const u8,   // 32 bytes
+    frame_out: *mut u8,
+    frame_len_out: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid = match bytes_from_ptr(group_id, 32) { Ok(v) => v, Err(_) => return -1 };
+        let x25519 = match bytes_from_ptr(sender_x25519_pub, 32) { Ok(v) => v, Err(_) => return -1 };
+        let ed_pub = match bytes_from_ptr(sender_ed25519_pub, 32) { Ok(v) => v, Err(_) => return -1 };
+        let seed = match copy_fixed::<32>(sender_ed25519_seed) { Ok(v) => v, Err(_) => return -1 };
+
+        let sig = match sign_data(gid, &seed) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let mut body = Vec::new();
+        body.extend_from_slice(gid);
+        body.extend_from_slice(ed_pub);
+        body.extend_from_slice(&sig);
+
+        let transport_sig = match sign_data(&body, &seed) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let mut frame = Vec::new();
+        frame.push(0x32u8);
+        frame.extend_from_slice(x25519);
+        frame.extend_from_slice(&body);
+        frame.extend_from_slice(&transport_sig);
+
+        write_bytes_with_len(frame_out, frame_len_out, &frame)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Parse a sync request body (after type+x25519 strip).
+/// Handles both iOS format [groupId:32][senderEd:32][sig:64] and
+/// Android format [groupId:32][senderX25519:32] (shorter, no sig).
+/// Returns JSON: {"group_id_hex":"...","sender_ed_hex":"...","verified":bool}
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_parse_sync_request(
+    data: *const u8,
+    data_len: u32,
+    result_json_out: *mut u8,
+    result_json_len: *mut u32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let raw = match bytes_from_ptr(data, data_len as usize) { Ok(v) => v, Err(_) => return -1 };
+
+        let (group_id_hex, sender_hex, verified);
+
+        if raw.len() >= 128 {
+            // iOS format: [groupId:32][senderEd:32][sig:64]
+            group_id_hex = hex::encode(&raw[..32]);
+            let sender_ed = &raw[32..64];
+            sender_hex = hex::encode(sender_ed);
+            let sig = &raw[64..128];
+            verified = verify_signature(&raw[..32], sig, sender_ed).unwrap_or(false);
+        } else if raw.len() >= 64 {
+            // Android format: [groupId:32][senderX25519:32] (no sig, verify by contact lookup)
+            group_id_hex = hex::encode(&raw[..32]);
+            sender_hex = hex::encode(&raw[32..64]);
+            verified = false; // caller must verify via contact lookup
+        } else {
+            return -1;
+        }
+
+        let result = serde_json::json!({
+            "group_id_hex": group_id_hex,
+            "sender_hex": sender_hex,
+            "verified": verified,
+        });
+        write_bytes_with_len(result_json_out, result_json_len, result.to_string().as_bytes())
+    }))
+    .unwrap_or(-1)
+}
+
 // ───── Arti (in-process Tor) FFI for iOS main app ─────
 
 /// Initialize Arti and bootstrap to the Tor network.
@@ -1654,7 +2175,9 @@ pub extern "C" fn securelegion_arti_init(data_dir: *const c_char) -> i32 {
     match RUNTIME.block_on(crate::network::arti::initialize_arti(&data_dir_str)) {
         Ok(()) => 0,
         Err(e) => {
-            log::error!("securelegion_arti_init failed: {}", e);
+            let msg = format!("securelegion_arti_init failed: {}", e);
+            log::error!("{}", msg);
+            set_arti_last_error(msg);
             -1
         }
     }
@@ -1709,6 +2232,94 @@ pub extern "C" fn securelegion_arti_get_last_tor_proof_ms() -> u64 {
     crate::network::tor::get_last_tor_proof_ms()
 }
 
+/// Return the most recent app-side Arti FFI failure string.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_last_error(out_buf: *mut u8, out_len: *mut u32) -> i32 {
+    if out_buf.is_null() || out_len.is_null() {
+        return -1;
+    }
+    let guard = ARTI_LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe { write_bytes_with_len(out_buf, out_len, guard.as_bytes()) }
+}
+
+/// Return targeted Arti bootstrap/cache diagnostics for support exports.
+/// Writes a multi-line UTF-8 string to out_buf. Returns 0 on success.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_bootstrap_diagnostic(out_buf: *mut u8, out_len: *mut u32) -> i32 {
+    if out_buf.is_null() || out_len.is_null() {
+        return -1;
+    }
+    let diag = crate::network::arti::arti_bootstrap_diagnostic();
+    unsafe { write_bytes_with_len(out_buf, out_len, diag.as_bytes()) }
+}
+
+/// Purge app-side Arti cache for diagnostics. Caller must shutdown Arti first.
+/// Returns a compact summary string in out_buf.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_purge_cache(
+    data_dir: *const c_char,
+    out_buf: *mut u8,
+    out_len: *mut u32,
+) -> i32 {
+    if data_dir.is_null() || out_buf.is_null() || out_len.is_null() {
+        set_arti_last_error("arti_purge_cache: invalid null argument");
+        return -1;
+    }
+    let data_dir_str = match unsafe { CStr::from_ptr(data_dir) }.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            set_arti_last_error("arti_purge_cache: data dir is not valid UTF-8");
+            return -1;
+        }
+    };
+
+    match crate::network::arti::purge_arti_cache_for_data_dir(&data_dir_str) {
+        Ok(summary) => unsafe { write_bytes_with_len(out_buf, out_len, summary.as_bytes()) },
+        Err(e) => {
+            let msg = format!("arti_purge_cache: {}", e);
+            log::error!("{}", msg);
+            set_arti_last_error(msg.clone());
+            unsafe {
+                let _ = write_bytes_with_len(out_buf, out_len, msg.as_bytes());
+            }
+            -1
+        }
+    }
+}
+
+/// Reset Arti guard state: wipe guard/circuit files from state dir, forcing fresh guard selection.
+/// Caller must shutdown Arti first. Returns summary string in out_buf.
+#[no_mangle]
+pub extern "C" fn securelegion_arti_reset_guard_state(
+    data_dir: *const c_char,
+    out_buf: *mut u8,
+    out_len: *mut u32,
+) -> i32 {
+    if data_dir.is_null() || out_buf.is_null() || out_len.is_null() {
+        set_arti_last_error("arti_reset_guard_state: invalid null argument");
+        return -1;
+    }
+    let data_dir_str = match unsafe { CStr::from_ptr(data_dir) }.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            set_arti_last_error("arti_reset_guard_state: data dir is not valid UTF-8");
+            return -1;
+        }
+    };
+
+    match crate::network::arti::reset_arti_guard_state(&data_dir_str) {
+        Ok(summary) => unsafe { write_bytes_with_len(out_buf, out_len, summary.as_bytes()) },
+        Err(e) => {
+            let msg = format!("arti_reset_guard_state: {}", e);
+            set_arti_last_error(msg.clone());
+            unsafe {
+                let _ = write_bytes_with_len(out_buf, out_len, msg.as_bytes());
+            }
+            -1
+        }
+    }
+}
+
 /// High-level atomic send: connect -> write_message -> optionally read ACK -> close.
 /// Returns: 0=success, -1=not ready, -2=connect failed, -3=write failed.
 /// ACK read failure is not a send failure: the recipient may already have stored
@@ -1723,17 +2334,23 @@ pub unsafe extern "C" fn securelegion_arti_send_to_onion(
     ack_out: *mut u8,
     ack_len: *mut u32,
 ) -> i32 {
+    clear_arti_last_error();
     if onion_address.is_null() || payload.is_null() {
+        set_arti_last_error("arti_send_to_onion: invalid null argument");
         return -1;
     }
     let onion_str = match CStr::from_ptr(onion_address).to_str() {
         Ok(s) => s.to_string(),
-        Err(_) => return -1,
+        Err(_) => {
+            set_arti_last_error("arti_send_to_onion: onion address is not valid UTF-8");
+            return -1;
+        }
     };
     let payload_slice = std::slice::from_raw_parts(payload, payload_len as usize);
     let payload_vec = payload_slice.to_vec();
 
     if !crate::network::arti::is_arti_ready() {
+        set_arti_last_error("arti_send_to_onion: Arti is not ready");
         return -1;
     }
 
@@ -1745,11 +2362,18 @@ pub unsafe extern "C" fn securelegion_arti_send_to_onion(
         ).await {
             Ok(Ok(s)) => s,
             Ok(Err(e)) => {
-                log::error!("arti_send_to_onion: connect failed: {}", e);
+                let msg = format!("arti_send_to_onion: connect failed: {}", e);
+                log::error!("{}", msg);
+                set_arti_last_error(msg);
                 return -2;
             },
             Err(_) => {
-                log::error!("arti_send_to_onion: connect timed out after {}ms", IOS_ARTI_DIRECT_CONNECT_TIMEOUT_MS);
+                let msg = format!(
+                    "arti_send_to_onion: connect timed out after {}ms",
+                    IOS_ARTI_DIRECT_CONNECT_TIMEOUT_MS
+                );
+                log::error!("{}", msg);
+                set_arti_last_error(msg);
                 return -2;
             },
         };
@@ -1761,11 +2385,18 @@ pub unsafe extern "C" fn securelegion_arti_send_to_onion(
         ).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
-                log::error!("arti_send_to_onion: write failed: {}", e);
+                let msg = format!("arti_send_to_onion: write failed: {}", e);
+                log::error!("{}", msg);
+                set_arti_last_error(msg);
                 return -3;
             },
             Err(_) => {
-                log::error!("arti_send_to_onion: write timed out after {}ms", IOS_ARTI_DIRECT_WRITE_TIMEOUT_MS);
+                let msg = format!(
+                    "arti_send_to_onion: write timed out after {}ms",
+                    IOS_ARTI_DIRECT_WRITE_TIMEOUT_MS
+                );
+                log::error!("{}", msg);
+                set_arti_last_error(msg);
                 return -3;
             },
         }
@@ -1937,15 +2568,21 @@ pub unsafe extern "C" fn securelegion_arti_preflight_connect(
     timeout_ms: u32,
     latency_ms_out: *mut u32,
 ) -> i32 {
+    clear_arti_last_error();
     if onion_address.is_null() {
+        set_arti_last_error("arti_preflight_connect: invalid null onion address");
         return -1;
     }
     let onion_str = match CStr::from_ptr(onion_address).to_str() {
         Ok(s) => s.to_string(),
-        Err(_) => return -1,
+        Err(_) => {
+            set_arti_last_error("arti_preflight_connect: onion address is not valid UTF-8");
+            return -1;
+        }
     };
 
     if !crate::network::arti::is_arti_ready() {
+        set_arti_last_error("arti_preflight_connect: Arti is not ready");
         return -1;
     }
 
@@ -1966,14 +2603,18 @@ pub unsafe extern "C" fn securelegion_arti_preflight_connect(
             0
         }
         Ok(Err(e)) => {
-            log::warn!("arti_preflight_connect: connect failed: {}", e);
+            let msg = format!("arti_preflight_connect: connect failed: {}", e);
+            log::warn!("{}", msg);
+            set_arti_last_error(msg);
             if !latency_ms_out.is_null() {
                 *latency_ms_out = 0;
             }
             -2
         }
         Err(_) => {
-            log::warn!("arti_preflight_connect: timed out after {}ms", timeout_ms.max(1));
+            let msg = format!("arti_preflight_connect: timed out after {}ms", timeout_ms.max(1));
+            log::warn!("{}", msg);
+            set_arti_last_error(msg);
             if !latency_ms_out.is_null() {
                 *latency_ms_out = 0;
             }

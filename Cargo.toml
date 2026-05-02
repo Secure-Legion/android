@@ -84,6 +84,7 @@ arti-client = { version = "0.40", default-features = false, features = [
     "onion-service-client",
     "onion-service-service",
     "experimental-api",
+    "error_detail",
     "static-sqlite",
 ] }
 tor-rtcompat = { version = "0.40", features = ["tokio", "rustls"] }
