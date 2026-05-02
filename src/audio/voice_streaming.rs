@@ -16,6 +16,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
+use crate::util::lock_recover;
 
 // SOCKS5 constants
 const SOCKS5_VERSION: u8 = 0x05;
@@ -34,6 +35,7 @@ const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
 
 // Packet type flags (v2)
 const PTYPE_AUDIO: u8 = 0x01;
+#[allow(dead_code)] // Reserved for future control-channel multiplexing
 const PTYPE_CONTROL: u8 = 0x02;
 
 /// Voice packet structure
@@ -60,7 +62,8 @@ pub struct VoicePacket {
 /// Voice streaming session
 /// Represents an active voice call connection
 pub struct VoiceSession {
-    /// Remote peer address
+    /// Remote peer address (kept for diagnostics / debugger inspection)
+    #[allow(dead_code)]
     peer_addr: SocketAddr,
     /// Remote peer onion address (needed for circuit rebuild)
     peer_onion: String,
@@ -83,7 +86,7 @@ impl VoiceSession {
 
     /// Send audio packet to peer
     pub fn send_audio(&self, packet: VoicePacket) -> Result<(), Box<dyn Error>> {
-        if *self.is_active.lock().unwrap() {
+        if *lock_recover(&self.is_active) {
             self.audio_tx.send(packet)?;
             Ok(())
         } else {
@@ -93,12 +96,12 @@ impl VoiceSession {
 
     /// Check if session is active
     pub fn is_active(&self) -> bool {
-        *self.is_active.lock().unwrap()
+        *lock_recover(&self.is_active)
     }
 
     /// Close session
     pub fn close(&self) {
-        *self.is_active.lock().unwrap() = false;
+        *lock_recover(&self.is_active) = false;
     }
 }
 
@@ -138,7 +141,10 @@ impl VoiceStreamingListener {
         self.listener = Some(listener);
 
         // Take listener out (we'll move it into the background task)
-        let listener = self.listener.take().unwrap();
+        let listener = match self.listener.take() {
+            Some(listener) => listener,
+            None => return Err("listener missing after startup".into()),
+        };
 
         // Clone shared state so task doesn't need to hold lock
         let sessions = self.sessions.clone();
@@ -150,7 +156,7 @@ impl VoiceStreamingListener {
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
-                    Ok((mut socket, addr)) => {
+                    Ok((socket, addr)) => {
                         log::info!("Voice connection from: {}", addr);
 
                         // Disable Nagle's algorithm for real-time audio
@@ -203,7 +209,7 @@ impl VoiceStreamingListener {
             .ok_or("Listener not started")?;
 
         loop {
-            let (mut socket, addr) = listener.accept().await?;
+            let (socket, addr) = listener.accept().await?;
             log::info!("Voice connection from: {}", addr);
 
             // Disable Nagle's algorithm for real-time audio
@@ -251,7 +257,7 @@ impl VoiceStreamingListener {
             // Connect to peer's voice hidden service via SOCKS5 proxy (Tor)
             log::info!("Establishing circuit {} to {} via SOCKS5 proxy", circuit_index, peer_onion);
             log::info!("[VOICE_DEBUG] About to call connect_via_socks5({}:9152)", peer_onion);
-            let mut stream = connect_via_socks5(peer_onion, 9152, circuit_index, &call_id, 0).await?;
+            let stream = connect_via_socks5(peer_onion, 9152, circuit_index, &call_id, 0).await?;
             log::info!("[VOICE_DEBUG] connect_via_socks5 returned successfully for circuit {}", circuit_index);
 
             // Disable Nagle's algorithm for real-time audio
@@ -279,7 +285,7 @@ impl VoiceStreamingListener {
         }
 
         // Store all circuit sessions
-        self.sessions.lock().unwrap().insert(call_id.clone(), circuit_sessions);
+        lock_recover(&self.sessions).insert(call_id.clone(), circuit_sessions);
 
         log::info!("All {} outgoing voice circuits created for call: {}", num_circuits, call_id);
         Ok(())
@@ -288,7 +294,7 @@ impl VoiceStreamingListener {
     /// Send audio packet to peer on specific circuit
     /// @param circuit_index Which circuit to use (0 to num_circuits-1)
     pub fn send_audio(&self, call_id: &str, circuit_index: usize, packet: VoicePacket) -> Result<(), Box<dyn Error>> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = lock_recover(&self.sessions);
         if let Some(circuit_sessions) = sessions.get(call_id) {
             if circuit_index >= circuit_sessions.len() {
                 return Err(format!("Circuit index {} out of range (max: {})", circuit_index, circuit_sessions.len() - 1).into());
@@ -302,7 +308,7 @@ impl VoiceStreamingListener {
 
     /// End voice session (closes all circuits)
     pub fn end_session(&self, call_id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = lock_recover(&self.sessions);
         if let Some(circuit_sessions) = sessions.remove(call_id) {
             for (i, session) in circuit_sessions.into_iter().enumerate() {
                 session.close();
@@ -314,7 +320,7 @@ impl VoiceStreamingListener {
 
     /// Get active session count
     pub fn active_sessions(&self) -> usize {
-        self.sessions.lock().unwrap().len()
+        lock_recover(&self.sessions).len()
     }
 
     /// Rebuild a specific circuit (close and reconnect with fresh Tor path)
@@ -340,7 +346,7 @@ impl VoiceStreamingListener {
 
         // 1. Get peer onion from existing session and close it
         let peer_onion = {
-            let sessions = self.sessions.lock().unwrap();
+            let sessions = lock_recover(&self.sessions);
             let circuit_sessions = sessions.get(call_id)
                 .ok_or(format!("Session not found: {}", call_id))?;
 
@@ -362,7 +368,7 @@ impl VoiceStreamingListener {
 
         // 3. Connect to peer's voice hidden service via SOCKS5 with new isolation credentials
         log::info!("Rebuilding circuit {} to {} via SOCKS5 proxy (rebuild_epoch={})", circuit_index, peer_onion, rebuild_epoch);
-        let mut stream = connect_via_socks5(&peer_onion, 9152, circuit_index, call_id, rebuild_epoch).await?;
+        let stream = connect_via_socks5(&peer_onion, 9152, circuit_index, call_id, rebuild_epoch).await?;
 
         // Disable Nagle's algorithm for real-time audio
         if let Err(e) = stream.set_nodelay(true) {
@@ -376,7 +382,7 @@ impl VoiceStreamingListener {
 
         // 4. Atomically replace circuit session
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = lock_recover(&self.sessions);
             if let Some(circuit_sessions) = sessions.get_mut(call_id) {
                 circuit_sessions[circuit_index] = new_session;
             } else {
@@ -403,7 +409,7 @@ impl VoiceStreamingListener {
 /// - HTTP POST: starts with "POST"
 /// - Audio: starts with UUID (36 bytes)
 pub async fn handle_voice_connection(
-    mut socket: TcpStream,
+    socket: TcpStream,
     addr: SocketAddr,
     sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
     audio_callback: Option<Arc<dyn Fn(String, VoicePacket) + Send + Sync>>,
@@ -513,7 +519,7 @@ async fn handle_http_signaling(
 async fn handle_audio_connection(
     mut socket: TcpStream,
     addr: SocketAddr,
-    sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
+    _sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
     audio_callback: Option<Arc<dyn Fn(String, VoicePacket) + Send + Sync>>,
 ) -> Result<(), Box<dyn Error>> {
     // Read call ID (first 36 bytes = UUID)
@@ -566,7 +572,7 @@ async fn handle_audio_connection(
             .map_err(|e| format!("Failed to flush: {}", e))?;
 
         log::info!("Sent VOICE_OK with negotiated version {} for call: {}", negotiated_version, call_id);
-        Ok::<(u8), String>(negotiated_version)
+        Ok::<u8, String>(negotiated_version)
     }).await;
 
     let negotiated_version = match handshake_result {
@@ -700,7 +706,7 @@ async fn handle_voice_sender(
     mut socket: TcpStream,
     mut audio_rx: mpsc::UnboundedReceiver<VoicePacket>,
     call_id: String,
-    sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
+    _sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
     circuit_index: usize,
 ) -> Result<(), Box<dyn Error>> {
     // Send call ID first
@@ -744,7 +750,7 @@ async fn handle_voice_sender(
         log::info!("Received VOICE_OK (negotiated_version: {}, flags: {}) for call: {} circuit: {}",
                    negotiated_version, flags[0], call_id, circuit_index);
 
-        Ok::<(u8), String>(negotiated_version)
+        Ok::<u8, String>(negotiated_version)
     }).await;
 
     let negotiated_version = match handshake_result {

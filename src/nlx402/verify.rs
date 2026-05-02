@@ -7,7 +7,6 @@
 //! 4. Quote hasn't expired
 //! 5. Transaction signature hasn't been used before (replay protection)
 
-use sha3::{Digest, Sha3_256};
 use thiserror::Error;
 
 use super::quote::PaymentQuote;
