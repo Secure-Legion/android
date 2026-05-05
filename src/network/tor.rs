@@ -349,10 +349,16 @@ pub fn start_bootstrap_event_listener() {
 
         let _guard = ListenerGuard;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .expect("Failed to create runtime for event listener");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    log::error!("Failed to create runtime for event listener: {}", e);
+                    return;
+                }
+            };
 
             rt.block_on(async {
                 if let Err(e) = bootstrap_event_listener_task().await {

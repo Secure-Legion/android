@@ -8,9 +8,11 @@
 ///   - Incoming connections come from `RendRequest` stream (no TCP listener)
 
 use std::error::Error;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex as StdMutex;
+use std::time::SystemTime;
 use once_cell::sync::Lazy;
 
 use arti_client::TorClient;
@@ -26,6 +28,7 @@ use tor_proto::client::stream::ClientStreamCtrl;
 use tor_linkspec::{HasAddrs, HasRelayIds};
 use tor_netdir::{NetDirProvider, Timeliness};
 use tor_geoip::HasCountryCode;
+use tor_error::{ErrorReport as _, HasKind as _};
 
 use crate::network::tor::{
     BOOTSTRAP_STATUS, CIRCUIT_ESTABLISHED, LAST_CIRCUIT_ESTABLISHED_MS,
@@ -43,6 +46,23 @@ use crate::network::tor::{
     MSG_TYPE_CONTACT_LIST_REQUEST, MSG_TYPE_CONTACT_LIST_RESPONSE, MSG_TYPE_CONTACT_LIST_PUSH,
 };
 use crate::util::lock_recover;
+
+const STALE_DIRECTORY_CACHE_SECS: u64 = 3 * 60 * 60;
+
+#[derive(Debug, Clone)]
+struct DirectoryCacheSnapshot {
+    newest_path: String,
+    newest_age_secs: u64,
+    candidate_files: usize,
+}
+
+#[derive(Debug, Clone)]
+struct StorageInventoryEntry {
+    rel_path: String,
+    size_bytes: u64,
+    age_secs: u64,
+    is_directory_cache_candidate: bool,
+}
 
 // ───── Global Arti State ─────
 
@@ -82,6 +102,326 @@ pub fn cleanup_stale_streams() {
             log::debug!("ARTI_PENDING_STREAMS: pruned stale conn_id={}", oldest_key);
         }
     }
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn is_directory_cache_candidate(path: &std::path::Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    name.contains("consensus")
+        || name.contains("microdesc")
+        || name.contains("netdir")
+        || name.contains("cached-")
+        || name.ends_with(".sqlite")
+        || name.ends_with(".sqlite3")
+        || name.ends_with(".db")
+}
+
+fn inspect_directory_cache(cache_dir: &str) -> Option<DirectoryCacheSnapshot> {
+    fn visit(
+        dir: &std::path::Path,
+        best: &mut Option<(std::path::PathBuf, SystemTime)>,
+        count: &mut usize,
+    ) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                visit(&path, best, count);
+                continue;
+            }
+            if !meta.is_file() || !is_directory_cache_candidate(&path) {
+                continue;
+            }
+            let Ok(modified) = meta.modified() else { continue };
+            *count += 1;
+            match best {
+                Some((_, best_time)) if modified <= *best_time => {}
+                _ => *best = Some((path, modified)),
+            }
+        }
+    }
+
+    let mut best: Option<(std::path::PathBuf, SystemTime)> = None;
+    let mut count = 0usize;
+    visit(std::path::Path::new(cache_dir), &mut best, &mut count);
+
+    let (path, modified) = best?;
+    let newest_age_secs = SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or_default()
+        .as_secs();
+
+    Some(DirectoryCacheSnapshot {
+        newest_path: path.display().to_string(),
+        newest_age_secs,
+        candidate_files: count,
+    })
+}
+
+fn log_directory_cache_snapshot(label: &str, cache_dir: &str) -> Option<DirectoryCacheSnapshot> {
+    let snapshot = inspect_directory_cache(cache_dir);
+    match snapshot.as_ref() {
+        Some(s) => {
+            log::info!(
+                "Arti directory cache {}: newestAge={}s candidateFiles={} newest={}",
+                label,
+                s.newest_age_secs,
+                s.candidate_files,
+                s.newest_path
+            );
+        }
+        None => {
+            log::info!("Arti directory cache {}: no consensus/cache candidates in {}", label, cache_dir);
+        }
+    }
+    snapshot
+}
+
+fn purge_directory_cache(cache_dir: &str) -> std::io::Result<()> {
+    let path = std::path::Path::new(cache_dir);
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let entries = std::fs::read_dir(path)?;
+    for entry in entries {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let meta = entry.metadata()?;
+        if meta.is_dir() {
+            std::fs::remove_dir_all(&entry_path)?;
+        } else {
+            std::fs::remove_file(&entry_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn dir_exists_writable(dir: &str) -> (bool, bool) {
+    let path = Path::new(dir);
+    let exists = path.exists();
+    let writable = if exists {
+        let probe = path.join(".securelegion_diag_probe");
+        let ok = std::fs::write(&probe, b"ok").is_ok();
+        let _ = std::fs::remove_file(&probe);
+        ok
+    } else {
+        false
+    };
+    (exists, writable)
+}
+
+fn collect_storage_inventory(root: &str, max_entries: usize) -> (usize, Vec<StorageInventoryEntry>) {
+    fn visit(root: &Path, dir: &Path, entries: &mut Vec<StorageInventoryEntry>, total: &mut usize) {
+        let Ok(read_dir) = std::fs::read_dir(dir) else { return };
+        for item in read_dir.flatten() {
+            let path = item.path();
+            let Ok(meta) = item.metadata() else { continue };
+            if meta.is_dir() {
+                visit(root, &path, entries, total);
+                continue;
+            }
+            if !meta.is_file() {
+                continue;
+            }
+
+            *total += 1;
+            let modified = meta.modified().ok();
+            let age_secs = modified
+                .and_then(|t| SystemTime::now().duration_since(t).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let rel_path = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            entries.push(StorageInventoryEntry {
+                rel_path,
+                size_bytes: meta.len(),
+                age_secs,
+                is_directory_cache_candidate: is_directory_cache_candidate(&path),
+            });
+        }
+    }
+
+    let root_path = Path::new(root);
+    let mut total = 0usize;
+    let mut entries = Vec::new();
+    if root_path.exists() {
+        visit(root_path, root_path, &mut entries, &mut total);
+    }
+    entries.sort_by_key(|entry| entry.age_secs);
+    entries.truncate(max_entries);
+    (total, entries)
+}
+
+fn append_storage_inventory(lines: &mut Vec<String>, label: &str, dir: &str) {
+    let (exists, writable) = dir_exists_writable(dir);
+    lines.push(format!("{}:exists={} writable={}", label, exists, writable));
+
+    let (total, entries) = collect_storage_inventory(dir, 16);
+    lines.push(format!(
+        "{}_files_total={} showingNewest={}",
+        label,
+        total,
+        entries.len()
+    ));
+    for entry in entries {
+        lines.push(format!(
+            "  {} {}B {}s candidate={}",
+            entry.rel_path,
+            entry.size_bytes,
+            entry.age_secs,
+            entry.is_directory_cache_candidate
+        ));
+    }
+}
+
+fn describe_error_chain(err: &(dyn Error + 'static)) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = err.source();
+    while let Some(cause) = source {
+        parts.push(format!("caused by: {}", cause));
+        source = cause.source();
+    }
+    parts.join(" | ")
+}
+
+fn describe_arti_client_error(err: &arti_client::Error) -> String {
+    let kind = err.kind();
+    let detail = err.detail();
+    let report = err.report().to_string().replace('\n', " | ");
+    let chain = describe_error_chain(err);
+    let desc_fetch_failure = is_descriptor_fetch_failure(err);
+    format!(
+        "kind={:?} detail={:?} desc_fetch_failure={} report={} chain={}",
+        kind,
+        detail,
+        desc_fetch_failure,
+        report,
+        chain
+    )
+}
+
+fn outbound_diagnostic_snapshot() -> String {
+    let bootstrap = BOOTSTRAP_STATUS.load(Ordering::SeqCst);
+    let circuit = CIRCUIT_ESTABLISHED.load(Ordering::SeqCst);
+    let last_circuit_ms = LAST_CIRCUIT_ESTABLISHED_MS.load(Ordering::SeqCst);
+    let last_circuit_age_ms = if last_circuit_ms == 0 {
+        -1
+    } else {
+        now_millis().saturating_sub(last_circuit_ms) as i64
+    };
+    let pending_streams = lock_recover(&ARTI_PENDING_STREAMS).len();
+    let hs_publisher = get_hs_publisher_status();
+
+    format!(
+        "bootstrap={} circuitEstablishedFlag={} lastCircuitAgeMs={} pendingStreams={} hsPublisher={}",
+        bootstrap, circuit, last_circuit_age_ms, pending_streams, hs_publisher
+    )
+}
+
+/// Last data dir passed to initialize_arti(), for diagnostics.
+static ARTI_DATA_DIR: StdMutex<Option<String>> = StdMutex::new(None);
+/// Whether the last bootstrap purged the directory cache.
+static ARTI_LAST_PURGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Collect targeted Arti diagnostics for Swift/SystemLogger.
+/// Returns a compact multi-line string. No keys, descriptors, or full onion addresses.
+pub fn arti_bootstrap_diagnostic() -> String {
+    let data_dir = lock_recover(&ARTI_DATA_DIR).clone().unwrap_or_default();
+    let state_dir = format!("{}/arti/state", data_dir);
+    let cache_dir = format!("{}/arti/cache", data_dir);
+
+    let mut lines = Vec::new();
+
+    // Paths
+    lines.push(format!("state_dir={}", state_dir));
+    lines.push(format!("cache_dir={}", cache_dir));
+
+    // Dir existence, writability, and recursive inventory. Names/sizes/ages only:
+    // no descriptors, keys, consensus contents, or full onion addresses.
+    append_storage_inventory(&mut lines, "state", &state_dir);
+    append_storage_inventory(&mut lines, "cache", &cache_dir);
+
+    // Bootstrap state
+    let bootstrap = BOOTSTRAP_STATUS.load(Ordering::SeqCst);
+    let circuit_flag = CIRCUIT_ESTABLISHED.load(Ordering::SeqCst);
+    let last_ms = LAST_CIRCUIT_ESTABLISHED_MS.load(Ordering::SeqCst);
+    let age_ms = if last_ms == 0 { -1i64 } else { now_millis().saturating_sub(last_ms) as i64 };
+    let purged = ARTI_LAST_PURGE.load(Ordering::SeqCst);
+    let client_exists = lock_recover(&ARTI_CLIENT).is_some();
+
+    lines.push(format!(
+        "bootstrap={} circuitEstablished={} lastCircuitAgeMs={} purgedOnLastInit={} clientExists={}",
+        bootstrap, circuit_flag, age_ms, purged, client_exists
+    ));
+
+    // Cache snapshot
+    if let Some(snap) = inspect_directory_cache(&cache_dir) {
+        lines.push(format!("cacheNewestAgeSecs={} candidateFiles={}", snap.newest_age_secs, snap.candidate_files));
+    } else {
+        lines.push("cacheNewestAgeSecs=N/A candidateFiles=0".to_string());
+    }
+
+    lines.join("\n")
+}
+
+/// Purge only Arti's cache directory for diagnostics, leaving persistent state/keystore intact.
+/// Call shutdown_arti() before this so Arti does not hold open sqlite/cache handles.
+pub fn purge_arti_cache_for_data_dir(data_dir: &str) -> Result<String, String> {
+    if lock_recover(&ARTI_CLIENT).is_some() {
+        return Err("Arti client is still initialized; call shutdown before purging cache".to_string());
+    }
+
+    *lock_recover(&ARTI_DATA_DIR) = Some(data_dir.to_string());
+    let cache_dir = format!("{}/arti/cache", data_dir);
+    let before = inspect_directory_cache(&cache_dir);
+    let (before_total, _) = collect_storage_inventory(&cache_dir, 0);
+
+    purge_directory_cache(&cache_dir)
+        .map_err(|e| format!("cache purge failed for {}: {}", cache_dir, e))?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("cache dir recreate failed for {}: {}", cache_dir, e))?;
+    ARTI_LAST_PURGE.store(true, Ordering::SeqCst);
+
+    let after = inspect_directory_cache(&cache_dir);
+    let (after_total, _) = collect_storage_inventory(&cache_dir, 0);
+    Ok(format!(
+        "cache_dir={} beforeFiles={} beforeNewestAgeSecs={} afterFiles={} afterNewestAgeSecs={}",
+        cache_dir,
+        before_total,
+        before
+            .as_ref()
+            .map(|s| s.newest_age_secs.to_string())
+            .unwrap_or_else(|| "N/A".to_string()),
+        after_total,
+        after
+            .as_ref()
+            .map(|s| s.newest_age_secs.to_string())
+            .unwrap_or_else(|| "N/A".to_string())
+    ))
+}
+
+/// Classify an HS connect error as descriptor-fetch failure vs other.
+pub fn is_descriptor_fetch_failure(err: &(dyn Error + 'static)) -> bool {
+    let chain = describe_error_chain(err);
+    chain.contains("Unable to download hidden service descriptor")
+        || chain.contains("DescNotFound")
+        || chain.contains("HsDirFetchError")
 }
 
 /// The in-process Arti TorClient — replaces C Tor subprocess entirely.
@@ -174,20 +514,23 @@ fn now_ms() -> u64 {
 
 /// Spawn an async task on the stored runtime handle.
 /// Falls back to tokio::spawn if already inside a runtime context.
-fn runtime_spawn<F>(future: F) -> tokio::task::JoinHandle<F::Output>
+fn runtime_spawn<F>(future: F)
 where
     F: std::future::Future + Send + 'static,
     F::Output: Send + 'static,
 {
     // Try current runtime first (works when called from block_on or another spawn)
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        return handle.spawn(future);
+        handle.spawn(future);
+        return;
     }
     // Fall back to stored handle (for JNI calls from non-tokio threads)
     let guard = lock_recover(&RUNTIME_HANDLE);
-    guard.as_ref()
-        .expect("Runtime not initialized — call initialize_arti first")
-        .spawn(future)
+    if let Some(handle) = guard.as_ref() {
+        handle.spawn(future);
+    } else {
+        log::error!("runtime_spawn called before initialize_arti; dropping task");
+    }
 }
 
 /// Initialize Arti and bootstrap to the Tor network.
@@ -222,6 +565,10 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
     log::info!("Initializing Arti (in-process Tor)...");
     log::info!("Data directory: {}", data_dir);
 
+    // Store data dir for diagnostics
+    *lock_recover(&ARTI_DATA_DIR) = Some(data_dir.to_string());
+    ARTI_LAST_PURGE.store(false, Ordering::SeqCst);
+
     // Capture the tokio runtime handle for later use by sync JNI functions.
     // This runs inside GLOBAL_RUNTIME.block_on(), so Handle::current() is valid.
     // Only set if None — overwriting could panic tasks still using the old handle.
@@ -240,6 +587,20 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
     std::fs::create_dir_all(&state_dir)?;
     std::fs::create_dir_all(&cache_dir)?;
     std::fs::create_dir_all(&keystore_dir)?;
+
+    if let Some(snapshot) = log_directory_cache_snapshot("before bootstrap", &cache_dir) {
+        if snapshot.newest_age_secs > STALE_DIRECTORY_CACHE_SECS {
+            log::warn!(
+                "Arti directory cache stale before bootstrap: newestAge={}s > {}s; purging cache to force fresh directory download",
+                snapshot.newest_age_secs,
+                STALE_DIRECTORY_CACHE_SECS
+            );
+            purge_directory_cache(&cache_dir)?;
+            ARTI_LAST_PURGE.store(true, Ordering::SeqCst);
+            std::fs::create_dir_all(&cache_dir)?;
+            log_directory_cache_snapshot("after stale-cache purge", &cache_dir);
+        }
+    }
 
     // Android file permissions don't match Unix expectations — disable fs-mistrust checks.
     // This is safe because Android's app sandbox enforces data isolation.
@@ -273,9 +634,10 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
         .bootstrap_behavior(arti_client::BootstrapBehavior::Manual)
         .create_unbootstrapped()
         .map_err(|e| {
-            log::error!("Arti client creation failed: {}", e);
+            let report = describe_arti_client_error(&e);
+            log::error!("Arti client creation failed: {}", report);
             BOOTSTRAP_STATUS.store(0, Ordering::SeqCst);
-            format!("Arti client creation failed: {}", e)
+            format!("Arti client creation failed: {}", report)
         })?;
 
     let client_arc = Arc::new(client);
@@ -309,12 +671,13 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
     // Actually bootstrap (downloads consensus, builds circuits)
     log::info!("Starting Arti bootstrap...");
     client_arc.bootstrap().await.map_err(|e| {
-        log::error!("Arti bootstrap failed: {}", e);
+        let report = describe_arti_client_error(&e);
+        log::error!("Arti bootstrap failed: {}", report);
         progress_done.store(true, Ordering::SeqCst);
         BOOTSTRAP_STATUS.store(0, Ordering::SeqCst);
         let mut guard = lock_recover(&ARTI_CLIENT);
         *guard = None;
-        format!("Arti bootstrap failed: {}", e)
+        format!("Arti bootstrap failed: {}", report)
     })?;
 
     // Bootstrap complete — stop progress poller and set final values
@@ -330,6 +693,15 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
     );
 
     log::info!("Arti bootstrapped successfully");
+    if let Some(snapshot) = log_directory_cache_snapshot("after bootstrap", &cache_dir) {
+        if snapshot.newest_age_secs > STALE_DIRECTORY_CACHE_SECS {
+            log::warn!(
+                "Arti directory cache still appears stale after bootstrap: newestAge={}s > {}s; next init will purge before bootstrap",
+                snapshot.newest_age_secs,
+                STALE_DIRECTORY_CACHE_SECS
+            );
+        }
+    }
 
     Ok(())
 }
@@ -344,21 +716,6 @@ pub fn get_arti_client() -> Option<Arc<TorClient<PreferredRuntime>>> {
 pub fn is_arti_ready() -> bool {
     let guard = lock_recover(&ARTI_CLIENT);
     guard.is_some() && BOOTSTRAP_STATUS.load(Ordering::SeqCst) >= 100
-}
-
-/// Get the messaging HS overall state as a string for the health monitor.
-/// Returns one of: "Running", "Bootstrapping", "Broken", "DegradedReachable",
-/// "DegradedUnreachable", "Recovering", "Shutdown", or "NotLaunched".
-pub fn get_hs_publisher_status() -> String {
-    let guard = lock_recover(&RUNNING_HS);
-    match guard.as_ref() {
-        Some(svc) => {
-            let status = svc.status();
-            let state = status.state();
-            format!("{:?}", state)
-        }
-        None => "NotLaunched".to_string(),
-    }
 }
 
 // ───── Bootstrap Event Listener ─────
@@ -611,16 +968,44 @@ pub async fn arti_connect_to_onion(
     const BACKOFF_SECS: [u64; 3] = [5, 10, 20];
 
     let mut last_err = String::new();
+    if onion_address.to_ascii_lowercase().ends_with(".onion") {
+        log::info!(
+            "Arti HS descriptor mode for {}:{}: public_descriptor=true service_discovery_key=not_configured client_auth=none; client.connect() will use tor-hsclient HSDir descriptor fetch",
+            onion_address,
+            port
+        );
+    }
 
     for attempt in 0..MAX_RETRIES {
-        log::info!("Arti: connecting to {}:{} (attempt {}/{})", onion_address, port, attempt + 1, MAX_RETRIES);
+        let started = std::time::Instant::now();
+        let snapshot = outbound_diagnostic_snapshot();
+        log::info!(
+            "Arti: connecting to {}:{} (attempt {}/{}) status=[{}]",
+            onion_address,
+            port,
+            attempt + 1,
+            MAX_RETRIES,
+            snapshot
+        );
 
         match client.connect((onion_address, port)).await {
             Ok(stream) => {
+                let elapsed_ms = started.elapsed().as_millis();
                 if attempt > 0 {
-                    log::info!("Arti: connected to {}:{} after {} retries", onion_address, port, attempt);
+                    log::info!(
+                        "Arti: connected to {}:{} after {} retries in {}ms",
+                        onion_address,
+                        port,
+                        attempt,
+                        elapsed_ms
+                    );
                 } else {
-                    log::info!("Arti: connected to {}:{}", onion_address, port);
+                    log::info!(
+                        "Arti: connected to {}:{} in {}ms",
+                        onion_address,
+                        port,
+                        elapsed_ms
+                    );
                 }
                 // Success: clear any accumulated failure count for this peer.
                 {
@@ -637,15 +1022,32 @@ pub async fn arti_connect_to_onion(
                 });
             }
             Err(e) => {
-                last_err = e.to_string();
+                let elapsed_ms = started.elapsed().as_millis();
+                last_err = describe_arti_client_error(&e);
                 let detailed = format_arti_error_chain(&e);
                 record_guard_failure_if_poisoned(&detailed);
-                log::warn!("Arti connect to {}:{} attempt {}/{} failed: {} | chain: {}",
-                    onion_address, port, attempt + 1, MAX_RETRIES, last_err, detailed);
+                let is_desc_fail = is_descriptor_fetch_failure(&e);
+                let onion_prefix = if onion_address.len() >= 12 {
+                    &onion_address[..12]
+                } else {
+                    onion_address
+                };
+                log::warn!(
+                    "Arti connect to {}...:{} attempt {}/{} failed after {}ms desc_fetch_fail={} err={} chain={} status=[{}]",
+                    onion_prefix,
+                    port,
+                    attempt + 1,
+                    MAX_RETRIES,
+                    elapsed_ms,
+                    is_desc_fail,
+                    last_err,
+                    detailed,
+                    outbound_diagnostic_snapshot()
+                );
 
                 if attempt + 1 < MAX_RETRIES {
                     let delay = BACKOFF_SECS[attempt as usize];
-                    log::info!("Arti: retrying {}:{} in {}s", onion_address, port, delay);
+                    log::info!("Arti: retrying {}...:{} in {}s", onion_prefix, port, delay);
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                 }
             }
@@ -689,7 +1091,16 @@ pub async fn arti_connect_to_onion(
         }
     }
 
-    Err(format!("Arti connect failed: {}", last_err).into())
+    let final_status = outbound_diagnostic_snapshot();
+    log::error!(
+        "Arti connect to {}:{} failed after {} attempts: {} finalStatus=[{}]",
+        onion_address,
+        port,
+        MAX_RETRIES,
+        last_err,
+        final_status
+    );
+    Err(format!("Arti connect failed: {}; finalStatus=[{}]", last_err, final_status).into())
 }
 
 /// Lightweight outbound connect/close probe used before risky sends to a peer
@@ -2129,6 +2540,18 @@ async fn accept_and_handle_fr(
 /// Get the .onion address of the friend-request onion service.
 pub fn get_fr_onion_address() -> Option<String> {
     lock_recover(&FR_ONION_ADDRESS).clone()
+}
+
+/// Get the messaging HS publisher status for the in-process Arti client.
+/// On iOS app-side Arti this will usually be "NotLaunched" because the app
+/// only uses Arti for outbound transport; the NE hosts inbound onions.
+pub fn get_hs_publisher_status() -> String {
+    let guard = lock_recover(&RUNNING_HS);
+    if let Some(service) = guard.as_ref() {
+        format!("{:?}", service.status())
+    } else {
+        "NotLaunched".to_string()
+    }
 }
 
 /// Stop the FR HS acceptor task and release the FR onion service.

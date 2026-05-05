@@ -4,7 +4,7 @@
 //! to make a payment. The quote hash is embedded in the transaction memo
 //! for replay protection.
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use thiserror::Error;

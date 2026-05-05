@@ -1001,7 +1001,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a93511fd122bc7b22e361806e84f1c31a53894f0564a4ba7f28e799104318c7"
 dependencies = [
  "heck",
- "indexmap 1.9.3",
+ "indexmap 2.13.1",
  "itertools",
  "proc-macro-crate",
  "proc-macro2",
@@ -3307,6 +3307,7 @@ dependencies = [
  "tor-cell",
  "tor-config-path",
  "tor-dirmgr",
+ "tor-error",
  "tor-geoip",
  "tor-hscrypto",
  "tor-hsservice",

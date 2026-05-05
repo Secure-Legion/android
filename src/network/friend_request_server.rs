@@ -373,7 +373,7 @@ async fn handle_connection(
             let pushed_cid = &p[16..]; // Skip "/recovery/push/"
 
             // Gate 1: Must be in recovery mode
-            let mut state = recovery.lock().await;
+            let state = recovery.lock().await;
             if !state.mode {
                 let response = "HTTP/1.1 403 Forbidden\r\n\r\n";
                 socket.write_all(response.as_bytes()).await?;

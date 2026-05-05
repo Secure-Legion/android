@@ -2,6 +2,7 @@ use lru::LruCache;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use std::num::NonZeroUsize;
+use crate::util::lock_recover;
 
 /// Replay cache entry: (sender_pubkey, ping_hash) -> timestamp
 type CacheKey = ([u8; 32], [u8; 32]);
@@ -22,7 +23,7 @@ static REPLAY_CACHE: Lazy<Mutex<LruCache<CacheKey, i64>>> = Lazy::new(|| {
 /// * `sender_pubkey` - 32-byte Ed25519 public key of sender
 /// * `ping_hash` - 32-byte Blake3 hash of PING ciphertext
 pub fn check_ping_replay(sender_pubkey: [u8; 32], ping_hash: [u8; 32]) -> bool {
-    let mut cache = REPLAY_CACHE.lock().unwrap();
+    let mut cache = lock_recover(&REPLAY_CACHE);
     let key = (sender_pubkey, ping_hash);
 
     if cache.contains(&key) {
@@ -35,7 +36,7 @@ pub fn check_ping_replay(sender_pubkey: [u8; 32], ping_hash: [u8; 32]) -> bool {
     // New PING - add to cache
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64;
 
     cache.put(key, now);
@@ -53,7 +54,7 @@ pub fn compute_ping_hash(ping_bytes: &[u8]) -> [u8; 32] {
 /// Clear the replay cache (for testing)
 #[cfg(test)]
 pub fn clear_replay_cache() {
-    let mut cache = REPLAY_CACHE.lock().unwrap();
+    let mut cache = lock_recover(&REPLAY_CACHE);
     cache.clear();
 }
 

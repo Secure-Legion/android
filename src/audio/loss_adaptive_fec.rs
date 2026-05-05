@@ -13,6 +13,7 @@
 /// opus_set_packet_loss_perc(encoder, target)?;
 /// }
 /// ```
+#[cfg(target_os = "android")]
 use std::os::raw::c_void;
 
 #[derive(Debug)]
@@ -115,6 +116,7 @@ impl LossAdaptiveFec {
     /// 2. The change is meaningful (≥3% difference)
     ///
     /// Returns true if encoder was updated
+    #[cfg(target_os = "android")]
     pub unsafe fn maybe_update_encoder(
         &mut self,
         encoder_ptr: *mut c_void

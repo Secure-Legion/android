@@ -7,6 +7,7 @@
 /// - Inner payload: CBOR-serialized via ciborium (serde-native, compact binary)
 /// - Signing: Ed25519 over BLAKE3(signable_bytes)
 
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
 use thiserror::Error;
@@ -411,8 +412,23 @@ impl OpEnvelope {
     }
 
     /// Deserialize an envelope from bytes.
+    ///
+    /// Uses `with_limit` to cap the deserialization budget to the actual input
+    /// size.  Without this, a crafted length prefix inside a Vec field could
+    /// make bincode pre-allocate far more memory than the input warrants,
+    /// potentially causing an OOM abort that `catch_unwind` cannot catch.
+    ///
+    /// The encoding configuration MUST match `bincode::serialize()` (legacy):
+    /// FixintEncoding + LittleEndian + AllowTrailing.  Using `bincode::options()`
+    /// raw would default to Varint+NativeEndian+RejectTrailing, causing
+    /// deserialization failures on data produced by `to_bytes()`.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, OpError> {
-        bincode::deserialize(bytes)
+        bincode::options()
+            .with_fixint_encoding()
+            .with_little_endian()
+            .allow_trailing_bytes()
+            .with_limit(bytes.len() as u64)
+            .deserialize(bytes)
             .map_err(|e| OpError::BincodeError(e.to_string()))
     }
 

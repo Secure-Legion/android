@@ -50,6 +50,7 @@ base32 = "0.5"
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
+tor-error = "0.41"
 
 # Logging
 log = "0.4"
@@ -83,6 +84,7 @@ arti-client = { version = "0.41", default-features = false, features = [
     "onion-service-client",
     "onion-service-service",
     "experimental-api",
+    "error_detail",
     "static-sqlite",
     "geoip",
 ] }

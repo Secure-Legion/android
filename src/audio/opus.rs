@@ -5,6 +5,7 @@ use opus::{Decoder as OpusDecoder, Channels};
 use std::sync::Mutex;
 use std::ffi::CStr;
 use std::os::raw::{c_void, c_int};
+use crate::util::lock_recover;
 
 // Sample rate: 48kHz (Opus native rate)
 const SAMPLE_RATE: i32 = 48000;
@@ -182,7 +183,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderDestroy(
     if handle != 0 {
         unsafe {
             let boxed = Box::from_raw(handle as *mut Mutex<*mut c_void>);
-            let encoder_ptr = *boxed.lock().unwrap();
+            let encoder_ptr = *lock_recover(&boxed);
             if !encoder_ptr.is_null() {
                 opus_encoder_destroy(encoder_ptr);
             }
