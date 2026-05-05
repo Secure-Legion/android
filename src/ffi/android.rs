@@ -31,6 +31,52 @@ const PING_PONG_HANDSHAKE_PORT: u16 = 9150; // Ping/Pong handshake port (used in
 // Thread-safe counters for diagnosing SOCKS timeout and MESSAGE_TX initialization race
 // Public so they can be accessed from network::tor for receiver-side instrumentation
 
+// ==================== FR-SEND IN-FLIGHT DEDUPLICATION ====================
+// Prevents the duplicate-retry-loop pile-up reported in
+// secure-debug-2026-05-04_*.txt where two threads ran identical [FR][FR_SEND]
+// retry sequences in lockstep against the same target. WorkManager's
+// enqueueUniqueWork(REPLACE) cancels the scheduled work item but does NOT
+// stop a Rust JNI thread already inside its 24×5s sleep loop. So any second
+// caller (TorService restart, periodic sweep, manual retry) stacks another
+// 2-minute loop on top — doubling guard-pool load and re-poisoning Arti
+// faster than a guard reset could recover.
+//
+// Keyed by (wire_type, onion) so a legitimate Phase-1 send and Phase-2 accept
+// to the same FR onion don't suppress each other. Stale entries (older than
+// MAX_RETRIES * RETRY_DELAY + buffer) auto-expire so a genuinely-stuck thread
+// doesn't permanently lock the slot.
+static FR_SEND_INFLIGHT: Lazy<Mutex<HashMap<(u8, String), std::time::Instant>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+const FR_INFLIGHT_TTL_SECS: u64 = 130; // 24 retries × 5s + 10s buffer
+
+fn try_acquire_fr_send_slot(wire_type: u8, target: &str) -> bool {
+    let mut map = match FR_SEND_INFLIGHT.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let now = std::time::Instant::now();
+    let key = (wire_type, target.to_string());
+    if let Some(started) = map.get(&key) {
+        if now.duration_since(*started) < std::time::Duration::from_secs(FR_INFLIGHT_TTL_SECS) {
+            return false;
+        }
+        // Stale — previous holder has timed out, take over.
+        log::warn!(
+            "[FR][INFLIGHT] taking over stale slot for type=0x{:02X} target={}",
+            wire_type, target
+        );
+    }
+    map.insert(key, now);
+    true
+}
+
+fn release_fr_send_slot(wire_type: u8, target: &str) {
+    if let Ok(mut map) = FR_SEND_INFLIGHT.lock() {
+        map.remove(&(wire_type, target.to_string()));
+    }
+}
+
 /// Categorized error counters for sendMessageBlob failures
 pub static BLOB_FAIL_SOCKS_TIMEOUT: AtomicU64 = AtomicU64::new(0);
 pub static BLOB_FAIL_CONNECT_ERR: AtomicU64 = AtomicU64::new(0);
@@ -186,8 +232,10 @@ fn is_valid_message_type(msg_type: u8) -> bool {
         crate::network::tor::MSG_TYPE_PROFILE_UPDATE |
         crate::network::tor::MSG_TYPE_REACTION |
         crate::network::tor::MSG_TYPE_CRDT_OPS |
+        crate::network::tor::MSG_TYPE_SYNC_HELLO |
         crate::network::tor::MSG_TYPE_SYNC_REQUEST |
         crate::network::tor::MSG_TYPE_SYNC_CHUNK |
+        crate::network::tor::MSG_TYPE_SYNC_ACK |
         crate::network::tor::MSG_TYPE_ROUTING_UPDATE |
         crate::network::tor::MSG_TYPE_ROUTING_REQUEST |
         crate::network::tor::MSG_TYPE_CONTACT_LIST_REQUEST |
@@ -486,6 +534,66 @@ fn build_delivery_ack_body(
     wire_body.extend_from_slice(&our_x25519_public);
     wire_body.extend_from_slice(&encrypted_ack);
     Ok(wire_body)
+}
+
+/// Decrypt and verify a delivery ACK wire frame received on the same stream.
+/// Expected wire: [type=0x06][sender_x25519_pubkey (32)][encrypted_ack].
+fn decrypt_verified_delivery_ack_wire(
+    env: &mut JNIEnv,
+    wire_bytes: &[u8],
+) -> Result<crate::network::pingpong::DeliveryAck, String> {
+    const OFFSET: usize = 1;
+    const MIN_LEN: usize = 33;
+
+    if wire_bytes.len() < MIN_LEN {
+        return Err(format!("ACK wire too short: {}", wire_bytes.len()));
+    }
+    if wire_bytes[0] != crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
+        return Err(format!(
+            "unexpected ACK frame type 0x{:02x}",
+            wire_bytes[0]
+        ));
+    }
+
+    let sender_x25519_pubkey: [u8; 32] = wire_bytes[OFFSET..OFFSET + 32]
+        .try_into()
+        .map_err(|_| "invalid sender X25519 length".to_string())?;
+    let encrypted_ack = &wire_bytes[OFFSET + 32..];
+
+    let context = env.call_static_method(
+        "android/app/ActivityThread",
+        "currentApplication",
+        "()Landroid/app/Application;",
+        &[],
+    ).map_err(|e| format!("Failed to get context: {}", e))?
+     .l().map_err(|e| format!("Context is null: {}", e))?;
+
+    let key_manager = crate::ffi::keystore::get_key_manager(env, &context)
+        .map_err(|e| format!("Failed to get KeyManager: {}", e))?;
+
+    let our_x25519_private = crate::ffi::keystore::get_encryption_private_key(env, &key_manager)
+        .map_err(|e| format!("Failed to get encryption private key: {}", e))?;
+
+    let shared_secret = crate::crypto::key_exchange::derive_shared_secret(
+        &our_x25519_private,
+        &sender_x25519_pubkey.to_vec(),
+    ).map_err(|e| format!("ECDH failed: {}", e))?;
+
+    let ack_bytes = crate::crypto::encryption::decrypt_message(encrypted_ack, &shared_secret)
+        .map_err(|e| format!("ACK decrypt failed: {}", e))?;
+
+    let ack_token = crate::network::pingpong::DeliveryAck::from_bytes(&ack_bytes)
+        .map_err(|e| format!("ACK deserialize failed: {}", e))?;
+
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(
+        &ack_token.sender_ed25519_signing_pubkey,
+    ).map_err(|e| format!("ACK signer key invalid: {}", e))?;
+
+    match ack_token.verify(&verifying_key) {
+        Ok(true) => Ok(ack_token),
+        Ok(false) => Err("ACK signature invalid".to_string()),
+        Err(e) => Err(format!("ACK signature check failed: {}", e)),
+    }
 }
 
 // ==================== CRYPTOGRAPHY ====================
@@ -947,6 +1055,117 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_shutdownArti(
     }
 
     log::info!("JNI: shutdownArti() complete — all globals cleared");
+}
+
+/// True when Arti has logged ≥3 `AllGuardsDown`-class failures in the last 60s
+/// AND ≥180s have elapsed since the last guard reset. Polled by Kotlin's
+/// TorService health monitor on every tick to escalate above NEWNYM.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_shouldAutoResetGuards(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jni::sys::jboolean {
+    if crate::network::arti::should_auto_reset_guards() {
+        1
+    } else {
+        0
+    }
+}
+
+/// Reset Arti's locally-poisoned guard / circuit-timeout / dirmgr state.
+///
+/// MUST be paired with shutdownArti() before and initializeTor() after — this
+/// only manipulates files on disk. Preserves the HS keystore so the user's
+/// .onion address is unchanged.
+///
+/// Returns a JSON summary string with `state_files_removed` count, any
+/// `state_files_failed` entries, and `cache_entries_removed` count. Throws
+/// RuntimeException on a hard failure (e.g. cannot read data dir).
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resetArtiGuardState(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        let data_dir = match get_android_data_dir(&mut env) {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("resetArtiGuardState: data dir unavailable: {}", e),
+                );
+                return std::ptr::null_mut();
+            }
+        };
+
+        log::info!("JNI: resetArtiGuardState() called, data_dir={}", data_dir);
+        match crate::network::arti::reset_arti_guard_state(&data_dir) {
+            Ok(summary) => {
+                let json = format!(
+                    "{{\"state_files_removed\":{},\"state_files_failed\":{},\"cache_entries_removed\":{}}}",
+                    summary.state_files_removed.len(),
+                    summary.state_files_failed.len(),
+                    summary.cache_entries_removed
+                );
+                log::info!("JNI: resetArtiGuardState() complete: {}", json);
+                env.new_string(json).unwrap().into_raw()
+            }
+            Err(e) => {
+                let _ = env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("resetArtiGuardState failed: {}", e),
+                );
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Lightweight outbound connect/close probe before risky sends. Mirrors iOS
+/// `securelegion_arti_preflight_connect`. Used by Kotlin to gate full PING+PONG+ACK
+/// exchanges behind a cheap connectivity test when a peer's failure streak is high.
+///
+/// Returns a packed jlong:
+///   `>= 0`  success — value = latency in milliseconds
+///   `-1`    Arti not ready (not bootstrapped)
+///   `-2`    timed out
+///   `-3`    connect failed (peer unreachable / poisoned circuit graph)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_artiPreflightConnect(
+    mut env: JNIEnv,
+    _class: JClass,
+    onion_address: JString,
+    port: jint,
+    timeout_ms: jint,
+) -> jni::sys::jlong {
+    catch_panic!(env, {
+        let onion: String = match env.get_string(&onion_address) {
+            Ok(s) => s.into(),
+            Err(_) => return -1 as jni::sys::jlong,
+        };
+        if onion.is_empty() || port <= 0 || port > u16::MAX as jint {
+            return -1 as jni::sys::jlong;
+        }
+        let port_u16 = port as u16;
+        let timeout_u32 = timeout_ms.max(1) as u32;
+        let result = GLOBAL_RUNTIME.block_on(async {
+            crate::network::arti::arti_preflight_connect(&onion, port_u16, timeout_u32).await
+        });
+        match result {
+            Ok(latency_ms) => latency_ms as jni::sys::jlong,
+            Err(reason) => {
+                let code: jni::sys::jlong = if reason == "not_ready" {
+                    -1
+                } else if reason == "timeout" {
+                    -2
+                } else {
+                    log::debug!("artiPreflightConnect: {} -> {}", onion, reason);
+                    -3
+                };
+                code
+            }
+        }
+    }, -1 as jni::sys::jlong)
 }
 
 /// Initialize VOICE Tor control connection
@@ -2699,46 +2918,60 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
             return 0;
         }
 
+        // De-dupe overlapping FR sends to the same (wire_type, target). See
+        // FR_SEND_INFLIGHT module comment for why.
+        let wt = crate::network::tor::MSG_TYPE_FRIEND_REQUEST;
+        if !try_acquire_fr_send_slot(wt, &recipient_onion_str) {
+            log::warn!(
+                "[FR][FR_SEND] already in-flight to {} (skipping duplicate)",
+                recipient_onion_str
+            );
+            return 0;
+        }
+
         const FRIEND_REQUEST_PORT: u16 = 9151;
         const MAX_RETRIES: u32 = 24;
         const RETRY_DELAY_SECS: u64 = 5;
 
-        for attempt in 1..=MAX_RETRIES {
-            // Connect via Arti to peer's FR onion — no C Tor, no fallback port
-            let result = GLOBAL_RUNTIME.block_on(async {
-                let mut stream = crate::network::arti::arti_connect_to_onion(
-                    &recipient_onion_str, FRIEND_REQUEST_PORT
-                ).await?;
-                stream.write_message(&wire_message).await?;
-                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-            });
+        let final_result: jboolean = (|| {
+            for attempt in 1..=MAX_RETRIES {
+                // Connect via Arti to peer's FR onion — no C Tor, no fallback port
+                let result = GLOBAL_RUNTIME.block_on(async {
+                    let mut stream = crate::network::arti::arti_connect_to_onion(
+                        &recipient_onion_str, FRIEND_REQUEST_PORT
+                    ).await?;
+                    stream.write_message(&wire_message).await?;
+                    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+                });
 
-            match result {
-                Ok(_) => {
-                    log::info!(
-                        "[FR][FR_SEND] success target={} port={} attempt={}/{}",
-                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
-                    );
-                    return 1;
-                }
-                Err(e) => {
-                    if attempt < MAX_RETRIES {
-                        log::warn!(
-                            "[FR][FR_SEND] failed target={} attempt={}/{} error={} retry_in_s={}",
-                            recipient_onion_str, attempt, MAX_RETRIES, e, RETRY_DELAY_SECS
+                match result {
+                    Ok(_) => {
+                        log::info!(
+                            "[FR][FR_SEND] success target={} port={} attempt={}/{}",
+                            recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
                         );
-                        std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
-                    } else {
-                        log::error!(
-                            "[FR][FR_SEND] exhausted target={} attempts={} last_error={}",
-                            recipient_onion_str, MAX_RETRIES, e
-                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        if attempt < MAX_RETRIES {
+                            log::warn!(
+                                "[FR][FR_SEND] failed target={} attempt={}/{} error={} retry_in_s={}",
+                                recipient_onion_str, attempt, MAX_RETRIES, e, RETRY_DELAY_SECS
+                            );
+                            std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
+                        } else {
+                            log::error!(
+                                "[FR][FR_SEND] exhausted target={} attempts={} last_error={}",
+                                recipient_onion_str, MAX_RETRIES, e
+                            );
+                        }
                     }
                 }
             }
-        }
-
-        0 // all retries exhausted
+            0
+        })();
+        release_fr_send_slot(wt, &recipient_onion_str);
+        final_result
     }, 0)
 }
 
@@ -2792,46 +3025,60 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
             return 0;
         }
 
+        // De-dupe overlapping FR_ACCEPTED sends. Keyed separately from FR_SEND
+        // so a legit Phase-1/Phase-2 pair to the same onion can run concurrently.
+        let wt = crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED;
+        if !try_acquire_fr_send_slot(wt, &recipient_onion_str) {
+            log::warn!(
+                "[FRA][FR_ACCEPT] already in-flight to {} (skipping duplicate)",
+                recipient_onion_str
+            );
+            return 0;
+        }
+
         const FRIEND_REQUEST_PORT: u16 = 9151;
         const MAX_RETRIES: u32 = 24;
         const RETRY_DELAY_SECS: u64 = 5;
 
-        for attempt in 1..=MAX_RETRIES {
-            // Connect via Arti to peer's FR onion — no C Tor, no fallback port
-            let result = GLOBAL_RUNTIME.block_on(async {
-                let mut stream = crate::network::arti::arti_connect_to_onion(
-                    &recipient_onion_str, FRIEND_REQUEST_PORT
-                ).await?;
-                stream.write_message(&wire_message).await?;
-                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-            });
+        let final_result: jboolean = (|| {
+            for attempt in 1..=MAX_RETRIES {
+                // Connect via Arti to peer's FR onion — no C Tor, no fallback port
+                let result = GLOBAL_RUNTIME.block_on(async {
+                    let mut stream = crate::network::arti::arti_connect_to_onion(
+                        &recipient_onion_str, FRIEND_REQUEST_PORT
+                    ).await?;
+                    stream.write_message(&wire_message).await?;
+                    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+                });
 
-            match result {
-                Ok(_) => {
-                    log::info!(
-                        "[FRA][FR_ACCEPT] success target={} port={} attempt={}/{}",
-                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
-                    );
-                    return 1;
-                }
-                Err(e) => {
-                    if attempt < MAX_RETRIES {
-                        log::warn!(
-                            "[FRA][FR_ACCEPT] failed target={} attempt={}/{} error={} retry_in_s={}",
-                            recipient_onion_str, attempt, MAX_RETRIES, e, RETRY_DELAY_SECS
+                match result {
+                    Ok(_) => {
+                        log::info!(
+                            "[FRA][FR_ACCEPT] success target={} port={} attempt={}/{}",
+                            recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
                         );
-                        std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
-                    } else {
-                        log::error!(
-                            "[FRA][FR_ACCEPT] exhausted target={} attempts={} last_error={}",
-                            recipient_onion_str, MAX_RETRIES, e
-                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        if attempt < MAX_RETRIES {
+                            log::warn!(
+                                "[FRA][FR_ACCEPT] failed target={} attempt={}/{} error={} retry_in_s={}",
+                                recipient_onion_str, attempt, MAX_RETRIES, e, RETRY_DELAY_SECS
+                            );
+                            std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
+                        } else {
+                            log::error!(
+                                "[FRA][FR_ACCEPT] exhausted target={} attempts={} last_error={}",
+                                recipient_onion_str, MAX_RETRIES, e
+                            );
+                        }
                     }
                 }
             }
-        }
-
-        0 // all retries exhausted
+            0
+        })();
+        release_fr_send_slot(wt, &recipient_onion_str);
+        final_result
     }, 0)
 }
 
@@ -3631,8 +3878,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
         // Payload size validation (CRDT types are NOT evolution-encrypted, skip 49-byte minimum)
         let is_crdt_type = matches!(msg_type,
             crate::network::tor::MSG_TYPE_CRDT_OPS |
+            crate::network::tor::MSG_TYPE_SYNC_HELLO |
             crate::network::tor::MSG_TYPE_SYNC_REQUEST |
-            crate::network::tor::MSG_TYPE_SYNC_CHUNK
+            crate::network::tor::MSG_TYPE_SYNC_CHUNK |
+            crate::network::tor::MSG_TYPE_SYNC_ACK
         );
         if !is_crdt_type && message_bytes.len() < 49 {
             log::error!("Encrypted payload too short: {} bytes (minimum 49)", message_bytes.len());
@@ -3925,7 +4174,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
         // Arti DataStream can't be stored in PENDING_CONNECTIONS (expects TcpStream),
         // so the receiver sends ACK via outbound connection to our ACK listener.
         // The normal ACK poller on the sender side handles DELIVERED status update.
-        let result: Result<bool, Box<dyn std::error::Error>> = GLOBAL_RUNTIME.block_on(async {
+        let expected_blob_id = {
+            use sha2::{Digest as _, Sha256};
+            let hash = Sha256::digest(&message_bytes);
+            let encoded = base64::encode(hash);
+            format!("blob_{}", encoded.chars().take(28).collect::<String>())
+        };
+
+        let result: Result<Option<Vec<u8>>, Box<dyn std::error::Error>> = GLOBAL_RUNTIME.block_on(async {
             let _permit = SEND_SEMAPHORE.acquire().await
                 .map_err(|_| Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other, "Send semaphore closed"
@@ -3943,25 +4199,25 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
                 // Wait up to 15s for ACK on the SAME connection.
                 // Receiver saves message, builds ACK, writes it back on the stored stream.
                 // If no ACK within timeout, Kotlin falls back to outbound ACK retry.
-                let ack_received = match tokio::time::timeout(
+                let ack_data = match tokio::time::timeout(
                     std::time::Duration::from_secs(15),
                     conn.receive()
                 ).await {
                     Ok(Ok(ack_data)) => {
                         log::info!("[FAST_MODE] ACK received on SAME connection ({} bytes)", ack_data.len());
-                        true
+                        Some(ack_data)
                     }
                     Ok(Err(e)) => {
                         log::debug!("[FAST_MODE] ACK read error (will use outbound): {}", e);
-                        false
+                        None
                     }
                     Err(_) => {
                         log::debug!("[FAST_MODE] ACK read timeout 15s (will use outbound)");
-                        false
+                        None
                     }
                 };
 
-                Ok::<bool, Box<dyn std::error::Error>>(ack_received)
+                Ok::<Option<Vec<u8>>, Box<dyn std::error::Error>>(ack_data)
             }).await.map_err(|_| {
                 log::warn!("[FAST_MODE] Timeout sending to {}", onion_address);
                 Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "Operation timed out")) as Box<dyn std::error::Error>
@@ -3969,14 +4225,44 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
         });
 
         let json = match result {
-            Ok(ack_received) => {
-                if ack_received {
-                    log::info!("[FAST_MODE] Send + ACK success (same connection)");
+            Ok(Some(ack_data)) => {
+                let ack_verified = match decrypt_verified_delivery_ack_wire(&mut env, &ack_data) {
+                    Ok(ack) => {
+                        let item_matches = ack.item_id == ping_id_str ||
+                            ack.item_id == message_id_str ||
+                            ack.item_id == expected_blob_id;
+                        let type_matches = ack.ack_type == crate::network::pingpong::DeliveryAck::ACK_TYPE_MESSAGE;
+                        if item_matches && type_matches {
+                            log::info!(
+                                "[FAST_MODE] Verified same-connection MESSAGE_ACK item_id={} msgId={} pingId={} blobId={}",
+                                ack.item_id, message_id_str, ping_id_str, expected_blob_id
+                            );
+                            true
+                        } else {
+                            log::warn!(
+                                "[FAST_MODE] Ignoring non-matching same-connection ACK type={} item_id={} expected pingId={} msgId={} blobId={}",
+                                ack.ack_type, ack.item_id, ping_id_str, message_id_str, expected_blob_id
+                            );
+                            false
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[FAST_MODE] Ignoring unverifiable same-connection ACK bytes: {}", e);
+                        false
+                    }
+                };
+
+                if ack_verified {
+                    log::info!("[FAST_MODE] Send + verified ACK success (same connection)");
                     r#"{"success":true,"ackReceived":true}"#.to_string()
                 } else {
-                    log::info!("[FAST_MODE] Send success, ACK will arrive via listener");
+                    log::info!("[FAST_MODE] Send success, same-connection bytes were not a verified MESSAGE_ACK");
                     r#"{"success":true,"ackReceived":false}"#.to_string()
                 }
+            }
+            Ok(None) => {
+                log::info!("[FAST_MODE] Send success, ACK will arrive via listener");
+                r#"{"success":true,"ackReceived":false}"#.to_string()
             }
             Err(e) => {
                 let error_msg = e.to_string().to_lowercase();
@@ -5252,8 +5538,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_isEventListenerRunning
     _env: JNIEnv,
     _class: JClass,
 ) -> jboolean {
-    // Arti bootstrap listener is always "running" if Arti is initialized
-    crate::network::arti::is_arti_ready() as jboolean
+    crate::network::arti::is_bootstrap_listener_running() as jboolean
 }
 
 /// Stop the bootstrap event listener (signal it to exit)
