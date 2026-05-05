@@ -3788,6 +3788,7 @@ dependencies = [
  "tor-cell 0.41.0",
  "tor-config-path 0.41.0",
  "tor-dirmgr 0.41.0",
+ "tor-error 0.41.0",
  "tor-geoip",
  "tor-hscrypto 0.41.0",
  "tor-hsservice 0.41.0",
