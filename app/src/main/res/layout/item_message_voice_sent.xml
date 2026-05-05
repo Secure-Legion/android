@@ -38,13 +38,6 @@
             android:contentDescription="Disappearing message"
             android:visibility="gone" />
 
-        <ImageView
-            android:id="@+id/statusIcon"
-            android:layout_width="14dp"
-            android:layout_height="14dp"
-            android:layout_marginStart="4dp"
-            android:src="@drawable/ic_check"
-            android:contentDescription="Message status" />
     </LinearLayout>
 
     <LinearLayout
@@ -161,5 +154,19 @@
     </LinearLayout>
 
     </LinearLayout>
+
+    <!-- Delivery status label — UNDER the voice bubble, right-aligned -->
+    <TextView
+        android:id="@+id/statusIcon"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:layout_marginTop="3dp"
+        android:layout_marginEnd="10dp"
+        android:text="@string/message_status_pending"
+        android:textSize="10sp"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:fontFamily="@font/poppins_medium"
+        android:contentDescription="Message status" />
 
 </LinearLayout>

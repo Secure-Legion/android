@@ -452,6 +452,53 @@ object RustBridge {
     external fun shutdownArti()
 
     /**
+     * Reset Arti's locally-poisoned guard / circuit-timeout / dirmgr state.
+     *
+     * MUST be paired with `shutdownArti()` before and `initializeTor()` after — this
+     * only manipulates files on disk. Preserves the HS keystore so the user's `.onion`
+     * address is unchanged.
+     *
+     * Returns a JSON summary string (state_files_removed, state_files_failed,
+     * cache_entries_removed). Throws RuntimeException on hard failure.
+     *
+     * Use only when an Arti error matches `AllGuardsDown` / `No usable guards` —
+     * NOT for generic peer-offline / descriptor-miss failures.
+     */
+    external fun resetArtiGuardState(): String
+
+    /**
+     * True when Arti has accumulated ≥3 `AllGuardsDown`-class failures in the
+     * last 60s AND ≥180s have elapsed since the last reset. TorService polls
+     * this on every health tick and escalates above NEWNYM when true.
+     */
+    external fun shouldAutoResetGuards(): Boolean
+
+    /**
+     * Lightweight outbound connect/close probe before risky sends. Mirrors iOS
+     * `securelegion_arti_preflight_connect`. Use to gate a full PING+PONG+ACK
+     * exchange behind a cheap connectivity test when a peer's failure streak is
+     * high — saves the cost of repeated full sends to a peer whose circuit graph
+     * is currently dead, and avoids tripping the heavy guard reset for what is
+     * actually a transient per-peer connect failure.
+     *
+     * Return value (packed jlong):
+     *   `>= 0`  success — value is latency in milliseconds
+     *   `-1`    Arti not ready (not bootstrapped)
+     *   `-2`    timed out within `timeoutMs`
+     *   `-3`    connect failed (peer unreachable / poisoned circuit graph)
+     *
+     * @param onionAddress the peer's `.onion` (no scheme prefix, no trailing slash)
+     * @param port the protocol-level destination port (typically 9150 for messaging,
+     *             9151 for friend-request)
+     * @param timeoutMs probe timeout in milliseconds; 3500 matches iOS default
+     */
+    external fun artiPreflightConnect(
+        onionAddress: String,
+        port: Int,
+        timeoutMs: Int
+    ): Long
+
+    /**
      * Initialize VOICE Tor control connection (port 9052)
      * Must be called AFTER voice Tor daemon is started by TorManager
      * Voice Tor runs with Single Onion Service configuration for reduced latency
@@ -1775,6 +1822,19 @@ object RustBridge {
     private const val MSG_TYPE_PAYMENT_SENT: Byte = 0x0B.toByte()
     private const val MSG_TYPE_PAYMENT_ACCEPTED: Byte = 0x0C.toByte()
     private const val MSG_TYPE_CALL_SIGNALING: Byte = 0x0D.toByte()
+    private const val MSG_TYPE_STICKER: Byte = 0x0E.toByte()
+    private const val MSG_TYPE_PROFILE_UPDATE: Byte = 0x0F.toByte()
+    private const val MSG_TYPE_REACTION: Byte = 0x10.toByte()
+    private const val MSG_TYPE_CRDT_OPS: Byte = 0x30.toByte()
+    private const val MSG_TYPE_SYNC_HELLO: Byte = 0x31.toByte()
+    private const val MSG_TYPE_SYNC_REQUEST: Byte = 0x32.toByte()
+    private const val MSG_TYPE_SYNC_CHUNK: Byte = 0x33.toByte()
+    private const val MSG_TYPE_SYNC_ACK: Byte = 0x34.toByte()
+    private const val MSG_TYPE_ROUTING_UPDATE: Byte = 0x35.toByte()
+    private const val MSG_TYPE_ROUTING_REQUEST: Byte = 0x36.toByte()
+    private const val MSG_TYPE_CONTACT_LIST_REQUEST: Byte = 0x80.toByte()
+    private const val MSG_TYPE_CONTACT_LIST_RESPONSE: Byte = 0x81.toByte()
+    private const val MSG_TYPE_CONTACT_LIST_PUSH: Byte = 0x82.toByte()
 
     private val KNOWN_MESSAGE_TYPES = setOf(
         MSG_TYPE_PING,
@@ -1789,7 +1849,20 @@ object RustBridge {
         MSG_TYPE_PAYMENT_REQUEST,
         MSG_TYPE_PAYMENT_SENT,
         MSG_TYPE_PAYMENT_ACCEPTED,
-        MSG_TYPE_CALL_SIGNALING
+        MSG_TYPE_CALL_SIGNALING,
+        MSG_TYPE_STICKER,
+        MSG_TYPE_PROFILE_UPDATE,
+        MSG_TYPE_REACTION,
+        MSG_TYPE_CRDT_OPS,
+        MSG_TYPE_SYNC_HELLO,
+        MSG_TYPE_SYNC_REQUEST,
+        MSG_TYPE_SYNC_CHUNK,
+        MSG_TYPE_SYNC_ACK,
+        MSG_TYPE_ROUTING_UPDATE,
+        MSG_TYPE_ROUTING_REQUEST,
+        MSG_TYPE_CONTACT_LIST_REQUEST,
+        MSG_TYPE_CONTACT_LIST_RESPONSE,
+        MSG_TYPE_CONTACT_LIST_PUSH
     )
 
     /**

@@ -630,6 +630,15 @@ class AddFriendActivity : BaseActivity() {
                 }
             }
 
+            val removedPlaceholderCount = pendingRequests.count { it.isUndecryptedPlaceholder() }
+            if (removedPlaceholderCount > 0) {
+                pendingRequests.removeAll { it.isUndecryptedPlaceholder() }
+                prefs.edit()
+                    .putStringSet("pending_requests_v2", pendingRequests.map { it.toJson() }.toMutableSet())
+                    .apply()
+                Log.i(TAG, "Removed $removedPlaceholderCount stale undecrypted placeholder friend request(s)")
+            }
+
             // Stale "sending" cleanup: if process died during send, mark as failed after 3 min
             val now = System.currentTimeMillis()
             val staleThresholdMs = 3 * 60 * 1000L

@@ -95,3 +95,9 @@ app/src/androidTest/java/com/securelegion/services/FriendRequestEnvelopeTest.kt
 # Local user-scoped IDE/Gradle caches (added to prevent accidental commits)
 .gradle-user/
 .android-user/
+
+# Local build/audit scratch dirs
+.gradle-home/
+tmp_apk_audit/
+tmp_ios_audit/
+third_party/

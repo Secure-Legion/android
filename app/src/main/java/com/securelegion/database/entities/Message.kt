@@ -253,9 +253,9 @@ data class Message(
     val lastError: String? = null,
 
     /**
-     * Tracks if Ping was successfully delivered to receiver
-     * true = receiver has the Ping (lock icon showing), stop retrying
-     * false = delivery failed (receiver offline), keep retrying
+     * Tracks whether this outbound row has left the local offline queue.
+     * true = transport accepted a PING/blob or receiver acknowledged a PING, show "sent"
+     * false = no transport send yet, show "pending"
      */
     val pingDelivered: Boolean = false,
 

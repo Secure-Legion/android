@@ -213,6 +213,8 @@ class TorService : Service() {
     // Lifecycle management (prevent repeated resets)
     private val startupCompleted = AtomicBoolean(false) // Latch: only run startup setup once
     private val startTorRequested = AtomicBoolean(false) // Guard: prevent concurrent startTor() calls
+    private val torLifecycleMutex = Mutex()
+    private val listenerLifecycleMutex = Mutex()
     @Volatile private var lastGlobalResetAt: Long = 0L // Rate limiter: prevent reset spam
 
     // Offline bootstrap recovery: prevents repeated NEWNYM spam on flaky first-network
@@ -249,6 +251,7 @@ class TorService : Service() {
     private var hsSelfTestJob: Job? = null
     @Volatile private var lastHealthyMs: Long = 0L // When circuits were last healthy
     @Volatile private var consecutiveHealthyPolls: Int = 0 // Hysteresis: require 2 healthy polls before opening gate
+    @Volatile private var lastPendingFlushKickMs: Long = 0L
     @Volatile private var consecutiveRestarts: Int = 0 // Track restart attempts for backoff
     @Volatile private var lastRestartAttemptMs: Long = 0L // Time of last restart attempt
 
@@ -298,6 +301,56 @@ class TorService : Service() {
      */
     private fun isTorReady(): Boolean {
         return torState == TorState.RUNNING && bootstrapPercent >= 100
+    }
+
+    private fun getMessagingHsPublisherStatus(): String? {
+        return try {
+            RustBridge.getHsPublisherStatus()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read HS publisher status: ${e.message}")
+            null
+        }
+    }
+
+    private fun isMessagingHsReady(): Boolean {
+        return when (getMessagingHsPublisherStatus()) {
+            "Running" -> true
+            else -> false
+        }
+    }
+
+    private fun isTransportActuallyReady(): Boolean {
+        val outboundReady = try { RustBridge.isSocksProxyRunning() } catch (_: Exception) { false }
+        return torState == TorState.RUNNING &&
+            bootstrapPercent >= 100 &&
+            outboundReady &&
+            isMessagingHsReady()
+    }
+
+    private fun kickPendingMessagesFlush(reason: String) {
+        if (isTransportQuarantined()) {
+            Log.w(TAG, "Pending flush suppressed during transport quarantine: $reason (${getTransportQuarantineRemainingMs()}ms remaining)")
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPendingFlushKickMs < 5_000L) {
+            Log.d(TAG, "Pending flush suppressed (debounced): $reason")
+            return
+        }
+        lastPendingFlushKickMs = now
+
+        serviceScope.launch {
+            try {
+                val sentCount = withContext(Dispatchers.IO) {
+                    MessageService(this@TorService)
+                        .flushNow(aggressive = true, reason = reason)
+                        .getOrDefault(0)
+                }
+                Log.i(TAG, "Pending flush after $reason: sent=$sentCount")
+            } catch (e: Exception) {
+                Log.e(TAG, "Pending flush failed after $reason", e)
+            }
+        }
     }
 
 
@@ -523,6 +576,12 @@ class TorService : Service() {
                     Log.w(TAG, "Bootstrap: unstuck $unstuckCount stale STATUS_SENT messages with messageDelivered=true")
                 }
 
+                val falseDeliveredCutoff = System.currentTimeMillis() - 5_000L
+                val falseDeliveredCount = database.messageDao().unstickFalseDeliveredMessages(falseDeliveredCutoff)
+                if (falseDeliveredCount > 0) {
+                    Log.w(TAG, "Bootstrap: recovered $falseDeliveredCount false-delivered message(s) back to retryable state")
+                }
+
                 // Revert STATUS_SENT messages that never got MESSAGE_ACK back to PONG_RECEIVED
                 // so they can re-attempt blob send. 2-minute timeout.
                 val ackTimeoutMs = 2 * 60 * 1000L
@@ -533,7 +592,7 @@ class TorService : Service() {
                 }
 
                 val messageService = MessageService(this@TorService)
-                val result = messageService.retryAllPendingMessages()
+                val result = messageService.flushNow(aggressive = true, reason = "bootstrap_ready")
                 if (result.isSuccess) {
                     val sentCount = result.getOrNull() ?: 0
                     if (sentCount > 0) {
@@ -652,7 +711,7 @@ class TorService : Service() {
         serviceScope.launch {
             try {
                 val messageService = MessageService(this@TorService)
-                val result = messageService.retryAllPendingMessages()
+                val result = messageService.flushNow(aggressive = true, reason = "network_reset")
                 if (result.isSuccess) {
                     val sentCount = result.getOrNull() ?: 0
                     if (sentCount > 0) {
@@ -767,11 +826,15 @@ class TorService : Service() {
 
         // Arti reports status in-process via atomics — no external listener heartbeat needed.
         // listenerAlive is always true when Arti is ready (isSocksProxyRunning checks arti::is_arti_ready).
-        val listenerAlive = RustBridge.isSocksProxyRunning()
+        val outboundReady = RustBridge.isSocksProxyRunning()
+        val hsPublisherStatus = getMessagingHsPublisherStatus()
+        val hsReady = hsPublisherStatus == "Running"
 
-        val isHealthy = bootstrapComplete && circuitsEstablished && torRunning && listenerAlive
+        val isHealthy = bootstrapComplete && circuitsEstablished && torRunning && outboundReady && hsReady
 
         if (isHealthy) {
+            val wasListenersReady = listenersReady
+            listenersReady = true
             lastHealthyMs = SystemClock.elapsedRealtime()
             consecutiveHealthyPolls++
 
@@ -782,17 +845,33 @@ class TorService : Service() {
             }
 
             // HYSTERESIS: Require 2 consecutive healthy polls before opening gate (~4s)
-            if (consecutiveHealthyPolls >= 2 && torState == TorState.RUNNING && !gate.isOpenNow()) {
-                Log.i(TAG, "Tor health confirmed via ControlPort (2 consecutive healthy polls) → opening gate")
-                gate.open()
+            if (consecutiveHealthyPolls >= 2 && torState == TorState.RUNNING) {
+                if (!gate.isOpenNow()) {
+                    Log.i(TAG, "Tor health confirmed via ControlPort (2 consecutive healthy polls) → opening gate")
+                    clearTransportQuarantine("gate_open_health")
+                    gate.open()
+                    kickPendingMessagesFlush("gate_open_health")
+                } else if (!wasListenersReady) {
+                    Log.i(TAG, "Tor health confirmed while gate already open → flushing pending messages")
+                    clearTransportQuarantine("hs_ready_health")
+                    kickPendingMessagesFlush("hs_ready_health")
+                }
             }
+
+            // Even on healthy Tor, Arti may have accumulated guard-poison failures
+            // from a stuck FR/messaging HS lookup. Check escalation.
+            tryAutoGuardResetIfNeeded()
         } else {
+            listenersReady = false
             // Reset consecutive counter immediately on unhealthy
             consecutiveHealthyPolls = 0
 
             // Log unhealthy state for debugging
             val circuits = RustBridge.getCircuitEstablished()
-            Log.w(TAG, "Tor health: unhealthy (bootstrap=$bootstrapPercent%, circuits=$circuits, state=$torState, artiReady=$listenerAlive)")
+            Log.w(TAG, "Tor health: unhealthy (bootstrap=$bootstrapPercent%, circuits=$circuits, state=$torState, outboundReady=$outboundReady, hsStatus=$hsPublisherStatus)")
+
+            // On unhealthy Tor, also check for guard poison — most poison shows up here.
+            tryAutoGuardResetIfNeeded()
 
             // CRITICAL FIX: Only close gate if SOCKS proxy itself is unreachable
             // DO NOT close gate on:
@@ -809,6 +888,12 @@ class TorService : Service() {
                 // During bootstrap (< 100%), SOCKS probe failures are expected (CPU contention,
                 // proxy thread busy) and should NOT close the gate
                 if (bootstrapPercent >= 100) {
+                    if (!hsReady) {
+                        Log.e(TAG, "Messaging HS not reachable yet (status=$hsPublisherStatus) - closing gate")
+                        gate.close("HS_NOT_READY")
+                        lastTorUnstableAt = System.currentTimeMillis()
+                        return
+                    }
                     // Verify SOCKS proxy is actually dead before closing gate
                     val socksReachable = RustBridge.isSocksProxyRunning()
 
@@ -900,10 +985,7 @@ class TorService : Service() {
                         Log.w(TAG, "HS loop heartbeat STALE (${hsLoopAgeMs}ms) → restarting listeners (attempt #$hsListenerRestartAttempts, next cooldown ${nextCooldownMs / 1000}s)")
                         lastHsListenerRestartMs = now
                         serviceScope.launch {
-                            restartListeners()
-                            // Reset sticky flag AFTER restart is scheduled
-                            // so startIncomingListener() can re-set it on success
-                            isListenerRunning = false
+                            restartListeners("hs_loop_heartbeat_stale")
                         }
                     } else {
                         Log.d(TAG, "HS loop stale but restart cooldown active (${(now - lastHsListenerRestartMs) / 1000}s / ${cooldownMs / 1000}s, attempt #$hsListenerRestartAttempts)")
@@ -973,6 +1055,11 @@ class TorService : Service() {
                         kotlinx.coroutines.delay(intervalMs)
                         continue
                     }
+                    if (isTransportQuarantined()) {
+                        Log.w(TAG, "Fast retry: transport quarantine active, skipping cycle")
+                        kotlinx.coroutines.delay(intervalMs)
+                        continue
+                    }
 
                     // Check if there are pending messages before doing DB work
                     val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
@@ -999,6 +1086,13 @@ class TorService : Service() {
                     if (pendingCount > 0) {
                         Log.w(TAG, "Fast retry: $pendingCount pending message(s), attempting phase-aware retry...")
                         val messageService = MessageService(this@TorService)
+                        val retryResult = messageService.retryAllPendingMessages(reason = "fast-loop")
+                        if (retryResult.isSuccess) {
+                            Log.i(TAG, "Fast retry loop phase-aware pass sent=${retryResult.getOrNull() ?: 0}")
+                        } else {
+                            Log.w(TAG, "Fast retry loop phase-aware pass failed: ${retryResult.exceptionOrNull()?.message}")
+                        }
+                        continue
 
                         val nowMs = System.currentTimeMillis()
                         val allMessages = database.messageDao().getMessagesNeedingRetry(
@@ -1221,7 +1315,34 @@ class TorService : Service() {
                         Log.w(TAG, "Download watchdog: Released $released stuck DOWNLOAD_QUEUED claims (>60s)")
                     }
 
-                    // Step 2: Find FAILED_TEMP pings and retry them
+                    // Step 2: Recover PING_SEEN rows that never got claimed.
+                    // If DownloadMessageService was missed/killed before it could send PONG,
+                    // duplicate PINGs leave the sender retrying forever unless we reclaim.
+                    val unclaimedCutoff = now - 10_000
+                    val unclaimedPings = database.pingInboxDao()
+                        .getUnclaimedPingSeen()
+                        .filter { it.firstSeenAt < unclaimedCutoff }
+                    if (unclaimedPings.isNotEmpty()) {
+                        Log.i(TAG, "Download watchdog: Found ${unclaimedPings.size} unclaimed PING_SEEN rows")
+                        for (ping in unclaimedPings) {
+                            val contact = database.contactDao().getContactById(ping.contactId)
+                            val contactName = contact?.displayName ?: "Unknown"
+                            val claimed = database.pingInboxDao().claimForAutoDownloadRetry(ping.pingId, now)
+                            if (claimed > 0) {
+                                Log.i(TAG, "Download watchdog: Claimed unprocessed ${ping.pingId.take(8)} — starting DownloadMessageService")
+                                com.securelegion.services.DownloadMessageService.start(
+                                    this@TorService,
+                                    ping.contactId,
+                                    contactName,
+                                    ping.pingId,
+                                    -1L
+                                )
+                                kotlinx.coroutines.delay(2_000)
+                            }
+                        }
+                    }
+
+                    // Step 3: Find FAILED_TEMP pings and retry them
                     val failedPings = database.pingInboxDao().getRetryablePings()
                     if (failedPings.isNotEmpty()) {
                         Log.i(TAG, "Download watchdog: Found ${failedPings.size} FAILED_TEMP pings to retry")
@@ -1507,6 +1628,7 @@ class TorService : Service() {
 
         // Tor warm-up window - wait after Tor instability before sending traffic
         private const val TOR_WARMUP_WINDOW_MS = 10_000L // 10 seconds (TransportGate is the real guard)
+        private const val TRANSPORT_RESET_QUARANTINE_MS = 120_000L
 
         // CRDT group ID length in bytes (GroupID is [u8; 32] in Rust)
         private const val CRDT_GROUP_ID_LEN = 32
@@ -1527,6 +1649,8 @@ class TorService : Service() {
         const val ACTION_ACCEPT_MESSAGE = "com.securelegion.action.ACCEPT_MESSAGE"
         const val ACTION_DECLINE_MESSAGE = "com.securelegion.action.DECLINE_MESSAGE"
         const val ACTION_VPN_BANDWIDTH_UPDATE = "com.securelegion.action.VPN_BANDWIDTH_UPDATE"
+        const val ACTION_RESET_TOR_STATE = "com.securelegion.action.RESET_TOR_STATE"
+        const val ACTION_RESTART_LISTENERS = "com.securelegion.action.RESTART_LISTENERS"
         const val EXTRA_PING_ID = "ping_id"
         const val EXTRA_CONNECTION_ID = "connection_id"
         const val EXTRA_VPN_RX_BYTES = "vpn_rx_bytes"
@@ -1543,6 +1667,10 @@ class TorService : Service() {
 
         @Volatile
         private var instance: TorService? = null
+        @Volatile
+        private var transportResetInProgress = false
+        @Volatile
+        private var transportQuarantineUntilMs: Long = 0L
 
         fun isRunning(): Boolean = running
 
@@ -1577,6 +1705,44 @@ class TorService : Service() {
             val warmupMs = System.currentTimeMillis() - service.lastTorUnstableAt
             val remaining = TOR_WARMUP_WINDOW_MS - warmupMs
             return if (remaining > 0) remaining else 0
+        }
+
+        fun isTransportQuarantined(): Boolean {
+            return transportResetInProgress || getTransportQuarantineRemainingMs() > 0L
+        }
+
+        fun getTransportQuarantineRemainingMs(): Long {
+            val remaining = transportQuarantineUntilMs - SystemClock.elapsedRealtime()
+            return if (remaining > 0L) remaining else 0L
+        }
+
+        private fun beginTransportQuarantine(reason: String, holdMs: Long = TRANSPORT_RESET_QUARANTINE_MS) {
+            transportResetInProgress = true
+            transportQuarantineUntilMs = maxOf(
+                transportQuarantineUntilMs,
+                SystemClock.elapsedRealtime() + holdMs
+            )
+            listenersReady = false
+            instance?.let { svc ->
+                svc.lastTorUnstableAt = System.currentTimeMillis()
+                try {
+                    if (svc.gate.isOpenNow()) {
+                        svc.gate.close("RESET_QUARANTINE:$reason")
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+            Log.w(TAG, "Transport quarantine armed ($reason) for ${holdMs}ms")
+        }
+
+        private fun clearTransportQuarantine(reason: String) {
+            val wasActive = isTransportQuarantined()
+            transportResetInProgress = false
+            transportQuarantineUntilMs = 0L
+            com.securelegion.network.ArtiPeerHealthGate.resetAll()
+            if (wasActive) {
+                Log.i(TAG, "Transport quarantine cleared ($reason)")
+            }
         }
 
         /**
@@ -1669,7 +1835,7 @@ class TorService : Service() {
             Log.w(TAG, "Listener restart requested: $reason")
             instance?.let { service ->
                 service.serviceScope.launch {
-                    service.restartListeners()
+                    service.restartListeners(reason)
                 }
             } ?: Log.e(TAG, "Cannot restart listeners: TorService instance is null")
         }
@@ -1726,7 +1892,7 @@ class TorService : Service() {
                     com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
                 ) ?: false
 
-                val success = if (gateOpened) {
+                val success = if (gateOpened && !isTransportQuarantined()) {
                     try {
                         com.securelegion.crypto.RustBridge.sendFriendRequest(
                             recipientOnion, encryptedPayload
@@ -1736,7 +1902,10 @@ class TorService : Service() {
                         false
                     }
                 } else {
-                    Log.w(TAG, "Transport gate timed out for background friend request")
+                    val quarantineSuffix = if (isTransportQuarantined()) {
+                        " (transport quarantine active: ${getTransportQuarantineRemainingMs()}ms remaining)"
+                    } else ""
+                    Log.w(TAG, "Transport gate timed out for background friend request$quarantineSuffix")
                     false
                 }
 
@@ -1778,7 +1947,7 @@ class TorService : Service() {
                     com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
                 ) ?: false
 
-                val success = if (gateOpened) {
+                val success = if (gateOpened && !isTransportQuarantined()) {
                     try {
                         com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
                             recipientOnion, encryptedAcceptance
@@ -1788,7 +1957,10 @@ class TorService : Service() {
                         false
                     }
                 } else {
-                    Log.w(TAG, "Transport gate timed out for background Phase 2 accept")
+                    val quarantineSuffix = if (isTransportQuarantined()) {
+                        " (transport quarantine active: ${getTransportQuarantineRemainingMs()}ms remaining)"
+                    } else ""
+                    Log.w(TAG, "Transport gate timed out for background Phase 2 accept$quarantineSuffix")
                     false
                 }
 
@@ -1911,6 +2083,7 @@ class TorService : Service() {
         // One-time safety migration: legacy friend request prefs -> Room retry table.
         serviceScope.launch(Dispatchers.IO) {
             FriendRequestRetryMigration.runIfNeeded(applicationContext)
+            cleanupConfirmedFriendRequestStateOnStartup()
         }
 
         // Create notification channel
@@ -2082,6 +2255,14 @@ class TorService : Service() {
             ACTION_ACCEPT_MESSAGE -> handleAcceptMessage(intent)
             ACTION_DECLINE_MESSAGE -> handleDeclineMessage(intent)
             "com.securelegion.action.REPORT_SOCKS_FAILURE" -> handleSocksFailure()
+            ACTION_RESET_TOR_STATE -> {
+                Log.w(TAG, "ACTION_RESET_TOR_STATE: full Arti state reset requested")
+                serviceScope.launch { performGuardStateReset(reason = "manual") }
+            }
+            ACTION_RESTART_LISTENERS -> {
+                Log.i(TAG, "ACTION_RESTART_LISTENERS: re-creating Tor listeners")
+                serviceScope.launch { restartListeners("action_restart_listeners") }
+            }
             ACTION_KEEP_ALIVE -> {
                 // TorManager sends KEEP_ALIVE to get the foreground service running while it
                 // handles the GP TorService daemon separately. We still need to start the
@@ -2232,7 +2413,11 @@ class TorService : Service() {
      * Start Tor with proper state machine
      * Replaces old startTorService() with cleaner implementation
      */
-    private suspend fun startTor() {
+    private suspend fun startTor() = torLifecycleMutex.withLock {
+        startTorLocked()
+    }
+
+    private suspend fun startTorLocked() {
         Log.w(TAG, "========== startTor() CALLED (torState=$torState) ==========")
 
         // Guard: Don't start if already starting/running
@@ -2334,13 +2519,72 @@ class TorService : Service() {
             setState(TorState.ERROR, e.message ?: "unknown")
             consecutiveBootstrapFailures++
             scheduleReconnect("startTor exception: ${e.message}")
+        } finally {
+            startTorRequested.set(false)
+        }
+    }
+
+    /**
+     * Polled from the health monitor. Asks Rust if poisoned guard state has
+     * crossed threshold + cooldown. If yes, runs the full reset orchestration.
+     * Cooldown + threshold logic lives in Rust, so this is a cheap call.
+     */
+    private fun tryAutoGuardResetIfNeeded() {
+        val should = try {
+            RustBridge.shouldAutoResetGuards()
+        } catch (_: Throwable) {
+            false
+        }
+        if (!should) return
+        Log.w(TAG, "AUTO Tor guard reset triggered: poisoned guard state escalation")
+        serviceScope.launch { performGuardStateReset(reason = "auto") }
+    }
+
+    /**
+     * Full Arti guard-state reset: shutdownArti → wipe poisoned files → init fresh
+     * → restart listeners. Preserves the HS keystore (user keeps the same .onion).
+     * Used by both the manual button and the auto-detector.
+     */
+    private suspend fun performGuardStateReset(reason: String) {
+        torLifecycleMutex.withLock {
+        try {
+            beginTransportQuarantine("guard_reset:$reason")
+            Log.w(TAG, "Guard reset ($reason): marking Tor/listener lifecycle stale")
+            setState(TorState.STOPPING, "guard reset:$reason")
+            listenersReady = false
+            isListenerRunning = false
+            startupCompleted.set(false)
+            startTorRequested.set(false)
+            bootstrapPercent = 0
+            bootstrapOperationalSinceMs = 0L
+            lastBootstrapProgressMs = SystemClock.elapsedRealtime()
+            consecutiveHealthyPolls = 0
+
+            Log.w(TAG, "Guard reset ($reason): step 1/4 shutdownArti")
+            withContext(Dispatchers.IO) { RustBridge.shutdownArti() }
+            Log.w(TAG, "Guard reset ($reason): step 2/4 resetArtiGuardState")
+            val summary = withContext(Dispatchers.IO) { RustBridge.resetArtiGuardState() }
+            Log.w(TAG, "Guard reset ($reason): summary=$summary")
+            Log.w(TAG, "Guard reset ($reason): step 3/4 reset TorManager init state")
+            torManager.resetInitializationState()
+            Log.w(TAG, "Guard reset ($reason): step 4/4 startTor (initialize fresh + re-create listeners)")
+            setState(TorState.OFF, "guard reset:$reason ready to restart")
+            startTorLocked()
+            Log.w(TAG, "Guard reset ($reason): completed")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Guard reset ($reason) failed", t)
+        }
         }
     }
 
     /**
      * Stop Tor cleanly
      */
-    private suspend fun stopTor() {
+    private suspend fun stopTor() = torLifecycleMutex.withLock {
+        stopTorLocked()
+    }
+
+    private suspend fun stopTorLocked() {
         if (torState == TorState.OFF || torState == TorState.STOPPING) {
             Log.d(TAG, "stopTor(): Already stopped/stopping")
             return
@@ -2526,38 +2770,41 @@ class TorService : Service() {
 
         try {
             acquireWakeLock("restartTor:$reason", wakeLockQuickTimeoutMs)
-            // Guard 1: Don't restart during active shutdown
-            if (torState == TorState.STOPPING) {
-                Log.d(TAG, "Ignoring restart request (currently STOPPING): $reason")
-                return
+            torLifecycleMutex.withLock {
+                // Guard 1: Don't restart during active shutdown
+                if (torState == TorState.STOPPING) {
+                    Log.d(TAG, "Ignoring restart request (currently STOPPING): $reason")
+                    return@withLock
+                }
+
+                // Guard 2: Debounce restarts (min 15 seconds between restarts, prevents restart storms)
+                val now = SystemClock.elapsedRealtime()
+                val timeSinceLastRestart = now - lastRestartMs
+                if (timeSinceLastRestart < 15_000) {
+                    Log.d(TAG, "Ignoring restart request (too soon: ${timeSinceLastRestart}ms): $reason")
+                    return@withLock
+                }
+
+                Log.w(TAG, "Restarting Tor from state=$torState (failures=$consecutiveBootstrapFailures): $reason")
+                lastRestartMs = now
+                lastTorUnstableAt = System.currentTimeMillis() // Mark Tor as unstable
+                beginTransportQuarantine("restart:$reason")
+
+                // Reset reconnect state
+                isReconnecting = false
+                reconnectHandler.removeCallbacksAndMessages(null)
+
+                stopTorLocked()
+
+                // Auto-wipe disabled: preserve Tor state on repeated bootstrap failures.
+                if (consecutiveBootstrapFailures >= 2) {
+                    Log.w(TAG, "Auto-wipe disabled: $consecutiveBootstrapFailures consecutive bootstrap failures (Tor data preserved)")
+                    consecutiveBootstrapFailures = 0 // Reset after nuclear
+                }
+
+                kotlinx.coroutines.delay(1_500) // short pause for listeners/sockets to release
+                startTorLocked()
             }
-
-            // Guard 2: Debounce restarts (min 15 seconds between restarts, prevents restart storms)
-            val now = SystemClock.elapsedRealtime()
-            val timeSinceLastRestart = now - lastRestartMs
-            if (timeSinceLastRestart < 15_000) {
-                Log.d(TAG, "Ignoring restart request (too soon: ${timeSinceLastRestart}ms): $reason")
-                return
-            }
-
-            Log.w(TAG, "Restarting Tor from state=$torState (failures=$consecutiveBootstrapFailures): $reason")
-            lastRestartMs = now
-            lastTorUnstableAt = System.currentTimeMillis() // Mark Tor as unstable
-
-            // Reset reconnect state
-            isReconnecting = false
-            reconnectHandler.removeCallbacksAndMessages(null)
-
-            stopTor()
-
-            // Auto-wipe disabled: preserve Tor state on repeated bootstrap failures.
-            if (consecutiveBootstrapFailures >= 2) {
-                Log.w(TAG, "Auto-wipe disabled: $consecutiveBootstrapFailures consecutive bootstrap failures (Tor data preserved)")
-                consecutiveBootstrapFailures = 0 // Reset after nuclear
-            }
-
-            kotlinx.coroutines.delay(1_500) // 1.5s for native :tor to release mutex (prevents SIGABRT)
-            startTor()
         } finally {
             restartMutex.unlock()
         }
@@ -2826,9 +3073,18 @@ class TorService : Service() {
             }
 
             // Mark listeners as ready and open gate regardless — incoming HS is up
-            listenersReady = true
-            gate.open()
-            Log.i(TAG, "Transport gate opened — Tor is fully operational")
+            val hsStatus = getMessagingHsPublisherStatus()
+            val hsReady = hsStatus == "Running"
+            listenersReady = hsReady
+            if (artiReady && hsReady) {
+                clearTransportQuarantine("gate_open_startup")
+                gate.open()
+                kickPendingMessagesFlush("gate_open_startup")
+                Log.i(TAG, "Transport gate opened — Tor + messaging HS are fully operational")
+            } else {
+                gate.close("STARTUP_HS_NOT_READY")
+                Log.w(TAG, "Startup complete locally but transport not yet reachable (outboundReady=$artiReady, hsStatus=$hsStatus)")
+            }
 
             // Start bandwidth monitoring and voice service
             startBandwidthMonitoring()
@@ -2881,7 +3137,7 @@ class TorService : Service() {
         val frListenerSuccess = RustBridge.startFriendRequestListener()
         if (frListenerSuccess) {
             Log.i(TAG, "Friend request listener + FR HS acceptor started")
-            startFriendRequestPoller()
+            startFriendRequestPoller(forceRestart = true)
         } else {
             Log.e(TAG, "Friend request listener failed to start")
         }
@@ -2914,23 +3170,27 @@ class TorService : Service() {
         // Check Tor health via ControlPort (no external probes)
         val bootstrapPercent = RustBridge.getBootstrapStatus()
         val circuitsEstablished = RustBridge.getCircuitEstablished()
-        val isTorHealthy = bootstrapPercent == 100 && circuitsEstablished >= 1
+        val hsReady = isMessagingHsReady()
+        val isTorHealthy = bootstrapPercent == 100 && circuitsEstablished >= 1 && hsReady
 
         // If gate is open AND Tor is healthy → no rebind needed
         if (gate.isOpenNow() && isTorHealthy) {
-            Log.i(TAG, "Gate open + Tor healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished) - no rebind needed")
+            Log.i(TAG, "Gate open + Tor healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished, hsReady=$hsReady) - no rebind needed")
             return
         }
 
         // If gate is closed but Tor unhealthy → wait for Tor to recover
         if (!isTorHealthy) {
-            Log.w(TAG, "Tor not healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished) - waiting for recovery, no rebind")
+            Log.w(TAG, "Tor not healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished, hsReady=$hsReady) - waiting for recovery, no rebind")
             return
         }
 
         // Gate is closed but Tor is healthy → reopen gate (no listener restart needed)
         Log.i(TAG, "Gate closed but Tor healthy - reopening gate without listener restart")
+        listenersReady = true
+        clearTransportQuarantine("gate_open_rebind")
         gate.open()
+        kickPendingMessagesFlush("gate_open_rebind")
     }
 
     /**
@@ -3083,17 +3343,27 @@ class TorService : Service() {
      * PHASE 7.5: Start friend request poller (separate from TAP)
      * Polls for incoming friend request wire protocol messages (0x07 FRIEND_REQUEST, 0x08 FRIEND_REQUEST_ACCEPTED)
      */
-    private fun startFriendRequestPoller() {
+    private fun startFriendRequestPoller(forceRestart: Boolean = false) {
         if (isFriendRequestPollerRunning) {
-            Log.d(TAG, "Friend request poller already running, skipping")
-            return
+            if (!forceRestart) {
+                Log.d(TAG, "Friend request poller already running, skipping")
+                return
+            }
+            Log.i(TAG, "Restarting friend request poller after FR listener/channel refresh")
+            pollerJobs.remove("FriendRequest")?.cancel()
         }
 
         launchPoller("FriendRequest", intervalMs = 0L) {
             val friendRequestBytes = RustBridge.pollFriendRequestBlocking()
             if (friendRequestBytes != null) {
                 Log.i(TAG, "Received incoming friend request: ${friendRequestBytes.size} bytes")
-                handleIncomingFriendRequest(friendRequestBytes)
+                serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        handleIncomingFriendRequest(friendRequestBytes)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in handleIncomingFriendRequest coroutine", e)
+                    }
+                }
             }
         }
     }
@@ -3228,6 +3498,18 @@ class TorService : Service() {
             // TAP = "I'm online" heartbeat, so check ALL message phases and take appropriate action
             serviceScope.launch(Dispatchers.IO) {
                 try {
+                    val messageService = com.securelegion.services.MessageService(this@TorService)
+                    val flushResult = messageService.fastFlushForContact(contact.id, "tap-inbound")
+                    if (flushResult.isSuccess) {
+                        val sent = flushResult.getOrNull() ?: 0
+                        Log.i(TAG, "Inbound TAP fast flush for ${contact.displayName}: sent=$sent")
+                        if (sent > 0) {
+                            return@launch
+                        }
+                    } else {
+                        Log.w(TAG, "Inbound TAP fast flush failed for ${contact.displayName}: ${flushResult.exceptionOrNull()?.message}")
+                    }
+
                     // Query ALL pending/failed messages (not just awaiting pong)
                     val pendingMessages = database.messageDao().getPendingMessages()
                         .filter { it.contactId == contact.id }
@@ -3244,8 +3526,6 @@ class TorService : Service() {
                     }
 
                     Log.i(TAG, "Found ${allMessages.size} pending message(s) to ${contact.displayName} (${pendingMessages.size} unsent, ${awaitingPong.size} awaiting pong) - checking phases")
-
-                    val messageService = com.securelegion.services.MessageService(this@TorService)
 
                     // Protocol v2: One global retry pass discovers PONGs + sends ready blobs
                     messageService.retryAllPendingMessages()
@@ -3312,23 +3592,9 @@ class TorService : Service() {
                             continue
                         }
 
-                        // PING_SENT → still waiting for PONG, retry PING (contact is online via TAP)
-                        Log.i(TAG, "→ ${message.messageId}: STATUS_PING_SENT — retrying Ping (contact online via TAP)")
-                        try {
-                            val result = messageService.sendPingForMessage(message)
-                            if (result.isSuccess) {
-                                // CRITICAL: Use partial update to avoid overwriting delivery status
-                                // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
-                                database.messageDao().updateRetryState(
-                                    message.id,
-                                    message.retryCount + 1,
-                                    System.currentTimeMillis()
-                                )
-                                Log.i(TAG, "Retried Ping for ${message.messageId} after TAP")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to retry Ping for ${message.messageId}", e)
-                        }
+                        // PING_SENT → retryAllPendingMessages() already handled the fast retry path.
+                        // Do not fire a second immediate ping from this TAP loop.
+                        Log.d(TAG, "${message.messageId}: STATUS_PING_SENT already handled by retryAll after TAP")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error checking pending messages during TAP", e)
@@ -3365,34 +3631,20 @@ class TorService : Service() {
             when (typeByte.toInt()) {
                 0x07 -> handlePhase1FriendRequest(encryptedPayload)
                 0x08 -> {
-                    // 0x08 is used for both Phase 2 and Phase 3
-                    // Determine which by checking pending request direction
-                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-                    val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-
-                    var hasOutgoingPhase1 = false
-                    var hasOutgoingPhase2 = false
-
-                    for (requestJson in pendingRequestsSet) {
-                        try {
-                            val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                            if (request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
-                                val json = org.json.JSONObject(request.contactCardJson ?: "{}")
-                                // Phase 2 saved state has "hybrid_shared_secret", Phase 1 doesn't
-                                if (json.has("hybrid_shared_secret")) {
-                                    hasOutgoingPhase2 = true
-                                } else if (json.has("username")) {
-                                    hasOutgoingPhase1 = true
-                                }
-                            }
-                        } catch (e: Exception) {
-                            // Ignore parse errors
-                        }
+                    // 0x08 is used for both Phase 2 and Phase 3. Route by local
+                    // pending phase, not by Kyber-only fields that may be absent on iOS.
+                    val pendingRequests = loadPendingFriendRequestSnapshots()
+                    val hasPhase3Candidate = pendingRequests.any { request ->
+                        isOutgoingPhase2AwaitingAck(request, pendingContactJsonObject(request))
+                    }
+                    val hasPhase2Candidate = pendingRequests.any { request ->
+                        isOutgoingPhase1AwaitingResponse(request, pendingContactJsonObject(request))
                     }
 
                     when {
-                        hasOutgoingPhase1 -> handlePhase2FriendRequest(encryptedPayload) // We sent Phase 1, this is Phase 2
-                        hasOutgoingPhase2 -> handlePhase3Acknowledgment(encryptedPayload) // We sent Phase 2, this is Phase 3
+                        hasPhase3Candidate && handlePhase3Acknowledgment(encryptedPayload) -> Unit
+                        hasPhase2Candidate && handlePhase2FriendRequest(encryptedPayload) -> Unit
+                        hasPhase3Candidate || hasPhase2Candidate -> Log.e(TAG, "Received 0x08 but no pending request key could decrypt it")
                         else -> Log.e(TAG, "Received 0x08 but no matching outgoing request found")
                     }
                 }
@@ -3403,6 +3655,67 @@ class TorService : Service() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Error handling friend request", e)
+        }
+    }
+
+    private fun loadPendingFriendRequestSnapshots(): List<com.securelegion.models.PendingFriendRequest> {
+        val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+        val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+        return pendingRequestsSet.mapNotNull { requestJson ->
+            try {
+                com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse pending friend request snapshot", e)
+                null
+            }
+        }
+    }
+
+    private fun pendingContactJsonObject(request: com.securelegion.models.PendingFriendRequest): org.json.JSONObject? {
+        val json = request.contactCardJson ?: return null
+        return try {
+            org.json.JSONObject(json)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun isOutgoingPhase1AwaitingResponse(
+        request: com.securelegion.models.PendingFriendRequest,
+        json: org.json.JSONObject?
+    ): Boolean {
+        if (request.direction != com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) return false
+        if (!isPendingOrSendingFriendRequest(request)) return false
+        if (json == null) return false
+        return json.optInt("phase", -1) == 1 &&
+            json.optString("x25519_public_key", "").isNotBlank()
+    }
+
+    private fun isOutgoingPhase2AwaitingAck(
+        request: com.securelegion.models.PendingFriendRequest,
+        json: org.json.JSONObject?
+    ): Boolean {
+        if (request.direction != com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) return false
+        if (!isPendingOrSendingFriendRequest(request)) return false
+        if (json == null) return false
+        return json.optInt("phase", -1) != 1 &&
+            json.optString("username", "").isNotBlank() &&
+            json.optString("friend_request_onion", "").isNotBlank() &&
+            json.optString("x25519_public_key", "").isNotBlank()
+    }
+
+    private fun isPendingOrSendingFriendRequest(request: com.securelegion.models.PendingFriendRequest): Boolean {
+        return request.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING ||
+            request.status == com.securelegion.models.PendingFriendRequest.STATUS_SENDING
+    }
+
+    private fun decodePendingX25519(json: org.json.JSONObject): ByteArray? {
+        val x25519Base64 = json.optString("x25519_public_key", "").takeIf { it.isNotBlank() } ?: return null
+        return try {
+            android.util.Base64.decode(x25519Base64, android.util.Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to decode pending X25519 key", e)
+            null
         }
     }
 
@@ -3565,54 +3878,45 @@ class TorService : Service() {
      * Payload: Full ContactCard JSON encrypted with X25519
      * This is received when someone accepts OUR outgoing friend request
      */
-    private fun handlePhase2FriendRequest(encryptedPayload: ByteArray) {
+    private fun handlePhase2FriendRequest(encryptedPayload: ByteArray): Boolean {
         try {
             Log.i(TAG, "Processing Phase 2 friend request (X25519-encrypted)")
 
-            // Find matching outgoing Phase 1 request to get sender's X25519 public key
-            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+            val candidates = loadPendingFriendRequestSnapshots().mapNotNull { request ->
+                val json = pendingContactJsonObject(request)
+                if (!isOutgoingPhase1AwaitingResponse(request, json) || json == null) return@mapNotNull null
+                val senderKey = decodePendingX25519(json) ?: return@mapNotNull null
+                request to senderKey
+            }
 
-            var senderX25519PublicKey: ByteArray? = null
+            if (candidates.isEmpty()) {
+                Log.e(TAG, "No matching outgoing friend request found for Phase 2")
+                return false
+            }
+
             var matchingRequest: com.securelegion.models.PendingFriendRequest? = null
-
-            for (requestJson in pendingRequestsSet) {
-                try {
-                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                    // Look for outgoing requests with Phase 1 data
-                    if (request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING &&
-                        request.contactCardJson != null) {
-
-                        val phase1Json = org.json.JSONObject(request.contactCardJson)
-                        val x25519Base64 = phase1Json.opt("x25519_public_key") as? String
-
-                        if (x25519Base64 != null) {
-                            senderX25519PublicKey = android.util.Base64.decode(x25519Base64, android.util.Base64.NO_WRAP)
-                            matchingRequest = request
-                            Log.d(TAG, "Found matching outgoing request to: ${request.displayName}")
-                            break
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to parse pending request", e)
+            var decryptedJson: String? = null
+            for ((request, senderKey) in candidates) {
+                val candidateJson = RustBridge.decryptMessage(
+                    encryptedPayload,
+                    senderKey,
+                    ByteArray(32) // privateKey parameter is deprecated/unused
+                )
+                if (!candidateJson.isNullOrEmpty()) {
+                    matchingRequest = request
+                    decryptedJson = candidateJson
+                    Log.d(TAG, "Matched Phase 2 response to pending request: ${request.displayName}")
+                    break
                 }
             }
 
-            if (senderX25519PublicKey == null || matchingRequest == null) {
-                Log.e(TAG, "No matching outgoing friend request found for Phase 2")
-                return
-            }
-
-            // Decrypt with sender's X25519 public key
-            val decryptedJson = RustBridge.decryptMessage(
-                encryptedPayload,
-                senderX25519PublicKey,
-                ByteArray(32) // privateKey parameter is deprecated/unused
-            )
-
             if (decryptedJson == null) {
                 Log.e(TAG, "Failed to decrypt Phase 2 ContactCard")
-                return
+                return false
+            }
+            val matchedRequest = matchingRequest ?: run {
+                Log.e(TAG, "Phase 2 decrypted but no pending request was matched")
+                return false
             }
 
             Log.i(TAG, "Phase 2 decrypted successfully")
@@ -3653,7 +3957,7 @@ class TorService : Service() {
 
                         if (!signatureValid) {
                             Log.e(TAG, "Phase 2 signature verification FAILED - rejecting (possible MitM)")
-                            return
+                            return false
                         }
                         Log.i(TAG, "Phase 2 signature verified (Ed25519)")
                     }
@@ -3679,7 +3983,7 @@ class TorService : Service() {
 
             if (contactCard == null) {
                 Log.e(TAG, "Failed to parse ContactCard from Phase 2")
-                return
+                return false
             }
 
             Log.i(TAG, "Friend request accepted by: ${contactCard.displayName}")
@@ -3762,7 +4066,7 @@ class TorService : Service() {
             }
 
             // Remove pending outgoing request
-            removePendingRequest(matchingRequest)
+            removePendingRequest(matchedRequest)
 
             // Show "Friend request accepted" notification
             showFriendRequestAcceptedNotification(contactCard.displayName)
@@ -3778,9 +4082,11 @@ class TorService : Service() {
 
             // Send Phase 3 ACK back to sender's friend-request .onion
             sendPhase3Acknowledgment(contactCard)
+            return true
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing Phase 2 friend request", e)
+            return false
         }
     }
 
@@ -3825,6 +4131,7 @@ class TorService : Service() {
 
                 if (success) {
                     Log.i(TAG, "Phase 3 ACK sent to ${contactCard.displayName}")
+                    cleanupConfirmedFriendRequestState(contactCard, "phase3_ack_sent")
 
                     // Two-phase commit complete on our side: flip PENDING_SENT → CONFIRMED.
                     // Mirror of the receiver-side flip at the Phase 3 ACK handler.
@@ -3857,63 +4164,57 @@ class TorService : Service() {
      * Handle Phase 3 acknowledgment (X25519-encrypted)
      * Payload: Simple confirmation that they received and processed Phase 2
      */
-    private fun handlePhase3Acknowledgment(encryptedPayload: ByteArray) {
+    private fun handlePhase3Acknowledgment(encryptedPayload: ByteArray): Boolean {
         try {
             Log.i(TAG, "Processing Phase 3 acknowledgment (X25519-encrypted)")
 
-            // Find matching pending request (the one we're waiting for)
-            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+            val candidates = loadPendingFriendRequestSnapshots().mapNotNull { request ->
+                val json = pendingContactJsonObject(request)
+                if (!isOutgoingPhase2AwaitingAck(request, json) || json == null) return@mapNotNull null
+                val senderKey = decodePendingX25519(json) ?: return@mapNotNull null
+                request to senderKey
+            }
+
+            if (candidates.isEmpty()) {
+                Log.e(TAG, "No matching pending request found for Phase 3 ACK")
+                return false
+            }
 
             var matchingRequest: com.securelegion.models.PendingFriendRequest? = null
-            var senderX25519PublicKey: ByteArray? = null
+            var contactCard: com.securelegion.models.ContactCard? = null
 
-            for (requestJson in pendingRequestsSet) {
-                try {
-                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                    // Look for outgoing pending requests (we sent Phase 2, waiting for ACK)
-                    if (request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING &&
-                        request.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING &&
-                        request.contactCardJson != null) {
+            for ((request, senderKey) in candidates) {
+                val candidateJson = com.securelegion.crypto.RustBridge.decryptMessage(
+                    encryptedPayload,
+                    senderKey,
+                    ByteArray(32) // privateKey parameter is deprecated/unused
+                )
+                if (candidateJson.isNullOrEmpty()) continue
 
-                        val partialJson = org.json.JSONObject(request.contactCardJson)
-                        val x25519Base64 = partialJson.opt("x25519_public_key") as? String
-
-                        if (x25519Base64 != null) {
-                            senderX25519PublicKey = android.util.Base64.decode(x25519Base64, android.util.Base64.NO_WRAP)
-                            matchingRequest = request
-                            Log.d(TAG, "Found matching pending request for: ${request.displayName}")
-                            break
-                        }
-                    }
+                val candidateCard = try {
+                    com.securelegion.models.ContactCard.fromJson(candidateJson)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to parse pending request", e)
+                    Log.w(TAG, "Phase 3 candidate decrypted but was not a ContactCard for ${request.displayName}", e)
+                    null
+                }
+
+                if (candidateCard != null) {
+                    matchingRequest = request
+                    contactCard = candidateCard
+                    Log.d(TAG, "Matched Phase 3 ACK to pending request: ${request.displayName}")
+                    break
                 }
             }
 
-            if (senderX25519PublicKey == null || matchingRequest == null) {
-                Log.e(TAG, "No matching pending request found for Phase 3 ACK")
-                return
-            }
-
-            // Decrypt ACK
-            val decryptedJson = com.securelegion.crypto.RustBridge.decryptMessage(
-                encryptedPayload,
-                senderX25519PublicKey,
-                ByteArray(32) // privateKey parameter is deprecated/unused
-            )
-
-            if (decryptedJson == null) {
+            if (matchingRequest == null || contactCard == null) {
                 Log.e(TAG, "Failed to decrypt Phase 3 ACK")
-                return
+                return false
             }
+            val matchedRequest = matchingRequest
+            val matchedContactCard = contactCard
 
             Log.i(TAG, "Phase 3 ACK decrypted successfully")
-
-            // Parse the full ContactCard from the ACK
-            val contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
-                ?: run { Log.e(TAG, "Phase 3 ACK ContactCard missing invite_token (schema v4 required)"); return }
-            Log.i(TAG, "Friend request fully confirmed by: ${contactCard.displayName}")
+            Log.i(TAG, "Friend request fully confirmed by: ${matchedContactCard.displayName}")
 
             // Add to contacts database and initialize key chain (both in coroutine)
             serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -3922,7 +4223,7 @@ class TorService : Service() {
                     val keyManager2 = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
                     val dbPassphrase2 = keyManager2.getDatabasePassphrase()
                     val db = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase2)
-                    val x25519Base64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP)
+                    val x25519Base64 = android.util.Base64.encodeToString(matchedContactCard.x25519PublicKey, android.util.Base64.NO_WRAP)
                     val existingContact = db.contactDao().getContactByX25519PublicKey(x25519Base64)
                     val contactId: Long
                     if (existingContact != null) {
@@ -3932,10 +4233,10 @@ class TorService : Service() {
                         )
                         db.contactDao().updateContact(confirmed)
                         contactId = existingContact.id
-                        Log.i(TAG, "Contact confirmed: ${contactCard.displayName} (ID: $contactId)")
+                        Log.i(TAG, "Contact confirmed: ${matchedContactCard.displayName} (ID: $contactId)")
                     } else {
                         // Fallback: add fresh if Phase 2 didn't create one
-                        val newId = addContactToDatabase(contactCard)
+                        val newId = addContactToDatabase(matchedContactCard)
                         if (newId == null) {
                             Log.e(TAG, "Failed to add contact to database")
                             return@launch
@@ -3944,7 +4245,7 @@ class TorService : Service() {
                     }
 
                     // Extract precomputed shared secret from saved Phase 2 state
-                    val savedJson = org.json.JSONObject(matchingRequest.contactCardJson ?: "{}")
+                    val savedJson = org.json.JSONObject(matchedRequest.contactCardJson ?: "{}")
                     val precomputedSharedSecret = if (savedJson.has("hybrid_shared_secret")) {
                         val sharedSecretBase64 = savedJson.getString("hybrid_shared_secret")
                         android.util.Base64.decode(sharedSecretBase64, android.util.Base64.NO_WRAP)
@@ -3952,7 +4253,7 @@ class TorService : Service() {
 
                     val torManager = com.securelegion.crypto.TorManager.getInstance(this@TorService)
                     val ourMessagingOnion = torManager.getOnionAddress()
-                    val theirMessagingOnion = contactCard.messagingOnion
+                    val theirMessagingOnion = matchedContactCard.messagingOnion
 
                     if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
                         Log.e(TAG, "Cannot initialize key chain: missing onion address")
@@ -3964,26 +4265,28 @@ class TorService : Service() {
                         com.securelegion.crypto.KeyChainManager.initializeKeyChain(
                             context = this@TorService,
                             contactId = contactId,
-                            theirX25519PublicKey = contactCard.x25519PublicKey,
-                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            theirX25519PublicKey = matchedContactCard.x25519PublicKey,
+                            theirKyberPublicKey = matchedContactCard.kyberPublicKey,
                             ourMessagingOnion = ourMessagingOnion,
                             theirMessagingOnion = theirMessagingOnion,
                             precomputedSharedSecret = precomputedSharedSecret
                         )
-                        Log.i(TAG, "Key chain initialized for ${contactCard.displayName} (quantum - precomputed secret)")
+                        Log.i(TAG, "Key chain initialized for ${matchedContactCard.displayName} (quantum - precomputed secret)")
                     } else {
                         // Legacy path without quantum parameters
                         Log.w(TAG, "No precomputed shared secret - initializing key chain in legacy mode")
                         com.securelegion.crypto.KeyChainManager.initializeKeyChain(
                             context = this@TorService,
                             contactId = contactId,
-                            theirX25519PublicKey = contactCard.x25519PublicKey,
-                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            theirX25519PublicKey = matchedContactCard.x25519PublicKey,
+                            theirKyberPublicKey = matchedContactCard.kyberPublicKey,
                             ourMessagingOnion = ourMessagingOnion,
                             theirMessagingOnion = theirMessagingOnion
                         )
-                        Log.i(TAG, "Key chain initialized for ${contactCard.displayName} (legacy)")
+                        Log.i(TAG, "Key chain initialized for ${matchedContactCard.displayName} (legacy)")
                     }
+
+                    cleanupConfirmedFriendRequestState(matchedContactCard, "phase3_ack_received")
 
                     // Auto-send our profile picture to the new contact (if we have one set)
                     val prefs = this@TorService.getSharedPreferences("secure_legion_settings", android.content.Context.MODE_PRIVATE)
@@ -3993,31 +4296,33 @@ class TorService : Service() {
                         try {
                             val messageService = com.securelegion.services.MessageService(this@TorService)
                             messageService.sendProfileUpdate(contactId, myPhotoBase64)
-                            Log.i(TAG, "Profile picture auto-sent to new contact: ${contactCard.displayName}")
+                            Log.i(TAG, "Profile picture auto-sent to new contact: ${matchedContactCard.displayName}")
                         } catch (e: Exception) {
-                            Log.w(TAG, "Failed to auto-send profile picture to ${contactCard.displayName}", e)
+                            Log.w(TAG, "Failed to auto-send profile picture to ${matchedContactCard.displayName}", e)
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to add contact or initialize key chain for ${contactCard.displayName}", e)
+                    Log.e(TAG, "Failed to add contact or initialize key chain for ${matchedContactCard.displayName}", e)
                 }
             }
 
             // Remove the pending request
-            removePendingRequest(matchingRequest)
+            removePendingRequest(matchedRequest)
 
             // Show "Friend added" notification
-            showFriendRequestAcceptedNotification(contactCard.displayName)
+            showFriendRequestAcceptedNotification(matchedContactCard.displayName)
 
             // Send broadcast to update UI
             val broadcastIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_COMPLETED")
             broadcastIntent.setPackage(packageName)
             sendBroadcast(broadcastIntent)
 
-            Log.i(TAG, "Phase 3 complete - ACK received from ${contactCard.displayName}")
+            Log.i(TAG, "Phase 3 complete - ACK received from ${matchedContactCard.displayName}")
+            return true
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing Phase 3 acknowledgment", e)
+            return false
         }
     }
 
@@ -4098,6 +4403,146 @@ class TorService : Service() {
         }
     }
 
+    private suspend fun cleanupConfirmedFriendRequestState(
+        contactCard: com.securelegion.models.ContactCard,
+        reason: String
+    ) {
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val onions = setOf(contactCard.friendRequestOnion, contactCard.messagingOnion)
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toSet()
+            if (onions.isEmpty()) return@withContext
+
+            val x25519Base64 = android.util.Base64.encodeToString(
+                contactCard.x25519PublicKey,
+                android.util.Base64.NO_WRAP
+            )
+
+            try {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+                for (onion in onions) {
+                    database.pendingFriendRequestDao().deleteByRecipientOnion(onion)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed DB cleanup for confirmed friend request (${contactCard.displayName}, reason=$reason)", e)
+            }
+
+            try {
+                val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                val retryMapEditor = getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE).edit()
+                val newSet = mutableSetOf<String>()
+                var removed = 0
+
+                for (requestJson in pendingRequestsSet) {
+                    try {
+                        val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                        val stored = request.contactCardJson.orEmpty()
+                        val matchesConfirmedPeer =
+                            request.ipfsCid.trim() in onions ||
+                                stored.contains(contactCard.friendRequestOnion) ||
+                                stored.contains(contactCard.messagingOnion) ||
+                                stored.contains(x25519Base64)
+
+                        if (matchesConfirmedPeer) {
+                            retryMapEditor.remove(request.id)
+                            removed++
+                        } else {
+                            newSet.add(requestJson)
+                        }
+                    } catch (_: Exception) {
+                        newSet.add(requestJson)
+                    }
+                }
+
+                if (removed > 0) {
+                    prefs.edit()
+                        .putStringSet("pending_requests_v2", newSet)
+                        .apply()
+                    retryMapEditor.apply()
+                    Log.i(TAG, "Cleaned $removed confirmed friend-request UI/retry row(s) for ${contactCard.displayName} (reason=$reason)")
+                    sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                } else {
+                    retryMapEditor.apply()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed prefs cleanup for confirmed friend request (${contactCard.displayName}, reason=$reason)", e)
+            }
+        }
+    }
+
+    private suspend fun cleanupConfirmedFriendRequestStateOnStartup() {
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+                val confirmedContacts = database.contactDao().getAllContacts()
+                if (confirmedContacts.isEmpty()) return@withContext
+
+                val confirmedOnions = confirmedContacts
+                    .flatMap { contact ->
+                        listOfNotNull(
+                            contact.friendRequestOnion,
+                            contact.messagingOnion,
+                            contact.torOnionAddress
+                        )
+                    }
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .toSet()
+                val confirmedX25519 = confirmedContacts
+                    .map { it.x25519PublicKeyBase64.trim() }
+                    .filter { it.isNotBlank() }
+                    .toSet()
+
+                for (onion in confirmedOnions) {
+                    database.pendingFriendRequestDao().deleteByRecipientOnion(onion)
+                }
+
+                val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                val retryMapEditor = getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE).edit()
+                val newSet = mutableSetOf<String>()
+                var removed = 0
+
+                for (requestJson in pendingRequestsSet) {
+                    try {
+                        val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                        val stored = request.contactCardJson.orEmpty()
+                        val matchesConfirmedPeer =
+                            request.ipfsCid.trim() in confirmedOnions ||
+                                confirmedOnions.any { stored.contains(it) } ||
+                                confirmedX25519.any { stored.contains(it) }
+
+                        if (matchesConfirmedPeer) {
+                            retryMapEditor.remove(request.id)
+                            removed++
+                        } else {
+                            newSet.add(requestJson)
+                        }
+                    } catch (_: Exception) {
+                        newSet.add(requestJson)
+                    }
+                }
+
+                if (removed > 0) {
+                    prefs.edit()
+                        .putStringSet("pending_requests_v2", newSet)
+                        .apply()
+                    Log.i(TAG, "Startup cleaned $removed stale confirmed friend-request UI/retry row(s)")
+                    sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                }
+                retryMapEditor.apply()
+            } catch (e: Exception) {
+                Log.w(TAG, "Startup confirmed friend-request cleanup failed", e)
+            }
+        }
+    }
+
     /**
      * Save pending friend request to SharedPreferences
      */
@@ -4109,11 +4554,17 @@ class TorService : Service() {
             // Dedup by (direction, ipfsCid) — replace instead of append. Appending
             // blindly would let stale Phase 1 payloads accumulate across re-adds,
             // which is how wrong usernames can leak back in.
+            val realIncomingRequest =
+                request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING &&
+                    request.ipfsCid.isNotBlank() &&
+                    !request.isUndecryptedPlaceholder()
             val newSet = mutableSetOf<String>()
             for (existingJson in pendingRequestsSet) {
                 try {
                     val existing = com.securelegion.models.PendingFriendRequest.fromJson(existingJson)
-                    if (existing.ipfsCid != request.ipfsCid || existing.direction != request.direction) {
+                    if (realIncomingRequest && existing.isUndecryptedPlaceholder()) {
+                        Log.i(TAG, "Dropping stale placeholder friend request while saving ${request.displayName}")
+                    } else if (existing.ipfsCid != request.ipfsCid || existing.direction != request.direction) {
                         newSet.add(existingJson)
                     }
                 } catch (e: Exception) {
@@ -4528,6 +4979,18 @@ class TorService : Service() {
                                 // TAP_ACK means peer is online and ready to receive - retry all pending messages
                                 serviceScope.launch(Dispatchers.IO) {
                                     try {
+                                        val messageService = com.securelegion.services.MessageService(this@TorService)
+                                        val result = messageService.fastFlushForContact(message.contactId, "tap-ack")
+                                        if (result.isSuccess) {
+                                            val sent = result.getOrNull() ?: 0
+                                            Log.i(TAG, "TAP_ACK fast flush for contact ${message.contactId}: sent=$sent")
+                                            if (sent > 0) {
+                                                return@launch
+                                            }
+                                        } else {
+                                            Log.w(TAG, "TAP_ACK fast flush failed: ${result.exceptionOrNull()?.message}")
+                                        }
+
                                         // RESET MESSAGE COOLDOWNS: Make all queued messages immediately retryable
                                         val tapNow = System.currentTimeMillis()
                                         val pendingForReset = database.messageDao().getPendingMessages()
@@ -4578,14 +5041,9 @@ class TorService : Service() {
                                                             messageService.sendPendingMessagesForContact(fresh.contactId)
                                                         }
                                                         com.securelegion.database.entities.Message.STATUS_PING_SENT -> {
-                                                            // Still waiting for PONG — retry PING (contact online via TAP_ACK)
-                                                            Log.i(TAG, "${msg.messageId}: Retrying PING after TAP_ACK")
-                                                            messageService.sendPingForMessage(msg)
-                                                            database.messageDao().updateRetryState(
-                                                                msg.id,
-                                                                msg.retryCount + 1,
-                                                                System.currentTimeMillis()
-                                                            )
+                                                            // retryAllPendingMessages() already handled PING_SENT rows.
+                                                            // Avoid launching a duplicate ping immediately after TAP_ACK.
+                                                            Log.d(TAG, "${msg.messageId}: STATUS_PING_SENT already handled by retryAll after TAP_ACK")
                                                         }
                                                         else -> {
                                                             Log.d(TAG, "${msg.messageId}: status=${fresh.status}, skipping")
@@ -4961,17 +5419,20 @@ class TorService : Service() {
                         database.pingInboxDao().updatePingRetry(pingId, now)
                     }
 
-                    // FIX: Re-trigger auto-download for stuck/failed downloads
-                    // Without this, a failed download is stuck forever — sender keeps retrying
-                    // PINGs but we never re-attempt the PONG→MESSAGE handshake.
-                    // Retryable states: FAILED_TEMP, DOWNLOAD_QUEUED (stuck), PONG_SENT (stale)
+                    // FIX: Re-trigger auto-download for stuck/failed downloads.
+                    // PING_SEEN can also get stuck if DMS was missed/killed before it
+                    // claimed the row, leaving the sender retrying forever without PONG.
                     val retryableStates = setOf(
                         com.securelegion.database.entities.PingInbox.STATE_FAILED_TEMP,
                         com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED,
                         com.securelegion.database.entities.PingInbox.STATE_PONG_SENT,
-                        com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED
+                        com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED,
+                        com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
                     )
-                    if (state in retryableStates) {
+                    val stalePingSeen = state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN &&
+                        now - existingPing.firstSeenAt >= 5_000L
+                    if (state in retryableStates &&
+                        (state != com.securelegion.database.entities.PingInbox.STATE_PING_SEEN || stalePingSeen)) {
                         Log.i(TAG, "→ Ping in retryable state ($state) — will re-trigger auto-download")
                         shouldRetryDownload = true
                     } else {
@@ -5117,8 +5578,7 @@ class TorService : Service() {
                             val claimed = withContext(Dispatchers.IO) {
                                 val ts = System.currentTimeMillis()
                                 if (shouldRetryDownload) {
-                                    val r = database.pingInboxDao().reclaimForRetry(pingId, ts)
-                                    if (r > 0) r else database.pingInboxDao().reclaimFromManual(pingId, ts)
+                                    database.pingInboxDao().claimForAutoDownloadRetry(pingId, ts)
                                 } else {
                                     database.pingInboxDao().claimForAutoDownload(pingId, ts)
                                 }
@@ -5364,6 +5824,25 @@ class TorService : Service() {
      * Handle incoming message blob
      * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
      */
+    private fun fastFlushForInboundContact(contactId: Long, reason: String) {
+        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val messageService = com.securelegion.services.MessageService(this@TorService)
+                val result = messageService.fastFlushForContact(contactId, reason)
+                if (result.isSuccess) {
+                    val sent = result.getOrNull() ?: 0
+                    if (sent > 0) {
+                        Log.i(TAG, "Inbound fast flush ($reason) sent=$sent contactId=$contactId")
+                    }
+                } else {
+                    Log.w(TAG, "Inbound fast flush ($reason) failed contactId=$contactId: ${result.exceptionOrNull()?.message}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Inbound fast flush ($reason) threw contactId=$contactId: ${e.message}")
+            }
+        }
+    }
+
     private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray, incomingConnectionId: Long = -1L) {
         try {
             // Wire format: [Type byte][Sender X25519 - 32 bytes][Encrypted Message]
@@ -5741,6 +6220,7 @@ class TorService : Service() {
                 database.receivedIdDao().exists(dedupMessageId, com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE)
             }
             if (isKnownDuplicate) {
+                fastFlushForInboundContact(contact.id, "inbound-duplicate")
                 Log.i(TAG, "PRE-DECRYPT DEDUP: already stored $dedupMessageId (sender retry, ratchet advanced) — re-sending ACK")
                 // Re-send MESSAGE_ACK so sender can mark delivered and stop retrying.
                 // Use pingId when wire is tracked (advanced mode), otherwise use the blob hash
@@ -5813,115 +6293,177 @@ class TorService : Service() {
 
                     val expected = freshKeyChain.receiveCounter
                     val MAX_LOOKAHEAD = 32L // Try up to 32 counters ahead
+                    val isEvolutionPacket = actualEncryptedMessage.size >= 9 &&
+                        actualEncryptedMessage[0].toInt() == 0x01
+                    val messageSequence = if (isEvolutionPacket) {
+                        java.nio.ByteBuffer.wrap(actualEncryptedMessage.copyOfRange(1, 9)).long
+                    } else {
+                        null
+                    }
 
-                    Log.d(TAG, "MUTEX LOCKED: Attempting decryption for contact ${contact.id}, expected counter: $expected")
+                    Log.d(TAG, "MUTEX LOCKED: Attempting decryption for contact ${contact.id}, expected counter: $expected, wireSeq=${messageSequence ?: "legacy"}")
 
-                    // Try decryption at expected counter first
                     var decryptedResult: RustBridge.DecryptionResult? = null
                     var usedCounter: Long = expected
-
-                    try {
-                        decryptedResult = RustBridge.decryptMessageWithEvolution(
-                            actualEncryptedMessage,
-                            freshKeyChain.receiveChainKeyBytes,
-                            expected
-                        )
-                        if (decryptedResult != null) {
-                            Log.d(TAG, "Decryption succeeded at expected counter $expected")
-                        }
-                    } catch (e: Exception) {
-                        val errorMsg = e.message ?: ""
-                        if (errorMsg.contains("Out of order") || errorMsg.contains("out of order") || errorMsg.contains("Decryption failed")) {
-                            Log.w(TAG, "Decryption failed at expected counter $expected: $errorMsg")
-                        } else {
-                            Log.e(TAG, "Non-recoverable decryption error: $errorMsg", e)
-                            throw e
-                        }
-                    }
-
-                    // If failed at expected, try lookahead window
-                    if (decryptedResult == null) {
-                        Log.w(TAG, "Attempting lookahead recovery (counters ${expected + 1} to ${expected + MAX_LOOKAHEAD})...")
-
-                        // Get onion addresses for direction mapping (needed for deriveReceiveKeyAtSequence)
-                        val keyMgr = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                        val ourOnion = keyMgr.getMessagingOnion()
-                        val theirOnion = contact.messagingOnion
-
-                        if (ourOnion == null || theirOnion == null) {
-                            Log.e(TAG, "Cannot perform lookahead recovery: missing onion addresses")
-                            return@withLock null
-                        }
-
-                        // Try counters ahead (expected+1 to expected+MAX_LOOKAHEAD)
-                        for (c in (expected + 1)..(expected + MAX_LOOKAHEAD)) {
-                            // Derive key at counter c from root key
-                            val derivedKey = try {
-                                RustBridge.deriveReceiveKeyAtSequence(
-                                    freshKeyChain.rootKeyBytes,
-                                    c,
-                                    ourOnion,
-                                    theirOnion
-                                )
-                            } catch (e: Exception) {
-                                Log.d(TAG, "Failed to derive key at counter $c: ${e.message}")
-                                continue
-                            }
-
-                            if (derivedKey == null) continue
-
-                            // Try decrypting with derived key
-                            val attempt = try {
-                                RustBridge.decryptMessageWithEvolution(
-                                    actualEncryptedMessage,
-                                    derivedKey,
-                                    c
-                                )
-                            } catch (e: Exception) {
-                                null // Keep trying next counter
-                            }
-
-                            if (attempt != null) {
-                                decryptedResult = attempt
-                                usedCounter = c
-                                Log.i(TAG, "Lookahead recovery SUCCESS at counter $c (gap: ${c - expected})")
-                                break
-                            }
-                        }
-
-                        if (decryptedResult == null) {
-                            Log.w(TAG, "Lookahead recovery FAILED for counters $expected to ${expected + MAX_LOOKAHEAD}")
-                        }
-                    }
-
-                    // If still null, this is NOT an out-of-order issue - might be legacy packet
-                    if (decryptedResult == null) {
-                        return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
-                    }
-
-                    // Decryption succeeded - update key chain in DB while still holding mutex
-                    val newCounter = usedCounter + 1
+                    var evolvedReceiveKey: ByteArray? = null
+                    var shouldUpdateReceiveCounter = false
                     val keyMgrForUpdate = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
                     val dbPassphraseForUpdate = keyMgrForUpdate.getDatabasePassphrase()
                     val databaseForUpdate = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphraseForUpdate)
 
-                    // Update receive chain key and counter atomically
-                    databaseForUpdate.contactKeyChainDao().updateReceiveChainKey(
-                        contactId = contact.id,
-                        newReceiveChainKeyBase64 = android.util.Base64.encodeToString(decryptedResult.evolvedChainKey, android.util.Base64.NO_WRAP),
-                        newReceiveCounter = newCounter,
-                        timestamp = System.currentTimeMillis()
-                    )
+                    if (messageSequence != null) {
+                        when {
+                            messageSequence < expected -> {
+                                Log.d(TAG, "PAST MESSAGE: seq=$messageSequence < receiveCounter=$expected; checking skipped key table")
+                                val skippedKey = databaseForUpdate.skippedMessageKeyDao().getKey(contact.id, messageSequence)
+                                if (skippedKey == null) {
+                                    Log.e(TAG, "SKIPPED KEY NOT FOUND: seq=$messageSequence for contact ${contact.id}")
+                                    return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                }
+                                val plaintext = try {
+                                    RustBridge.decryptWithMessageKey(actualEncryptedMessage, skippedKey.messageKey)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Skipped-key decrypt threw for seq=$messageSequence", e)
+                                    null
+                                }
+                                if (plaintext == null) {
+                                    Log.e(TAG, "DECRYPTION FAILED with skipped key seq=$messageSequence")
+                                    return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                }
+                                databaseForUpdate.skippedMessageKeyDao().deleteKey(contact.id, messageSequence)
+                                decryptedResult = RustBridge.DecryptionResult(plaintext, freshKeyChain.receiveChainKeyBytes)
+                                usedCounter = messageSequence
+                                Log.i(TAG, "Out-of-order past message decrypted with stored skipped key seq=$messageSequence")
+                            }
 
-                    // Verify the update
-                    val verifyKeyChain = databaseForUpdate.contactKeyChainDao().getKeyChainByContactId(contact.id)
-                    if (verifyKeyChain?.receiveCounter != newCounter) {
-                        Log.e(TAG, "CRITICAL: Counter update failed! Expected $newCounter, got ${verifyKeyChain?.receiveCounter}")
+                            messageSequence - expected > MAX_LOOKAHEAD -> {
+                                Log.e(TAG, "SEQUENCE TOO FAR: seq=$messageSequence expected=$expected gap=${messageSequence - expected} > $MAX_LOOKAHEAD")
+                                return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                            }
+
+                            messageSequence > expected -> {
+                                Log.w(TAG, "FUTURE MESSAGE: seq=$messageSequence > expected=$expected; storing skipped keys for gap ${messageSequence - expected}")
+                                var currentChainKey = freshKeyChain.receiveChainKeyBytes
+                                val skippedKeys = mutableListOf<com.securelegion.database.entities.SkippedMessageKey>()
+                                for (seq in expected until messageSequence) {
+                                    val skippedMessageKey = try {
+                                        RustBridge.deriveMessageKey(currentChainKey)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to derive skipped key for seq=$seq", e)
+                                        return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                    }
+                                    skippedKeys.add(
+                                        com.securelegion.database.entities.SkippedMessageKey(
+                                            id = "${contact.id}_$seq",
+                                            contactId = contact.id,
+                                            sequence = seq,
+                                            messageKey = skippedMessageKey,
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                    )
+                                    currentChainKey = try {
+                                        RustBridge.evolveChainKey(currentChainKey)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to evolve receive chain while storing skipped seq=$seq", e)
+                                        return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                    }
+                                }
+                                if (skippedKeys.isNotEmpty()) {
+                                    databaseForUpdate.skippedMessageKeyDao().insertAll(skippedKeys)
+                                    Log.i(TAG, "Stored ${skippedKeys.size} skipped receive keys for contact ${contact.id}")
+                                }
+
+                                val currentMessageKey = try {
+                                    RustBridge.deriveMessageKey(currentChainKey)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to derive current message key seq=$messageSequence", e)
+                                    return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                }
+                                val plaintext = try {
+                                    RustBridge.decryptWithMessageKey(actualEncryptedMessage, currentMessageKey)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Future-message decrypt threw for seq=$messageSequence", e)
+                                    null
+                                }
+                                if (plaintext == null) {
+                                    Log.e(TAG, "DECRYPTION FAILED for future seq=$messageSequence after storing skipped keys")
+                                    return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                }
+                                val evolvedKey = try {
+                                    RustBridge.evolveChainKey(currentChainKey)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to evolve receive chain after seq=$messageSequence", e)
+                                    return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                }
+                                decryptedResult = RustBridge.DecryptionResult(plaintext, evolvedKey)
+                                usedCounter = messageSequence
+                                evolvedReceiveKey = evolvedKey
+                                shouldUpdateReceiveCounter = true
+                                Log.i(TAG, "Out-of-order future message decrypted seq=$messageSequence; receive counter will advance to ${messageSequence + 1}")
+                            }
+
+                            else -> {
+                                decryptedResult = try {
+                                    RustBridge.decryptMessageWithEvolution(
+                                        actualEncryptedMessage,
+                                        freshKeyChain.receiveChainKeyBytes,
+                                        expected
+                                    )
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "In-order decryption threw at counter $expected", e)
+                                    null
+                                }
+                                if (decryptedResult == null) {
+                                    Log.e(TAG, "DECRYPTION FAILED at expected counter $expected")
+                                    return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                                }
+                                usedCounter = expected
+                                evolvedReceiveKey = decryptedResult.evolvedChainKey
+                                shouldUpdateReceiveCounter = true
+                                Log.d(TAG, "Decryption succeeded at expected counter $expected")
+                            }
+                        }
                     } else {
-                        Log.d(TAG, "Counter updated: $expected -> $newCounter (used: $usedCounter)")
+                        decryptedResult = try {
+                            RustBridge.decryptMessageWithEvolution(
+                                actualEncryptedMessage,
+                                freshKeyChain.receiveChainKeyBytes,
+                                expected
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (decryptedResult != null) {
+                            usedCounter = expected
+                            evolvedReceiveKey = decryptedResult.evolvedChainKey
+                            shouldUpdateReceiveCounter = true
+                            Log.d(TAG, "Legacy-shaped packet decrypted via evolution at counter $expected")
+                        }
                     }
 
-                    Triple(decryptedResult, usedCounter, decryptedResult.evolvedChainKey)
+                    if (decryptedResult == null) {
+                        return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                    }
+
+                    if (shouldUpdateReceiveCounter) {
+                        val newCounter = usedCounter + 1
+                        val evolvedKey = evolvedReceiveKey ?: decryptedResult.evolvedChainKey
+                        databaseForUpdate.contactKeyChainDao().updateReceiveChainKey(
+                            contactId = contact.id,
+                            newReceiveChainKeyBase64 = android.util.Base64.encodeToString(evolvedKey, android.util.Base64.NO_WRAP),
+                            newReceiveCounter = newCounter,
+                            timestamp = System.currentTimeMillis()
+                        )
+
+                        val verifyKeyChain = databaseForUpdate.contactKeyChainDao().getKeyChainByContactId(contact.id)
+                        if (verifyKeyChain?.receiveCounter != newCounter) {
+                            Log.e(TAG, "CRITICAL: Counter update failed! Expected $newCounter, got ${verifyKeyChain?.receiveCounter}")
+                        } else {
+                            Log.d(TAG, "Counter updated: $expected -> $newCounter (used: $usedCounter)")
+                        }
+                    }
+
+                    Triple(decryptedResult, usedCounter, evolvedReceiveKey)
                 }
             }
 
@@ -6044,6 +6586,8 @@ class TorService : Service() {
                 plaintext = result.plaintext
                 Log.d(TAG, "Evolution decryption successful, counter=${finalReceiveCounter}")
             }
+
+            fastFlushForInboundContact(contact.id, "inbound-message")
 
             // NEW: Parse message type from DECRYPTED plaintext[0], not from ciphertext
             // This is the only stable design - crypto headers can change, but app framing is inside plaintext
@@ -6752,61 +7296,17 @@ class TorService : Service() {
     private fun handleFriendRequest(senderX25519PublicKey: ByteArray, encryptedFriendRequest: ByteArray) {
         try {
             Log.i(TAG, "")
-            Log.i(TAG, "FRIEND REQUEST from unknown contact")
+            Log.i(TAG, "FRIEND REQUEST from unknown contact on legacy message path")
             Log.i(TAG, "")
 
-            // Wire type byte (0x07) has already been stripped by caller
-            if (encryptedFriendRequest.size < 1) {
+            // Wire type byte (0x07) has already been stripped by caller.
+            if (encryptedFriendRequest.isEmpty()) {
                 Log.e(TAG, "Friend request too short")
                 return
             }
 
-            // NEW: Check if this is a Phase 1 PIN-encrypted message or old X25519-encrypted message
-            // Phase 1 messages are PIN-encrypted and contain {"phase":1, ...}
-            // Try to detect by attempting PIN decryption (user will need to provide PIN)
-
-            Log.d(TAG, "Received friend request: ${encryptedFriendRequest.size} bytes")
-            Log.d(TAG, "This appears to be a Phase 1 PIN-encrypted friend request")
-
-            // For Phase 1, we need the user to provide the PIN to decrypt
-            // So we save the encrypted payload and show it as a pending request
-            // The user will enter the sender's PIN when they click "Accept"
-
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-
-            // Store in SharedPreferences as pending friend request (Phase 1)
-            // We'll decrypt it when the user provides the PIN
-            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-            val existingRequests = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-
-            // Create PendingFriendRequest with encrypted Phase 1 data
-            // We'll show "New Friend Request" and decrypt when user provides PIN
-            val pendingRequest = com.securelegion.models.PendingFriendRequest(
-                displayName = "New Friend Request", // Will get real name after PIN decryption
-                ipfsCid = "", // Not used in v2.0
-                direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
-                status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
-                timestamp = System.currentTimeMillis(),
-                contactCardJson = android.util.Base64.encodeToString(encryptedFriendRequest, android.util.Base64.NO_WRAP) // Store encrypted Phase 1 data
-            )
-
-            // Add new request
-            val updatedRequests = existingRequests.toMutableSet()
-            updatedRequests.add(pendingRequest.toJson())
-            prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
-
-            Log.i(TAG, "Phase 1 friend request stored - total pending: ${updatedRequests.size}")
-
-            // Show notification
-            showFriendRequestNotification("New Friend Request")
-
-            Log.i(TAG, "Decrypted friend request JSON: (Phase 1 - will decrypt with PIN later)")
-
-            // Broadcast to update MainActivity badge count (explicit broadcast)
-            val intent = Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
-            intent.setPackage(packageName)
-            sendBroadcast(intent)
-            Log.d(TAG, "Broadcast FRIEND_REQUEST_RECEIVED to update badge")
+            Log.d(TAG, "Routing legacy friend request payload through Phase 1 handler: payload=${encryptedFriendRequest.size} bytes, senderKey=${senderX25519PublicKey.size} bytes")
+            handlePhase1FriendRequest(encryptedFriendRequest)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error handling friend request", e)
@@ -8857,14 +9357,16 @@ class TorService : Service() {
                 val ipv6StatusChanged = lastNetworkIsIpv6Only != null && lastNetworkIsIpv6Only != event.isIpv6Only
 
                 if (transportChanged || ipv6StatusChanged) {
+                    val previousNetworkChangeMs = lastNetworkChangeMs
+                    val networkChangeNowMs = System.currentTimeMillis()
                     Log.w(TAG, "Network path changed: transport=${if (transportChanged) "YES (${lastNetworkIsWifi} → ${event.isWifi})" else "no"}, " +
                               "ipv6=${if (ipv6StatusChanged) "YES (${lastNetworkIsIpv6Only} → ${event.isIpv6Only})" else "no"}")
 
                     // Update tracking
                     lastNetworkIsWifi = event.isWifi
                     lastNetworkIsIpv6Only = event.isIpv6Only
-                    lastNetworkChangeMs = System.currentTimeMillis()
-                    lastTorUnstableAt = System.currentTimeMillis() // Mark Tor as unstable
+                    lastNetworkChangeMs = networkChangeNowMs
+                    lastTorUnstableAt = networkChangeNowMs // Mark Tor as unstable
 
                     // Transport changed (WiFi↔LTE, IPv6 status) — old TCP sockets and TLS
                     // channels are dead. isolated_client() (NEWNYM) won't help because new
@@ -8872,7 +9374,7 @@ class TorService : Service() {
                     // is the only reliable recovery.
                     if (torState == TorState.RUNNING || torState == TorState.BOOTSTRAPPING) {
                         // Debounce: rapid WiFi toggles can fire multiple events in <2s
-                        if (System.currentTimeMillis() - lastNetworkChangeMs < 2000) {
+                        if (previousNetworkChangeMs > 0L && networkChangeNowMs - previousNetworkChangeMs < 2000) {
                             Log.w(TAG, "Network transport change debounced (< 2s since last change)")
                         } else {
                             Log.w(TAG, "Network TRANSPORT changed — triggering full Arti teardown + reinit")
@@ -8928,10 +9430,14 @@ class TorService : Service() {
                             reconnectHandler.postDelayed({
                                 serviceScope.launch(Dispatchers.IO) {
                                     val hasCircuits = RustBridge.getCircuitEstablished() == 1
+                                    val hsReady = isMessagingHsReady()
                                     val fullyReady = startupCompleted.get()
-                                    if (hasCircuits && fullyReady && !gate.isOpenNow()) {
+                                    if (hasCircuits && hsReady && fullyReady && !gate.isOpenNow()) {
                                         Log.i(TAG, "Circuits + listeners ready after offline bootstrap — opening gate")
+                                        listenersReady = true
+                                        clearTransportQuarantine("gate_open_offline_bootstrap")
                                         gate.open()
+                                        kickPendingMessagesFlush("gate_open_offline_bootstrap")
                                     } else if (!hasCircuits) {
                                         Log.w(TAG, "Still no circuits 10s after first network — one final NEWNYM, then health monitor owns it")
                                         requestNewnymDebounced("first_network_retry", debounceMs = 0L)
@@ -8986,7 +9492,7 @@ class TorService : Service() {
                             sendTapsToAllContacts()
                             try {
                                 val messageService = MessageService(this@TorService)
-                                val pongResult = messageService.retryAllPendingMessages()
+                                val pongResult = messageService.flushNow(aggressive = true, reason = "network_restored")
                                 if (pongResult.isSuccess) {
                                     val sentCount = pongResult.getOrNull() ?: 0
                                     if (sentCount > 0) {
@@ -9107,7 +9613,7 @@ class TorService : Service() {
                             sendTapsToAllContacts()
                             try {
                                 val messageService = MessageService(this@TorService)
-                                val pongResult = messageService.retryAllPendingMessages()
+                                val pongResult = messageService.flushNow(aggressive = true, reason = "airplane_restored")
                                 if (pongResult.isSuccess) {
                                     val sentCount = pongResult.getOrNull() ?: 0
                                     if (sentCount > 0) {
@@ -9332,7 +9838,7 @@ class TorService : Service() {
         // If 3 failures within 5 minutes, restart listeners
         if (downloadFailureCount >= 3) {
             Log.e(TAG, "Multiple download failures detected ($downloadFailureCount in 5 minutes) - restarting listeners")
-            restartListeners()
+            serviceScope.launch { restartListeners("download_failure_threshold") }
             // Reset counters
             downloadFailureCount = 0
             downloadFailureWindowStart = 0L
@@ -9342,18 +9848,29 @@ class TorService : Service() {
     /**
      * Restart incoming listeners to recover from broken state
      */
-    private fun restartListeners() {
-        Thread {
+    private suspend fun restartListeners(reason: String = "unspecified") {
+        listenerLifecycleMutex.withLock {
             try {
-                Log.i(TAG, "Restarting all listeners...")
+                Log.i(TAG, "Restarting all listeners (reason=$reason)")
                 updateNotification("Restarting listeners...")
 
-                // Stop all listeners
-                RustBridge.stopListeners()
-                Thread.sleep(2000) // Wait 2s for cleanup
+                listenersReady = false
+                isListenerRunning = false
+                gate.close("LISTENER_RESTART:$reason")
 
-                // Restart incoming listener
-                Log.i(TAG, "Starting incoming listener...")
+                // These pollers hold receivers from the old Rust channels. Recreate them
+                // after the new listener installs fresh channels.
+                listOf("Ping", "Message", "Voice", "Tap", "FriendRequest", "Pong", "ACK").forEach { name ->
+                    pollerJobs.remove(name)?.cancel()
+                }
+
+                withContext(Dispatchers.IO) {
+                    RustBridge.stopListeners()
+                    RustBridge.stopHiddenServiceListener()
+                }
+                kotlinx.coroutines.delay(750)
+
+                Log.i(TAG, "Starting incoming listener after listener-only restart")
                 startIncomingListener()
 
                 Log.i(TAG, "Listeners restarted successfully")
@@ -9364,7 +9881,7 @@ class TorService : Service() {
                 Log.e(TAG, "Failed to restart listeners", e)
                 updateNotification("Restart failed - check connection")
             }
-        }.start()
+        }
     }
 
     /**

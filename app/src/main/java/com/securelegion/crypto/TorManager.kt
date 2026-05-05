@@ -364,7 +364,7 @@ class TorManager(private val context: Context) {
                 while (artiAttempts < maxArtiAttempts && !artiReady) {
                     try {
                         val bootstrapStatus = RustBridge.getBootstrapStatus()
-                        if (bootstrapStatus >= 95 || RustBridge.isSocksProxyRunning()) {
+                        if (bootstrapStatus >= 100) {
                             artiReady = true
                             Log.i(TAG, "Arti ready after ${artiAttempts + 1}s (bootstrap: $bootstrapStatus%)")
                         } else {

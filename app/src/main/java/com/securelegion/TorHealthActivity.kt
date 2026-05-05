@@ -93,6 +93,37 @@ class TorHealthActivity : AppCompatActivity() {
             }.start()
         }
 
+        // Reset Tor State button — escalation above NEWNYM. Wipes Arti's
+        // poisoned guard / circuit-timeout / dirmgr files and re-bootstraps.
+        // Preserves the HS keystore so the user's .onion stays the same.
+        findViewById<View>(R.id.resetTorStateButton).setOnClickListener { v ->
+            confirmResetTorState(v)
+        }
+
+    }
+
+    private fun confirmResetTorState(triggerView: View) {
+        // Use create() + GlassDialog.show() so the OnShowListener strips Material3
+        // inner panel backgrounds — matches the styling of confirmDisableTorNetwork
+        // below. Calling the builder's own .show() leaves the panel boxing visible.
+        val dialog = com.securelegion.utils.GlassDialog.builder(this)
+            .setTitle("Reset Tor state?")
+            .setMessage("Wipes guard / circuit-timeout state and re-bootstraps Tor. Use only if New Circuit didn't fix things. Your account, contacts, and .onion address are preserved.")
+            .setPositiveButton("Reset") { _, _ -> performResetTorState(triggerView) }
+            .setNegativeButton("Cancel", null)
+            .create()
+        com.securelegion.utils.GlassDialog.show(dialog)
+    }
+
+    private fun performResetTorState(triggerView: View) {
+        triggerView.isEnabled = false
+        ThemedToast.show(this, "Resetting Tor state…")
+        // Delegate to TorService so the reset uses the same orchestration as
+        // the auto-detector (avoids two divergent reset code paths).
+        val intent = android.content.Intent(this, com.securelegion.services.TorService::class.java)
+        intent.action = com.securelegion.services.TorService.ACTION_RESET_TOR_STATE
+        startService(intent)
+        triggerView.postDelayed({ triggerView.isEnabled = true }, 5_000)
     }
 
     override fun onResume() {
@@ -307,7 +338,7 @@ class TorHealthActivity : AppCompatActivity() {
             // code if the locale lookup returns blank or just echoes the code — which
             // happens only for unrecognized / obscure codes.
             val country = countryCode?.let { code ->
-                val name = java.util.Locale("", code).displayCountry
+                val name = java.util.Locale.Builder().setRegion(code).build().displayCountry
                 if (name.isNotBlank() && !name.equals(code, ignoreCase = true)) name else code
             }
 

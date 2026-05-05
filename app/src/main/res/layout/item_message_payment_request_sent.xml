@@ -98,14 +98,20 @@
                         android:textColor="#FFD93D"
                         android:textSize="12sp" />
 
-                    <ImageView
-                        android:id="@+id/messageStatus"
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
-                        android:src="@drawable/status_sent"
-                        android:contentDescription="Message status" />
-
                 </LinearLayout>
+
+                <!-- Delivery status label — under the payment status row, end-aligned -->
+                <TextView
+                    android:id="@+id/messageStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="end"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/message_status_pending"
+                    android:textSize="10sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="@font/poppins_medium"
+                    android:contentDescription="Message status" />
 
             </LinearLayout>
 

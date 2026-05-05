@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@drawable/bg_secure_pattern">
 
     <!-- Decorative Gradient Shape - Top Left -->
     <View
@@ -73,18 +73,20 @@
         app:layout_constraintEnd_toEndOf="parent"
         android:clickable="false" />
 
-    <!-- SECURE LEGION Text at Bottom -->
+    <!-- "[ SECURE ]" header at the top — matches the lock-screen wordmark
+         placement, but bold (lock screen uses medium). Same size + letter
+         spacing for visual consistency across the two screens. -->
     <TextView
         android:id="@+id/appNameText"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="SECURE LEGION"
+        android:text="@string/bracket_label_secure"
         android:fontFamily="@font/space_grotesk_bold"
-        android:textSize="20sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:letterSpacing="0.1"
-        android:layout_marginBottom="32dp"
-        app:layout_constraintBottom_toBottomOf="parent"
+        android:textSize="22sp"
+        android:textColor="#80FFFFFF"
+        android:letterSpacing="0.4"
+        android:layout_marginTop="60dp"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 

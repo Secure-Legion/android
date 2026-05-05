@@ -160,7 +160,7 @@
 
                 </LinearLayout>
 
-                <!-- Self-destruct timer indicator (fire icon + live countdown) - left of delivery status -->
+                <!-- Self-destruct timer indicator (fire icon + live countdown) -->
                 <TextView
                     android:id="@+id/timerIndicator"
                     android:layout_width="wrap_content"
@@ -178,19 +178,22 @@
                     android:contentDescription="Disappearing message"
                     android:visibility="gone" />
 
-                <!-- Delivery status indicator (circle with checkmarks) - right of text, inline with text baseline -->
-                <ImageView
-                    android:id="@+id/messageStatus"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/status_pending"
-                    android:layout_marginStart="4dp"
-                    android:layout_marginBottom="2dp"
-                    android:layout_gravity="bottom"
-                    android:contentDescription="Message status"
-                    android:visibility="visible" />
-
             </LinearLayout>
+
+            <!-- Delivery status label — UNDER the bubble, right-aligned -->
+            <TextView
+                android:id="@+id/messageStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:layout_marginTop="3dp"
+                android:layout_marginEnd="2dp"
+                android:text="@string/message_status_pending"
+                android:textSize="10sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:fontFamily="@font/poppins_medium"
+                android:contentDescription="Message status"
+                android:visibility="visible" />
 
         </LinearLayout>
 

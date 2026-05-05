@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">Secure Chat</string>
+
+    <!-- Message delivery status labels (shown beneath the bubble) -->
+    <string name="message_status_pending">Pending</string>
+    <string name="message_status_sent">Sent</string>
+    <string name="message_status_delivered">Delivered</string>
+    <string name="message_status_failed">Failed</string>
+
+    <!-- Bracket-style brand labels (lock + welcome screens). Whitespace inside
+         brackets is intentional — preserves the iOS visual rhythm.
+         "SECURE" stays English everywhere (it's the app's brand wordmark);
+         "LOGIN" is generic UI copy and should localize per locale. -->
+    <string name="bracket_label_secure" translatable="false">[ SECURE ]</string>
+    <string name="bracket_label_login">[ LOGIN ]</string>
 </resources>

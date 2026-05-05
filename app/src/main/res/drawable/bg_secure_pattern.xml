@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Portrait adaptation of the website OG card background.
+
+  Components, in render order:
+   1. Solid near-black base (#0a0a0a)
+   2. Subtle green radial glow in upper area (behind app branding)
+   3. Sparse frame-grid lines (4 verticals + 2 horizontals) — same logic as
+      the OG card's `.grid-v` / `.grid-h` framing rules
+   4. Diagonal hatching cluster in upper-right corner — mirrors `.stripes`
+   5. Halftone dot grid in lower-right — mirrors `.dots`
+   6. Subtle green linear-gradient accent line along the bottom edge —
+      mirrors `.bottom-accent`
+
+  Viewport is 360x800 (typical phone portrait aspect ~9:20). Vector drawables
+  stretch to background bounds; pattern positions stay proportionally correct
+  on any standard phone screen. On unusual aspects (tablets, foldables open)
+  the elements stretch but remain visible.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="800dp"
+    android:viewportWidth="360"
+    android:viewportHeight="800">
+
+    <!-- 1. Pure black base. The decorative layers above sit on top. -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M0,0 L360,0 L360,800 L0,800 Z" />
+
+    <!-- 3a. Frame-grid verticals — kept very faint so the eye registers
+         "framed by a grid" without the lines reading as actual structure. -->
+    <path
+        android:strokeColor="#04FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M30,0 L30,800 M120,0 L120,800 M240,0 L240,800 M330,0 L330,800" />
+
+    <!-- 3b. Frame-grid horizontals (same opacity as verticals) -->
+    <path
+        android:strokeColor="#04FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M0,60 L360,60 M0,740 L360,740" />
+
+    <!-- 4. Diagonal hatching cluster, upper-right corner. 12 parallel hairlines
+         drawn at 45deg using two-point line segments (M start L end). -->
+    <path
+        android:strokeColor="#0AFFFFFF"
+        android:strokeWidth="1"
+        android:pathData="
+            M180,-50 L420,190
+            M195,-50 L435,190
+            M210,-50 L450,190
+            M225,-50 L465,190
+            M240,-50 L480,190
+            M255,-50 L495,190
+            M270,-50 L510,190
+            M285,-50 L525,190
+            M300,-50 L540,190
+            M315,-50 L555,190
+            M330,-50 L570,190
+            M345,-50 L585,190" />
+
+    <!-- 5. Halftone dot grid, lower-right corner. 6 cols x 4 rows of 1.5px
+         circles. Each circle drawn as M(cx,cy) m(-r,0) a(r,r 0 1 0 2r,0) a(r,r 0 1 0 -2r,0) -->
+    <path
+        android:fillColor="#1AFFFFFF"
+        android:pathData="
+            M260,690 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M275,690 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M290,690 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M305,690 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M320,690 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M335,690 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+
+            M260,705 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M275,705 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M290,705 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M305,705 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M320,705 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M335,705 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+
+            M260,720 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M275,720 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M290,720 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M305,720 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M320,720 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M335,720 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+
+            M260,735 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M275,735 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M290,735 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M305,735 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M320,735 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M335,735 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+
+    <!-- 6. Bottom accent — very subtle green linear gradient line. Center
+         opacity reduced from 30% (web) to ~10% so it reads as a hint, not a
+         loud underline, on phone displays. -->
+    <path android:pathData="M30,795 L330,795 L330,800 L30,800 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="30" android:startY="797"
+                android:endX="330" android:endY="797"
+                android:startColor="#0064FFB4"
+                android:centerColor="#1A64FFB4"
+                android:endColor="#0064FFB4" />
+        </aapt:attr>
+    </path>
+
+</vector>

@@ -17,7 +17,15 @@ data class PendingFriendRequest(
     val contactCardJson: String? = null,
     val id: String = UUID.randomUUID().toString()
 ) {
+    fun isUndecryptedPlaceholder(): Boolean =
+        direction == DIRECTION_INCOMING &&
+            status == STATUS_PENDING &&
+            displayName == DISPLAY_NAME_PLACEHOLDER &&
+            ipfsCid.isBlank()
+
     companion object {
+        const val DISPLAY_NAME_PLACEHOLDER = "New Friend Request"
+
         const val DIRECTION_OUTGOING = "outgoing"
         const val DIRECTION_INCOMING = "incoming"
 

@@ -14,6 +14,7 @@ data class Chat(
     val time: String = "",
     val lastMessageStatus: Int = 0,
     val lastMessageIsSent: Boolean = false,
+    val lastMessageTimestamp: Long = 0L,
     val lastMessagePingDelivered: Boolean = false,
     val lastMessageMessageDelivered: Boolean = false,
     val isPinned: Boolean = false,

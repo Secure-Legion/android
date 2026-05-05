@@ -29,6 +29,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.entities.Message
+import com.securelegion.utils.MessageDeliveryUi
 import com.securelegion.utils.ThemedToast
 import pl.droidsonroids.gif.GifDrawable
 import com.airbnb.lottie.LottieAnimationView
@@ -262,6 +263,7 @@ class MessageAdapter(
         private const val VIEW_TYPE_PAYMENT_RECEIVED = 11
         private const val VIEW_TYPE_STICKER_SENT = 12
         private const val VIEW_TYPE_STICKER_RECEIVED = 13
+        private const val MIN_DELIVERY_STATUS_REFRESH_MS = 250L
 
         // Cached prices for display (updated by ChatActivity)
         var cachedSolPrice: Double = 0.0
@@ -278,6 +280,13 @@ class MessageAdapter(
     // Track animated ellipsis for downloading/decrypting states
     private val ellipsisAnimations = mutableMapOf<TextView, Runnable>()
     private val ellipsisHandler = Handler(Looper.getMainLooper())
+    private val deliveryStatusHandler = Handler(Looper.getMainLooper())
+    private val deliveryStatusRefreshRunnable = object : Runnable {
+        override fun run() {
+            refreshDeliveryStatusRows()
+            scheduleDeliveryStatusRefresh()
+        }
+    }
     private var reactionSummaries: Map<String, String> = emptyMap()
 
     fun setReactionSummaries(summaries: Map<String, String>) {
@@ -427,7 +436,7 @@ class MessageAdapter(
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
         val messageBubble: LinearLayout = view.findViewById(R.id.messageBubble)
         val messageText: TextView = view.findViewById(R.id.messageText)
-        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
+        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
         val pinIndicator: TextView = view.findViewById(R.id.pinIndicator)
@@ -474,7 +483,7 @@ class MessageAdapter(
         val waveformProgress: ImageView = view.findViewById(R.id.waveformProgress)
         val durationText: TextView = view.findViewById(R.id.durationText)
         val timestampText: TextView = view.findViewById(R.id.timestampText)
-        val statusIcon: ImageView = view.findViewById(R.id.statusIcon)
+        val statusIcon: TextView = view.findViewById(R.id.statusIcon)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
         val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
     }
@@ -494,7 +503,7 @@ class MessageAdapter(
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
         val messageBubble: View = view.findViewById(R.id.messageBubble)
         val messageImage: ImageView = view.findViewById(R.id.messageImage)
-        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
+        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
         val timerIndicator: TextView = view.findViewById(R.id.timerIndicator)
@@ -513,7 +522,7 @@ class MessageAdapter(
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
         val stickerAnimation: LottieAnimationView = view.findViewById(R.id.stickerAnimation)
         val gifImage: ImageView = view.findViewById(R.id.gifImage)
-        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
+        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
@@ -534,7 +543,7 @@ class MessageAdapter(
         val paymentAmount: TextView = view.findViewById(R.id.paymentAmount)
         val paymentAmountUsd: TextView = view.findViewById(R.id.paymentAmountUsd)
         val paymentStatus: TextView = view.findViewById(R.id.paymentStatus)
-        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
+        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
@@ -743,7 +752,7 @@ class MessageAdapter(
 
     private fun bindSentMessage(holder: SentMessageViewHolder, message: Message, position: Int) {
         holder.messageText.text = resolveContent(message.encryptedContent)
-        holder.messageStatus.setImageResource(getStatusIcon(message))
+        holder.messageStatus.setText(getStatusText(holder.itemView.context, message))
         holder.pinIndicator.visibility = if (message.isPinned) View.VISIBLE else View.GONE
         val reaction = reactionSummaries[message.messageId]
         holder.reactionSummary.text = reaction ?: ""
@@ -808,7 +817,7 @@ class MessageAdapter(
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
-            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, holder.messageStatus, position, isSent = true)
+            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, position, isSent = true)
         }
     }
 
@@ -878,7 +887,7 @@ class MessageAdapter(
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
-            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, position, isSent = false)
         }
     }
 
@@ -967,7 +976,7 @@ class MessageAdapter(
 
         // Setup swipe gesture (only in normal mode)
         if (!isSelectionMode) {
-            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, position, isSent = false)
         }
     }
 
@@ -977,7 +986,7 @@ class MessageAdapter(
         holder.timestampText.text = formatTime(message.timestamp)
 
         // Set status icon (same as text messages - circle system)
-        holder.statusIcon.setImageResource(getStatusIcon(message))
+        holder.statusIcon.setText(getStatusText(holder.itemView.context, message))
 
         // Self-destruct timer indicator (fire icon + live countdown text)
         bindTimerIndicator(holder.timerIndicator, message)
@@ -1119,7 +1128,7 @@ class MessageAdapter(
             }
         }
 
-        holder.messageStatus.setImageResource(getStatusIcon(message))
+        holder.messageStatus.setText(getStatusText(holder.itemView.context, message))
 
         // Self-destruct timer indicator (fire icon + live countdown text)
         bindTimerIndicator(holder.timerIndicator, message)
@@ -1180,7 +1189,7 @@ class MessageAdapter(
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
-            setupSwipeGestureForCard(holder.messageBubble, holder.swipeRevealedTime, holder.messageStatus, position, isSent = true)
+            setupSwipeGestureForCard(holder.messageBubble, holder.swipeRevealedTime, position, isSent = true)
         }
     }
 
@@ -1250,7 +1259,7 @@ class MessageAdapter(
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
-            setupSwipeGestureForCard(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+            setupSwipeGestureForCard(holder.messageBubble, holder.swipeRevealedTime, position, isSent = false)
         }
     }
 
@@ -1298,7 +1307,7 @@ class MessageAdapter(
             }
         }
 
-        holder.messageStatus.setImageResource(getStatusIcon(message))
+        holder.messageStatus.setText(getStatusText(holder.itemView.context, message))
 
         if (shouldShowTimestampHeader(position)) {
             holder.timestampHeader.visibility = View.VISIBLE
@@ -1431,7 +1440,7 @@ class MessageAdapter(
         holder.paymentStatus.setTextColor(statusColor)
 
         // Set message status icon (circle with checkmarks) based on ACK flags
-        holder.messageStatus.setImageResource(getStatusIcon(message))
+        holder.messageStatus.setText(getStatusText(holder.itemView.context, message))
 
         // Show timestamp header if needed
         if (shouldShowTimestampHeader(position)) {
@@ -1724,7 +1733,6 @@ class MessageAdapter(
     private fun setupSwipeGestureForCard(
         bubble: View,
         timeView: TextView,
-        statusView: ImageView?,
         position: Int,
         isSent: Boolean
     ) {
@@ -1773,7 +1781,6 @@ class MessageAdapter(
     private fun setupSwipeGesture(
         bubble: View,
         timeView: TextView,
-        statusView: ImageView?,
         position: Int,
         isSent: Boolean
     ) {
@@ -1896,18 +1903,14 @@ class MessageAdapter(
         return sdf.format(Date(timestamp))
     }
 
-    private fun getStatusIcon(message: Message): Int {
-        // Check ACK flags instead of status to show accurate delivery state
-        return when {
-            message.status == Message.STATUS_FAILED -> R.drawable.status_failed // Red circle with X
-            message.messageDelivered -> R.drawable.status_delivered // Solid circle with 2 checkmarks (message downloaded by receiver)
-            message.pingDelivered -> R.drawable.status_sent // Circle with 1 checkmark (PING_ACK received, receiver notified)
-            else -> {
-                // No ACK yet — show queued clock (stored for retry)
-                R.drawable.status_queued
-            }
-        }
-    }
+    /**
+     * Returns the @StringRes for the delivery-status label shown under the
+     * bubble. This is UI-only: the database status stays unchanged so retry
+     * logic still uses the real protocol state.
+     */
+    @androidx.annotation.StringRes
+    private fun getStatusText(context: Context, message: Message): Int =
+        MessageDeliveryUi.statusTextRes(context, message)
 
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         super.onViewRecycled(holder)
@@ -1985,7 +1988,37 @@ class MessageAdapter(
 
         // Let DiffUtil compute the optimal changes atomically
         // onCommitted callback fires AFTER the list is committed to the adapter
-        submitList(combinedList, onCommitted)
+        submitList(combinedList) {
+            scheduleDeliveryStatusRefresh()
+            onCommitted?.run()
+        }
+    }
+
+    private fun scheduleDeliveryStatusRefresh() {
+        deliveryStatusHandler.removeCallbacks(deliveryStatusRefreshRunnable)
+        val nowMs = System.currentTimeMillis()
+        val nextDelayMs = currentList.asSequence()
+            .mapNotNull { (it as? ChatListItem.MessageItem)?.message }
+            .mapNotNull { message ->
+                MessageDeliveryUi.millisUntilAckTimeoutRefresh(message, nowMs)
+            }
+            .minOrNull()
+
+        if (nextDelayMs != null) {
+            deliveryStatusHandler.postDelayed(
+                deliveryStatusRefreshRunnable,
+                nextDelayMs.coerceAtLeast(MIN_DELIVERY_STATUS_REFRESH_MS)
+            )
+        }
+    }
+
+    private fun refreshDeliveryStatusRows() {
+        currentList.forEachIndexed { index, item ->
+            val message = (item as? ChatListItem.MessageItem)?.message ?: return@forEachIndexed
+            if (message.isSentByMe && !message.messageDelivered) {
+                notifyItemChanged(index)
+            }
+        }
     }
 
     /**
@@ -2178,11 +2211,13 @@ class MessageAdapter(
         super.onAttachedToRecyclerView(recyclerView)
         this.recyclerView = recyclerView
         timerTickHandler.postDelayed(timerTickRunnable, 1000L)
+        scheduleDeliveryStatusRefresh()
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         super.onDetachedFromRecyclerView(recyclerView)
         timerTickHandler.removeCallbacks(timerTickRunnable)
+        deliveryStatusHandler.removeCallbacks(deliveryStatusRefreshRunnable)
         this.recyclerView = null
     }
 

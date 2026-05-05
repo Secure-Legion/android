@@ -1,6 +1,8 @@
 package com.securelegion.adapters
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -11,6 +13,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.models.Chat
+import com.securelegion.utils.MessageDeliveryUi
 import com.securelegion.views.AvatarView
 import kotlin.math.abs
 
@@ -25,6 +28,13 @@ class ChatAdapter(
 
     // Track which item is currently swiped open (-1 = none)
     private var openPosition = -1
+    private val deliveryStatusHandler = Handler(Looper.getMainLooper())
+    private val deliveryStatusRefreshRunnable = object : Runnable {
+        override fun run() {
+            notifyDataSetChanged()
+            scheduleDeliveryStatusRefresh()
+        }
+    }
 
     /** Set from RecyclerView.OnScrollListener — blocks taps while list is scrolling/settling. */
     var listIsScrolling = false
@@ -34,7 +44,7 @@ class ChatAdapter(
         val chatName: TextView = view.findViewById(R.id.chatName)
         val chatMessage: TextView = view.findViewById(R.id.chatMessage)
         val chatTime: TextView = view.findViewById(R.id.chatTime)
-        val chatMessageStatus: android.widget.ImageView = view.findViewById(R.id.chatMessageStatus)
+        val chatMessageStatus: android.widget.TextView = view.findViewById(R.id.chatMessageStatus)
         val unreadBadge: TextView = view.findViewById(R.id.unreadBadge)
         val securityBadge: TextView = view.findViewById(R.id.securityBadge)
         val onlineIndicator: TextView = view.findViewById(R.id.onlineIndicator)
@@ -85,16 +95,19 @@ class ChatAdapter(
         // Set timestamp
         holder.chatTime.text = chat.time
 
-        // Show message status indicator (only for sent messages)
+        // Show message status label on the right of the preview row, under the time.
+        // Hidden for received messages.
         if (chat.lastMessageIsSent) {
             holder.chatMessageStatus.visibility = View.VISIBLE
-            val statusIcon = when {
-                chat.lastMessageStatus == 6 -> R.drawable.status_failed
-                chat.lastMessageMessageDelivered -> R.drawable.status_delivered
-                chat.lastMessagePingDelivered -> R.drawable.status_sent
-                else -> R.drawable.status_pending
-            }
-            holder.chatMessageStatus.setImageResource(statusIcon)
+            holder.chatMessageStatus.setText(
+                MessageDeliveryUi.statusTextRes(
+                    context = holder.itemView.context,
+                    status = chat.lastMessageStatus,
+                    isSentByMe = chat.lastMessageIsSent,
+                    messageDelivered = chat.lastMessageMessageDelivered,
+                    timestampMs = chat.lastMessageTimestamp
+                )
+            )
         } else {
             holder.chatMessageStatus.visibility = View.GONE
         }
@@ -243,6 +256,7 @@ class ChatAdapter(
         // Width of all 3 action buttons combined (80dp * 3 = 240dp)
         // Using pixels calculated at bind time would be more accurate,
         // but we use a fixed dp value converted at first use
+        private const val MIN_DELIVERY_STATUS_REFRESH_MS = 250L
         private var ACTION_WIDTH = 0f
 
         fun getActionWidth(context: Context): Float {
@@ -256,5 +270,35 @@ class ChatAdapter(
     override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
         super.onAttachedToRecyclerView(recyclerView)
         getActionWidth(recyclerView.context)
+        scheduleDeliveryStatusRefresh()
     }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        deliveryStatusHandler.removeCallbacks(deliveryStatusRefreshRunnable)
+    }
+
+    private fun scheduleDeliveryStatusRefresh() {
+        deliveryStatusHandler.removeCallbacks(deliveryStatusRefreshRunnable)
+        val nowMs = System.currentTimeMillis()
+        val nextDelayMs = chats.asSequence()
+            .mapNotNull { chat ->
+                MessageDeliveryUi.millisUntilAckTimeoutRefresh(
+                    status = chat.lastMessageStatus,
+                    isSentByMe = chat.lastMessageIsSent,
+                    messageDelivered = chat.lastMessageMessageDelivered,
+                    timestampMs = chat.lastMessageTimestamp,
+                    nowMs = nowMs
+                )
+            }
+            .minOrNull()
+
+        if (nextDelayMs != null) {
+            deliveryStatusHandler.postDelayed(
+                deliveryStatusRefreshRunnable,
+                nextDelayMs.coerceAtLeast(MIN_DELIVERY_STATUS_REFRESH_MS)
+            )
+        }
+    }
+
 }

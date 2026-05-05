@@ -4,7 +4,24 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@drawable/bg_secure_pattern">
+
+    <!-- "[ SECURE ]" header — only visible in biometric-only (passwordless) mode.
+         Mirrors the iOS bracket-style brand label at the top of the lock screen. -->
+    <TextView
+        android:id="@+id/secureLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/bracket_label_secure"
+        android:textColor="#80FFFFFF"
+        android:textSize="22sp"
+        android:fontFamily="@font/space_grotesk_medium"
+        android:letterSpacing="0.4"
+        android:layout_marginTop="60dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Logo at top -->
     <ImageView
@@ -109,22 +126,45 @@
             android:focusable="true"
             android:layout_marginBottom="24dp" />
 
-        <!-- Biometric Authentication Button -->
-        <ImageView
-            android:id="@+id/biometricButton"
-            android:layout_width="80dp"
-            android:layout_height="80dp"
-            android:layout_gravity="center_horizontal"
-            android:src="@drawable/ic_fingerprint"
-            android:scaleType="fitCenter"
-            android:alpha="0.3"
-            android:clickable="true"
-            android:focusable="true"
-            android:visibility="gone"
-            android:contentDescription="Unlock with biometric"
-            android:layout_marginTop="8dp" />
-
     </LinearLayout>
+
+    <!-- Biometric Authentication Button — sibling of passwordSection, NOT a child.
+         Lives at the ConstraintLayout root so it stays visible in passwordless
+         mode (where passwordSection is hidden). Without this separation, a
+         biometric cancel/fail would leave the user with no retry surface and
+         force-close as the only option. -->
+    <ImageView
+        android:id="@+id/biometricButton"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:src="@drawable/ic_fingerprint"
+        android:scaleType="fitCenter"
+        android:alpha="0.6"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        android:contentDescription="Unlock with biometric"
+        app:layout_constraintBottom_toTopOf="@id/loginLabel"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="6dp" />
+
+    <!-- "[ LOGIN ]" label — sits directly under the fingerprint icon.
+         Only visible in biometric-only (passwordless) mode. -->
+    <TextView
+        android:id="@+id/loginLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/bracket_label_login"
+        android:textColor="#80FFFFFF"
+        android:textSize="14sp"
+        android:fontFamily="@font/space_grotesk_medium"
+        android:letterSpacing="0.4"
+        android:layout_marginBottom="48dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/forgotPasswordText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Forgot Password / Import Recovery -->
     <TextView

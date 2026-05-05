@@ -1356,7 +1356,17 @@ class KeyManager private constructor(context: Context) {
             putString(DEVICE_PASSWORD_SALT_ALIAS, bytesToHex(salt))
         }
 
-        Log.i(TAG, "Device password set successfully (Argon2id)")
+        // Invalidate any existing biometric blob — it stores the OLD password
+        // encrypted under a Keystore key, which would now decrypt to a value
+        // that fails verifyDevicePassword(). Re-enable biometric in Settings
+        // to bind it to the new password. (Idempotent if biometric not set up.)
+        try {
+            com.securelegion.utils.BiometricAuthHelper(appContext).disableBiometric()
+        } catch (e: Throwable) {
+            Log.w(TAG, "setDevicePassword: failed to invalidate stale biometric blob (non-fatal)", e)
+        }
+
+        Log.i(TAG, "Device password set successfully (Argon2id) — biometric blob cleared")
     }
 
     /**

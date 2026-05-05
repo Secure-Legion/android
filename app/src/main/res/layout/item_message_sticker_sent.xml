@@ -24,28 +24,41 @@
         android:orientation="horizontal"
         android:gravity="end">
 
-        <com.airbnb.lottie.LottieAnimationView
-            android:id="@+id/stickerAnimation"
-            android:layout_width="160dp"
-            android:layout_height="160dp"
-            app:lottie_autoPlay="true"
-            app:lottie_loop="true" />
+        <!-- Sticker + delivery status, stacked vertically. Status sits BELOW
+             the sticker, right-aligned (consistent with text/image/voice bubbles). -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
 
-        <ImageView
-            android:id="@+id/gifImage"
-            android:layout_width="160dp"
-            android:layout_height="160dp"
-            android:scaleType="fitCenter"
-            android:visibility="gone" />
+            <com.airbnb.lottie.LottieAnimationView
+                android:id="@+id/stickerAnimation"
+                android:layout_width="160dp"
+                android:layout_height="160dp"
+                app:lottie_autoPlay="true"
+                app:lottie_loop="true" />
 
-        <ImageView
-            android:id="@+id/messageStatus"
-            android:layout_width="12dp"
-            android:layout_height="12dp"
-            android:src="@drawable/status_pending"
-            android:layout_gravity="bottom"
-            android:layout_marginStart="2dp"
-            android:layout_marginBottom="4dp" />
+            <ImageView
+                android:id="@+id/gifImage"
+                android:layout_width="160dp"
+                android:layout_height="160dp"
+                android:scaleType="fitCenter"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/messageStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:layout_marginTop="3dp"
+                android:layout_marginEnd="2dp"
+                android:text="@string/message_status_pending"
+                android:textSize="10sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:fontFamily="@font/poppins_medium"
+                android:contentDescription="Message status" />
+
+        </LinearLayout>
 
         <TextView
             android:id="@+id/swipeRevealedTime"

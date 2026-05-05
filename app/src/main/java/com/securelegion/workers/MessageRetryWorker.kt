@@ -37,6 +37,8 @@ class MessageRetryWorker(
         private const val WORK_NAME = "message_retry_work"
         private const val REPEAT_INTERVAL_MINUTES = 3L // Retry every 3 minutes (was 15)
         private const val RECEIVED_IDS_TTL_MS = 30L * 24 * 60 * 60 * 1000 // 30 days
+        private const val ACK_TIMEOUT_MS = 2 * 60 * 1000L
+        private const val FAST_ACK_TIMEOUT_MS = 30 * 1000L
 
         /**
          * Periodic background retry (long-term recovery)
@@ -95,6 +97,11 @@ class MessageRetryWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
+            if (TorService.isTransportQuarantined()) {
+                val remainingMs = TorService.getTransportQuarantineRemainingMs()
+                Log.w(TAG, "MessageRetryWorker: transport quarantine active (${remainingMs}ms remaining) - skipping run")
+                return@withContext Result.success()
+            }
             // Wait for transport gate (quick timeout — worker runs periodically, will retry next cycle)
             Log.d(TAG, "Message retry: waiting for transport gate to open...")
             TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
@@ -216,15 +223,26 @@ class MessageRetryWorker(
             Log.i(TAG, "Tor healthy: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}, proceeding with retries")
         }
 
+        val falseDeliveredCutoff = now - 5_000L
+        val unstuckFalseDelivered = database.messageDao().unstickFalseDeliveredMessages(falseDeliveredCutoff)
+        if (unstuckFalseDelivered > 0) {
+            Log.w(TAG, "Recovered $unstuckFalseDelivered false-delivered message(s) back to retryable state")
+        }
+
         // Revert STATUS_SENT messages that never received MESSAGE_ACK after 2 minutes.
         // Over Tor, a successful write_all() doesn't guarantee delivery — the circuit can
         // drop after send but before the receiver processes the data.
-        val ackTimeoutMs = 2 * 60 * 1000L
-        val cutoff = now - ackTimeoutMs
+        val cutoff = now - ACK_TIMEOUT_MS
         val reverted = database.messageDao().revertStaleSentMessages(cutoff)
         if (reverted > 0) {
             Log.i(TAG, "Reverted $reverted stale SENT messages to PONG_RECEIVED for re-send")
         }
+
+        val phaseResult = messageService.retryAllPendingMessages(reason = "worker-periodic")
+        if (phaseResult.isSuccess) {
+            return@withContext phaseResult.getOrNull() ?: 0
+        }
+        Log.w(TAG, "Phase-aware worker retry failed, falling back to legacy worker loop: ${phaseResult.exceptionOrNull()?.message}")
 
         // HARD GATE:
         // - Message not fully delivered
@@ -262,6 +280,15 @@ class MessageRetryWorker(
             val dbStatus = message.status
 
             Log.d(TAG, "Retrying message ${message.messageId} (dbStatus=$dbStatus, retryCount=${message.retryCount})")
+
+            if (dbStatus == com.securelegion.database.entities.Message.STATUS_SENT) {
+                val recovered = recoverStaleSentMessage(database, messageService, message, now)
+                if (recovered) {
+                    retriedCount++
+                    Log.d(TAG, "Recovered stale STATUS_SENT for ${message.messageId}")
+                    continue
+                }
+            }
 
             val success = try {
                 when (dbStatus) {
@@ -334,13 +361,13 @@ class MessageRetryWorker(
 
             val now = System.currentTimeMillis()
 
-            // Gate contact retries the same way as periodic retries to avoid failure churn.
-            val torUnavailable = TorHealthHelper.isTorUnavailable(applicationContext)
+            // Gate contact retries the same way as periodic retries to avoid failure churn,
+            // but do not let a stale cached health snapshot block live-good Tor.
             val bootstrapPercent = com.securelegion.crypto.RustBridge.getBootstrapStatus()
             val circuitsEstablished = com.securelegion.crypto.RustBridge.getCircuitEstablished()
-            if (torUnavailable) {
-                val status = TorHealthHelper.getStatusString(applicationContext)
-                Log.w(TAG, "Tor unavailable ($status), skipping contact retry for $contactId")
+            val torUnavailable = TorHealthHelper.isTorUnavailable(applicationContext)
+            if (bootstrapPercent < 100) {
+                Log.w(TAG, "Contact retry for $contactId: Tor bootstrapping (${bootstrapPercent}%)")
                 return@withContext 0
             }
             if (circuitsEstablished < 1) {
@@ -355,6 +382,33 @@ class MessageRetryWorker(
                     fastRetry
                 )
                 return@withContext 0
+            }
+            if (torUnavailable) {
+                val status = TorHealthHelper.getStatusString(applicationContext)
+                Log.w(TAG, "Tor health snapshot unavailable ($status) but live checks OK; proceeding with contact retry for $contactId")
+            }
+
+            val falseDeliveredCutoff = now - 5_000L
+            val unstuckFalseDelivered = database.messageDao().unstickFalseDeliveredMessages(falseDeliveredCutoff)
+            if (unstuckFalseDelivered > 0) {
+                Log.w(TAG, "Contact retry: recovered $unstuckFalseDelivered false-delivered message(s) back to retryable state")
+            }
+
+            val cutoff = now - ACK_TIMEOUT_MS
+            val reverted = database.messageDao().revertStaleSentMessages(cutoff)
+            if (reverted > 0) {
+                Log.i(TAG, "Contact retry: reverted $reverted stale SENT messages to PONG_RECEIVED for re-send")
+            }
+
+            val fastFlushResult = messageService.fastFlushForContact(contactId, "worker-contact")
+            if (fastFlushResult.isSuccess) {
+                val flushed = fastFlushResult.getOrNull() ?: 0
+                if (flushed > 0) {
+                    return@withContext flushed
+                }
+                Log.d(TAG, "Contact fast flush found no stored payload rows; falling back to legacy contact loop")
+            } else {
+                Log.w(TAG, "Contact fast flush failed, falling back to legacy contact loop: ${fastFlushResult.exceptionOrNull()?.message}")
             }
 
             val messages = database.messageDao().getMessagesNeedingRetry(
@@ -386,6 +440,15 @@ class MessageRetryWorker(
                 val dbStatus = message.status
 
                 Log.d(TAG, "Retrying message ${message.messageId} for contact $contactId (dbStatus=$dbStatus, retryCount=${message.retryCount})")
+
+                if (dbStatus == com.securelegion.database.entities.Message.STATUS_SENT) {
+                    val recovered = recoverStaleSentMessage(database, messageService, message, now)
+                    if (recovered) {
+                        retriedCount++
+                        Log.d(TAG, "Recovered stale STATUS_SENT for ${message.messageId} via contact retry")
+                        continue
+                    }
+                }
 
                 val success = try {
                     when (dbStatus) {
@@ -433,6 +496,45 @@ class MessageRetryWorker(
 
             retriedCount
         }
+
+    /**
+     * Recover a stale STATUS_SENT row by reopening blob-send once the ACK timeout has elapsed.
+     * This mirrors TorService fast-retry behavior so WorkManager can rescue undelivered rows
+     * even when the service-side loop is not the one that notices them first.
+     */
+    private suspend fun recoverStaleSentMessage(
+        database: SecureLegionDatabase,
+        messageService: MessageService,
+        message: com.securelegion.database.entities.Message,
+        now: Long
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (message.messageDelivered) {
+            return@withContext false
+        }
+
+        val ageMs = now - message.timestamp
+        val isFastMode = message.correlationId?.startsWith("blob_") == true
+        val timeoutMs = if (isFastMode) FAST_ACK_TIMEOUT_MS else ACK_TIMEOUT_MS
+        if (ageMs < timeoutMs) {
+            return@withContext false
+        }
+
+        database.messageDao().updateMessageStatus(
+            message.id,
+            com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED
+        )
+        database.messageDao().updateLastError(
+            message.id,
+            "MESSAGE_ACK timeout after ${ageMs / 1000}s; reopening blob send"
+        )
+        Log.i(
+            TAG,
+            "Recovered stale STATUS_SENT (${ageMs / 1000}s, fastMode=$isFastMode) for ${message.messageId}"
+        )
+
+        messageService.sendPendingMessagesForContact(message.contactId)
+        true
+    }
 
     /**
      * Calculate next retry time with exponential backoff

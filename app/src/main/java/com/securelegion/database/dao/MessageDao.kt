@@ -244,6 +244,9 @@ interface MessageDao {
     @Query("UPDATE messages SET retryCount = :retryCount, lastRetryTimestamp = :lastRetryTimestamp, nextRetryAtMs = :nextRetryAtMs WHERE id = :messageId")
     suspend fun updateRetrySchedule(messageId: Long, retryCount: Int, lastRetryTimestamp: Long, nextRetryAtMs: Long)
 
+    @Query("UPDATE messages SET lastRetryTimestamp = :lastRetryTimestamp, nextRetryAtMs = :nextRetryAtMs WHERE id = :messageId")
+    suspend fun stampRetryCooldown(messageId: Long, lastRetryTimestamp: Long, nextRetryAtMs: Long)
+
     /**
      * Update retry fields with next retry time and error (for MessageRetryWorker)
      * CRITICAL: Partial update to avoid overwriting delivery status with stale data
@@ -261,6 +264,16 @@ interface MessageDao {
      */
     @Query("UPDATE messages SET nextRetryAtMs = NULL WHERE isSentByMe = 1 AND status NOT IN (2, 3) AND messageDelivered = 0")
     suspend fun resetAllRetryBackoffs(): Int
+
+    @Query("""
+        UPDATE messages
+        SET nextRetryAtMs = NULL
+        WHERE contactId = :contactId
+          AND isSentByMe = 1
+          AND status NOT IN (${Message.STATUS_DELIVERED}, ${Message.STATUS_READ}, ${Message.STATUS_EXPIRED})
+          AND messageDelivered = 0
+    """)
+    suspend fun resetRetryBackoffsForContact(contactId: Long): Int
 
     /**
      * Transition STATUS_SENT messages back to STATUS_PONG_RECEIVED if MESSAGE_ACK
@@ -351,6 +364,54 @@ interface MessageDao {
      */
     @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_SENT} AND messageDelivered = 0 AND correlationId LIKE 'blob_%' AND timestamp < :cutoffMs ORDER BY timestamp ASC")
     suspend fun getFastModePendingAck(cutoffMs: Long): List<Message>
+
+    /**
+     * Stored-payload retry candidates for the iOS-style fast flush phase.
+     * Covers all outbound non-terminal states that can be resent directly
+     * with their original encrypted payload and stable pingId.
+     */
+    @Query("""
+        SELECT $LITE_COLS FROM messages
+        WHERE isSentByMe = 1
+          AND messageDelivered = 0
+          AND pingId IS NOT NULL
+          AND encryptedPayload IS NOT NULL
+          AND status IN (
+              ${Message.STATUS_PENDING},
+              ${Message.STATUS_SENT},
+              ${Message.STATUS_FAILED},
+              ${Message.STATUS_PING_SENT},
+              ${Message.STATUS_PONG_RECEIVED}
+          )
+          AND timestamp <= :cutoffMs
+        ORDER BY timestamp ASC
+        LIMIT :limit
+    """)
+    suspend fun getStoredPayloadFastRetryCandidates(cutoffMs: Long, limit: Int): List<Message>
+
+    @Query("""
+        SELECT $LITE_COLS FROM messages
+        WHERE contactId = :contactId
+          AND isSentByMe = 1
+          AND messageDelivered = 0
+          AND pingId IS NOT NULL
+          AND encryptedPayload IS NOT NULL
+          AND status IN (
+              ${Message.STATUS_PENDING},
+              ${Message.STATUS_SENT},
+              ${Message.STATUS_FAILED},
+              ${Message.STATUS_PING_SENT},
+              ${Message.STATUS_PONG_RECEIVED}
+          )
+          AND timestamp <= :cutoffMs
+        ORDER BY timestamp ASC
+        LIMIT :limit
+    """)
+    suspend fun getStoredPayloadFastRetryCandidatesForContact(
+        contactId: Long,
+        cutoffMs: Long,
+        limit: Int
+    ): List<Message>
 
     /**
      * Get messages ready for blob send (STATUS_PONG_RECEIVED or STATUS_FAILED, sent by us)
@@ -490,10 +551,40 @@ interface MessageDao {
     suspend fun unstickStaleSentMessages(staleCutoffMs: Long): Int
 
     /**
+     * Recover rows that were marked DELIVERED/READ without a MESSAGE_ACK.
+     *
+     * This is the false-delivered state: retry queries exclude status 2/3, but
+     * messageDelivered=0 means the receiver never actually ACKed the message.
+     */
+    @Query("""
+        UPDATE messages
+        SET status = CASE
+                WHEN pingId IS NOT NULL THEN ${Message.STATUS_PING_SENT}
+                ELSE ${Message.STATUS_PENDING}
+            END,
+            nextRetryAtMs = NULL,
+            lastError = 'Recovered false delivered state without MESSAGE_ACK'
+        WHERE isSentByMe = 1
+          AND status IN (${Message.STATUS_DELIVERED}, ${Message.STATUS_READ})
+          AND messageDelivered = 0
+          AND timestamp < :staleCutoffMs
+    """)
+    suspend fun unstickFalseDeliveredMessages(staleCutoffMs: Long): Int
+
+    /**
      * Mark PING as delivered when PING_ACK is successfully sent
      * Updates the message status to reflect ACK confirmation
      */
-    @Query("UPDATE messages SET status = 2 WHERE pingId = :pingId")
+    @Query("""
+        UPDATE messages
+        SET pingDelivered = 1,
+            status = CASE
+                WHEN status IN (${Message.STATUS_DELIVERED}, ${Message.STATUS_READ}, ${Message.STATUS_PONG_RECEIVED}, ${Message.STATUS_SENT})
+                    THEN status
+                ELSE ${Message.STATUS_PING_SENT}
+            END
+        WHERE pingId = :pingId
+    """)
     suspend fun markPingDelivered(pingId: String)
 
     // ==================== CURSORWINDOW-SAFE HELPERS ====================

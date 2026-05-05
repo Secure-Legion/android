@@ -1018,6 +1018,7 @@ class MainActivity : BaseActivity() {
 
                             val messageStatus = if (lastMessage != null && lastMessage.isSentByMe) lastMessage.status else 0
                             val isSent = lastMessage?.isSentByMe ?: false
+                            val messageTimestamp = lastMessage?.timestamp ?: 0L
                             val pingDelivered = lastMessage?.pingDelivered ?: false
                             val messageDelivered = lastMessage?.messageDelivered ?: false
 
@@ -1047,6 +1048,7 @@ class MainActivity : BaseActivity() {
                                 securityBadge = "",
                                 lastMessageStatus = messageStatus,
                                 lastMessageIsSent = isSent,
+                                lastMessageTimestamp = messageTimestamp,
                                 lastMessagePingDelivered = pingDelivered,
                                 lastMessageMessageDelivered = messageDelivered,
                                 isPinned = contact.isPinned,
@@ -1869,12 +1871,24 @@ class MainActivity : BaseActivity() {
         val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
 
         val requests = mutableListOf<com.securelegion.models.PendingFriendRequest>()
+        var removedUndecryptedPlaceholder = false
         for (json in pendingRequestsSet) {
             try {
-                requests.add(com.securelegion.models.PendingFriendRequest.fromJson(json))
+                val request = com.securelegion.models.PendingFriendRequest.fromJson(json)
+                if (request.isUndecryptedPlaceholder()) {
+                    removedUndecryptedPlaceholder = true
+                } else {
+                    requests.add(request)
+                }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to parse friend request", e)
             }
+        }
+        if (removedUndecryptedPlaceholder) {
+            prefs.edit()
+                .putStringSet("pending_requests_v2", requests.map { it.toJson() }.toMutableSet())
+                .apply()
+            Log.i("MainActivity", "Removed stale undecrypted placeholder friend request(s)")
         }
 
         if (requests.isEmpty()) {

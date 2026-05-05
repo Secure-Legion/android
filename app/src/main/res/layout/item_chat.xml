@@ -186,49 +186,56 @@
                     android:textColor="@color/text_primary"
                     android:fontFamily="@font/space_grotesk_bold" />
 
-                <!-- Time and Status Column -->
-                <LinearLayout
+                <!-- Time only (status moved inline with the preview below) -->
+                <TextView
+                    android:id="@+id/chatTime"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:gravity="end"
-                    android:layout_marginStart="8dp">
-
-                    <TextView
-                        android:id="@+id/chatTime"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="1m ago"
-                        android:textSize="13sp"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:fontFamily="@font/poppins_regular" />
-
-                    <!-- Message status indicator -->
-                    <ImageView
-                        android:id="@+id/chatMessageStatus"
-                        android:layout_width="12dp"
-                        android:layout_height="12dp"
-                        android:src="@drawable/status_pending"
-                        android:layout_marginTop="4dp"
-                        android:contentDescription="Message status"
-                        android:visibility="visible" />
-
-                </LinearLayout>
+                    android:layout_marginStart="8dp"
+                    android:text="1m ago"
+                    android:textSize="13sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="@font/poppins_regular" />
 
             </LinearLayout>
 
-            <!-- Message Preview -->
-            <TextView
-                android:id="@+id/chatMessage"
+            <!-- Preview row: message text on the left, delivery status on the right
+                 (under the time). Both share the same baseline / row. -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="What's good? How are you."
-                android:textSize="14sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_regular"
-                android:maxLines="1"
-                android:ellipsize="end" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="4dp">
+
+                <TextView
+                    android:id="@+id/chatMessage"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="What's good? How are you."
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="@font/poppins_regular"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+                <!-- Message status label, right-aligned under the time. Adapter
+                     toggles visibility based on lastMessageIsSent (received
+                     messages hide it cleanly via GONE). -->
+                <TextView
+                    android:id="@+id/chatMessageStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/message_status_pending"
+                    android:textSize="11sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="@font/poppins_medium"
+                    android:contentDescription="Message status"
+                    android:visibility="visible" />
+
+            </LinearLayout>
 
         </LinearLayout>
 

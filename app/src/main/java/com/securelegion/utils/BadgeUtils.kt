@@ -55,7 +55,8 @@ object BadgeUtils {
                 // Only count INCOMING pending requests (waiting for user action)
                 // Outgoing requests don't need user action - they're just in flight
                 req.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING &&
-                    req.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING
+                    req.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING &&
+                    !req.isUndecryptedPlaceholder()
             } catch (e: Exception) { false }
         }
     }

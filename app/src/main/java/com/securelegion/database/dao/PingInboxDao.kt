@@ -199,6 +199,23 @@ interface PingInboxDao {
     suspend fun claimForAutoDownload(pingId: String, now: Long): Int
 
     /**
+     * Claim or reclaim a ping for automatic download from any non-terminal
+     * state where the receiver still owes the sender a PONG.
+     *
+     * Used when duplicate PINGs prove the first auto-download start was missed
+     * or the PONG/MESSAGE exchange got stuck.
+     */
+    @Query("""
+        UPDATE ping_inbox
+        SET state = ${PingInbox.STATE_DOWNLOAD_QUEUED},
+            downloadQueuedAt = :now,
+            lastUpdatedAt = :now
+        WHERE pingId = :pingId
+        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_FAILED_TEMP}, ${PingInbox.STATE_MANUAL_REQUIRED}, ${PingInbox.STATE_PONG_SENT})
+    """)
+    suspend fun claimForAutoDownloadRetry(pingId: String, now: Long): Int
+
+    /**
      * Reclaim a FAILED_TEMP ping for retry
      * Returns 1 if reclaimed, 0 if state changed since check
      * Resets downloadQueuedAt for fresh watchdog window

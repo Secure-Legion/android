@@ -11,6 +11,7 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.models.TorFailureType
 import com.securelegion.models.TorHealthSnapshot
 import com.securelegion.models.TorHealthStatus
+import com.securelegion.services.MessageService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.net.ConnectivityManager
@@ -103,8 +104,10 @@ class TorHealthMonitorWorker(
     override suspend fun doWork(): Result {
         return withContext(Dispatchers.IO) {
             try {
+                val previousSnapshot = getTorHealthSnapshot()
                 val snapshot = checkTorHealth()
                 saveTorHealthSnapshot(snapshot)
+                flushMessagesIfRecovered(previousSnapshot, snapshot)
                 scheduleNextCheck(applicationContext)
 
                 Log.i(TAG, "Health check complete: ${snapshot.status} (failCount=${snapshot.failCount}, error=${snapshot.lastError.take(50)})")
@@ -113,6 +116,30 @@ class TorHealthMonitorWorker(
                 Log.e(TAG, "Health check failed: ${e.message}", e)
                 Result.retry()
             }
+        }
+    }
+
+    private suspend fun flushMessagesIfRecovered(
+        previous: TorHealthSnapshot,
+        current: TorHealthSnapshot
+    ) {
+        val recovered = current.status == TorHealthStatus.HEALTHY &&
+            previous.status != TorHealthStatus.HEALTHY
+        if (!recovered) {
+            return
+        }
+
+        try {
+            Log.i(TAG, "Tor health recovered ${previous.status} -> ${current.status}; flushing messages aggressively")
+            val result = MessageService(applicationContext)
+                .flushNow(aggressive = true, reason = "health_snapshot_recovered")
+            if (result.isSuccess) {
+                Log.i(TAG, "Health recovery aggressive flush sent=${result.getOrNull() ?: 0}")
+            } else {
+                Log.w(TAG, "Health recovery aggressive flush failed: ${result.exceptionOrNull()?.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Health recovery aggressive flush threw", e)
         }
     }
 

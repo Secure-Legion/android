@@ -98,10 +98,12 @@ class LockActivity : AppCompatActivity() {
         setupForgotPasswordText()
 
         // If user has no custom password (passwordless account with biometric only),
-        // hide password input and auto-prompt biometric
+        // hide password input + show iOS-style biometric layout: [SECURE] + fingerprint + [LOGIN]
         if (!keyManager.hasUserDefinedPassword()) {
             passwordSection.visibility = View.GONE
             findViewById<View>(R.id.unlockButton)?.visibility = View.GONE
+            findViewById<View>(R.id.secureLabel)?.visibility = View.VISIBLE
+            findViewById<View>(R.id.loginLabel)?.visibility = View.VISIBLE
             // Auto-prompt biometric if available
             if (biometricHelper.isBiometricEnabled()) {
                 authenticateWithBiometric()
