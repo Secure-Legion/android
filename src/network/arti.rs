@@ -38,7 +38,7 @@ use crate::network::tor::{
     MSG_TYPE_DELIVERY_CONFIRMATION, MSG_TYPE_FRIEND_REQUEST, MSG_TYPE_FRIEND_REQUEST_ACCEPTED,
     MSG_TYPE_IMAGE, MSG_TYPE_PAYMENT_REQUEST, MSG_TYPE_PAYMENT_SENT, MSG_TYPE_PAYMENT_ACCEPTED,
     MSG_TYPE_CALL_SIGNALING, MSG_TYPE_STICKER, MSG_TYPE_PROFILE_UPDATE, MSG_TYPE_REACTION,
-    MSG_TYPE_CRDT_OPS, MSG_TYPE_SYNC_REQUEST, MSG_TYPE_SYNC_CHUNK,
+    MSG_TYPE_CRDT_OPS, MSG_TYPE_SYNC_HELLO, MSG_TYPE_SYNC_REQUEST, MSG_TYPE_SYNC_CHUNK, MSG_TYPE_SYNC_ACK,
     MSG_TYPE_ROUTING_UPDATE, MSG_TYPE_ROUTING_REQUEST,
     MSG_TYPE_CONTACT_LIST_REQUEST, MSG_TYPE_CONTACT_LIST_RESPONSE, MSG_TYPE_CONTACT_LIST_PUSH,
 };
@@ -89,6 +89,11 @@ pub fn cleanup_stale_streams() {
 /// Android may kill the service while the process survives — ARTI_CLIENT must be clearable
 /// so initialize_arti() can create a fresh client with live circuits.
 static ARTI_CLIENT: StdMutex<Option<Arc<TorClient<PreferredRuntime>>>> = StdMutex::new(None);
+
+/// Serializes Arti initialization. Without this, a second initialize call can see
+/// ARTI_CLIENT while the first call is finishing and tear down the fresh HS.
+static ARTI_INIT_MUTEX: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
 
 /// Stored tokio runtime handle — captured during initialize_arti() (which runs inside
 /// GLOBAL_RUNTIME.block_on()). Used by sync JNI functions that need to spawn async tasks
@@ -195,10 +200,18 @@ where
 ///
 /// After this returns, the client is fully bootstrapped and ready for connections.
 pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let _init_guard = ARTI_INIT_MUTEX.lock().await;
+
     {
         let guard = lock_recover(&ARTI_CLIENT);
         if guard.is_some() {
-            log::warn!("Arti already initialized — forcing shutdown + re-init");
+            if BOOTSTRAP_STATUS.load(Ordering::SeqCst) >= 100 {
+                log::info!("Arti already initialized and bootstrapped — reusing existing client");
+                drop(guard);
+                return Ok(());
+            }
+
+            log::warn!("Arti client exists but is not bootstrapped — forcing shutdown + re-init");
             drop(guard);
             shutdown_arti();
         } else {
@@ -299,6 +312,8 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
         log::error!("Arti bootstrap failed: {}", e);
         progress_done.store(true, Ordering::SeqCst);
         BOOTSTRAP_STATUS.store(0, Ordering::SeqCst);
+        let mut guard = lock_recover(&ARTI_CLIENT);
+        *guard = None;
         format!("Arti bootstrap failed: {}", e)
     })?;
 
@@ -360,6 +375,10 @@ pub fn get_hs_publisher_status() -> String {
 static BOOTSTRAP_LISTENER_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+pub fn is_bootstrap_listener_running() -> bool {
+    BOOTSTRAP_LISTENER_RUNNING.load(Ordering::SeqCst)
+}
+
 pub fn start_bootstrap_listener() {
     if BOOTSTRAP_LISTENER_RUNNING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -384,11 +403,11 @@ pub fn start_bootstrap_listener() {
                 break;
             }
 
-            // If Arti client exists, we're bootstrapped
-            if lock_recover(&ARTI_CLIENT).is_some() {
-                BOOTSTRAP_STATUS.store(100, Ordering::SeqCst);
-                CIRCUIT_ESTABLISHED.store(1, Ordering::SeqCst);
-
+            // Truthful readiness only: never convert "client exists" into
+            // "bootstrapped". initialize_arti() sets BOOTSTRAP_STATUS=100 after
+            // bootstrap().await completes. This listener is only a heartbeat/compat
+            // shim for Kotlin now.
+            if is_arti_ready() {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -620,6 +639,7 @@ pub async fn arti_connect_to_onion(
             Err(e) => {
                 last_err = e.to_string();
                 let detailed = format_arti_error_chain(&e);
+                record_guard_failure_if_poisoned(&detailed);
                 log::warn!("Arti connect to {}:{} attempt {}/{} failed: {} | chain: {}",
                     onion_address, port, attempt + 1, MAX_RETRIES, last_err, detailed);
 
@@ -672,6 +692,47 @@ pub async fn arti_connect_to_onion(
     Err(format!("Arti connect failed: {}", last_err).into())
 }
 
+/// Lightweight outbound connect/close probe used before risky sends to a peer
+/// that has been failing repeatedly. Mirrors iOS `securelegion_arti_preflight_connect`.
+///
+/// Performs a single `client.connect()` on the peer's `.onion`, drops the resulting
+/// stream immediately, and returns latency on success. Used by the Kotlin retry/send
+/// path to gate full sends behind a cheap connectivity test — saves the cost of a
+/// full PING+PONG+ACK exchange when the circuit graph to that peer is currently dead.
+///
+/// Returns:
+/// - `Ok(latency_ms)` — connect succeeded within `timeout_ms`
+/// - `Err("not_ready")` — Arti not bootstrapped
+/// - `Err("timeout")` — connect did not complete within `timeout_ms`
+/// - `Err(other)` — connect failed; string is `format_arti_error_chain` output
+pub async fn arti_preflight_connect(
+    onion_address: &str,
+    port: u16,
+    timeout_ms: u32,
+) -> Result<u32, String> {
+    if !is_arti_ready() {
+        return Err("not_ready".to_string());
+    }
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_millis(timeout_ms.max(1) as u64),
+        arti_connect_to_onion(onion_address, port),
+    )
+    .await;
+    match result {
+        Ok(Ok(_stream)) => {
+            // Drop the ArtiStream → closes the underlying DataStream cleanly.
+            let elapsed = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+            Ok(elapsed)
+        }
+        Ok(Err(e)) => {
+            let chain = format_arti_error_chain(&*e);
+            Err(chain)
+        }
+        Err(_) => Err("timeout".to_string()),
+    }
+}
+
 /// Format an Arti error and its full source chain for diagnostic logs.
 ///
 /// Walks `std::error::Error::source()` to expose nested errors, and includes
@@ -701,6 +762,184 @@ fn format_arti_error_chain<E: std::error::Error + ?Sized>(err: &E) -> String {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Guard-poison auto-recovery state
+// ---------------------------------------------------------------------------
+//
+// Tracks recent local-poison (`AllGuardsDown`) failures. After 3 in 60s and
+// 180s since last reset, `should_auto_reset_guards()` returns true. Kotlin's
+// TorService health monitor polls this on every tick.
+
+static LAST_GUARD_RESET_AT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RECENT_POISON_FAILURES: Lazy<StdMutex<std::collections::VecDeque<u64>>> =
+    Lazy::new(|| StdMutex::new(std::collections::VecDeque::new()));
+
+const POISON_WINDOW_MS: u64 = 60_000;
+const POISON_THRESHOLD: usize = 3;
+const RESET_COOLDOWN_MS: u64 = 180_000;
+
+/// Append a poison-failure timestamp if the error text matches local guard
+/// state poisoning. Pruned to the last `POISON_WINDOW_MS` ms on every call.
+pub fn record_guard_failure_if_poisoned(error_text: &str) {
+    if !is_arti_guard_state_poisoned(error_text) {
+        return;
+    }
+    let now = now_ms();
+    let mut q = RECENT_POISON_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+    while let Some(&front) = q.front() {
+        if now.saturating_sub(front) > POISON_WINDOW_MS {
+            q.pop_front();
+        } else {
+            break;
+        }
+    }
+    q.push_back(now);
+    log::warn!(
+        "Arti guard poison detected: {} failures in last {}s",
+        q.len(),
+        POISON_WINDOW_MS / 1000
+    );
+}
+
+/// True when poison failures cross threshold AND cooldown has elapsed.
+pub fn should_auto_reset_guards() -> bool {
+    let now = now_ms();
+    let last = LAST_GUARD_RESET_AT_MS.load(std::sync::atomic::Ordering::SeqCst);
+    if now.saturating_sub(last) < RESET_COOLDOWN_MS {
+        return false;
+    }
+    let q = RECENT_POISON_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+    let recent = q
+        .iter()
+        .filter(|&&t| now.saturating_sub(t) <= POISON_WINDOW_MS)
+        .count();
+    recent >= POISON_THRESHOLD
+}
+
+/// Mark a reset as completed: stamps the cooldown and clears recent failures.
+pub fn mark_guard_reset_done() {
+    LAST_GUARD_RESET_AT_MS.store(now_ms(), std::sync::atomic::Ordering::SeqCst);
+    let mut q = RECENT_POISON_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+    q.clear();
+    log::info!("Arti guard reset cooldown started");
+}
+
+/// Detects whether an Arti error string indicates locally-poisoned guard or
+/// circuit-timeout state (vs. a normal peer-offline / descriptor-miss).
+///
+/// Triggers ONLY on hard local-state markers — not generic "not found" errors,
+/// which are usually a peer that is offline or whose HSDir descriptor expired.
+/// Used by Kotlin to escalate from NEWNYM to a full guard reset after repeated
+/// failures. See ARTI_GUARD_STATE_RESET_HANDOFF_ANDROID.md.
+pub fn is_arti_guard_state_poisoned(error: &str) -> bool {
+    let text = error.to_ascii_lowercase();
+    text.contains("allguardsdown")
+        || text.contains("no usable guards")
+        || text.contains("rejected 60/60")
+        || text.contains("circuit_timeouts.json")
+}
+
+/// Result of `reset_arti_guard_state` — callable from Kotlin via JNI summary string.
+#[derive(Debug, Default)]
+pub struct ArtiResetSummary {
+    pub state_files_removed: Vec<String>,
+    pub state_files_failed: Vec<(String, String)>,
+    pub cache_entries_removed: usize,
+}
+
+/// Reset Arti guard / circuit-timeout / dirmgr state, preserving identity material
+/// (HS keystore, client keys). Caller MUST `shutdown_arti()` before this and
+/// `initialize_arti()` after — this function only touches the on-disk files.
+///
+/// Deletes:
+///   - `arti/state/**/guards*`
+///   - `arti/state/**/circuit_timeouts*`
+///   - `arti/state/**/bridges*`
+///   - `arti/state/**/dirmgr*`
+///   - All entries under `arti/cache/` (regenerable from network)
+///
+/// Preserves:
+///   - `arti/state/keystore/` (hidden-service signing keys — losing these
+///     would change the user's .onion address and orphan all their contacts)
+///
+/// Returns a summary listing files removed / failures.
+pub fn reset_arti_guard_state(data_dir: &str) -> Result<ArtiResetSummary, String> {
+    use std::fs;
+    use std::path::Path;
+
+    let state_dir = format!("{}/arti/state", data_dir);
+    let cache_dir = format!("{}/arti/cache", data_dir);
+    let mut summary = ArtiResetSummary::default();
+
+    fn walk(dir: &std::path::Path, summary: &mut ArtiResetSummary) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("reset: read_dir {} failed: {}", dir.display(), e);
+                return;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                // PRESERVE keystore at any depth — holds HS signing keys
+                if name == "keystore" || name == "client_keys" {
+                    log::info!("reset: preserving keystore subdir at {}", path.display());
+                    continue;
+                }
+                walk(&path, summary);
+                continue;
+            }
+            let lower = name.to_ascii_lowercase();
+            let target = lower.starts_with("guards")
+                || lower.starts_with("circuit_timeouts")
+                || lower.starts_with("bridges")
+                || lower.starts_with("dirmgr");
+            if !target {
+                continue;
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => summary.state_files_removed.push(path.display().to_string()),
+                Err(e) => summary
+                    .state_files_failed
+                    .push((path.display().to_string(), e.to_string())),
+            }
+        }
+    }
+
+    if Path::new(&state_dir).exists() {
+        walk(Path::new(&state_dir), &mut summary);
+    }
+
+    // Cache is fully regenerable — purge everything under it.
+    if Path::new(&cache_dir).exists() {
+        if let Ok(entries) = fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let r = if path.is_dir() {
+                    fs::remove_dir_all(&path)
+                } else {
+                    fs::remove_file(&path)
+                };
+                if r.is_ok() {
+                    summary.cache_entries_removed += 1;
+                }
+            }
+        }
+    }
+
+    log::info!(
+        "Arti guard reset: state_files_removed={} state_files_failed={} cache_entries_removed={}",
+        summary.state_files_removed.len(),
+        summary.state_files_failed.len(),
+        summary.cache_entries_removed
+    );
+
+    mark_guard_reset_done();
+    Ok(summary)
 }
 
 /// Arti stream wrapper — replaces TorConnection (which held a TcpStream from SOCKS5).
@@ -906,7 +1145,7 @@ pub async fn create_onion_service(
     let addr_clone = expected_addr.clone();
     let mut events = running_service.status_events();
     runtime_spawn(async move {
-        let mut proof_set = false;
+        let mut was_running = false;
         loop {
             let Some(svc) = svc_weak.upgrade() else {
                 log::info!("Arti: messaging HS status task exiting for {} (service dropped)", addr_clone);
@@ -919,10 +1158,19 @@ pub async fn create_onion_service(
             // Only set proof when HS is ACTUALLY Running — not just when onion_address exists.
             // onion_address().is_some() is true immediately after launch, which was the old
             // (broken) check that set proof_ok while HS was still Bootstrapping.
-            if !proof_set && state == tor_hsservice::status::State::Running {
+            //
+            // Refresh on every Running sample. Android clears proof on network loss, and Arti
+            // may recover the same RunningOnionService without relaunching this task.
+            if state == tor_hsservice::status::State::Running {
                 super::tor::set_tor_proof_ok();
-                log::info!("Arti: HS RUNNING for {} — set_tor_proof_ok()", addr_clone);
-                proof_set = true;
+                if !was_running {
+                    log::info!("Arti: HS RUNNING for {} — set_tor_proof_ok()", addr_clone);
+                } else {
+                    log::debug!("Arti: HS still Running for {} — refreshed proof", addr_clone);
+                }
+                was_running = true;
+            } else {
+                was_running = false;
             }
 
             // Log degraded/broken states for debugging
@@ -1141,7 +1389,7 @@ async fn handle_arti_incoming(
         MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT |
         MSG_TYPE_PAYMENT_ACCEPTED | MSG_TYPE_CALL_SIGNALING |
         MSG_TYPE_STICKER | MSG_TYPE_PROFILE_UPDATE | MSG_TYPE_REACTION |
-        MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
+        MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_HELLO | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK | MSG_TYPE_SYNC_ACK |
         MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST |
         MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH => {}
         _ => {
@@ -1159,7 +1407,7 @@ async fn handle_arti_incoming(
     );
     let sig_len = if is_signed_type { 64 } else { 0 };
     let min_wire_len: usize = match msg_type {
-        MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
+        MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_HELLO | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK | MSG_TYPE_SYNC_ACK |
         MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32 + sig_len,
         // Contact-list frames: type(1) + sender_pk(32) + timestamp(8) + cid_len(2) + cid(>=1) + sig(64)
         // = 108 minimum (no blob, 1-byte CID). contact_list_sync handles exact validation.
@@ -1212,7 +1460,7 @@ async fn handle_arti_incoming(
         MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE |
         MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED |
         MSG_TYPE_STICKER | MSG_TYPE_PROFILE_UPDATE | MSG_TYPE_REACTION |
-        MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
+        MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_HELLO | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK | MSG_TYPE_SYNC_ACK |
         MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => {
             log::info!("ARTI → MESSAGE handler (type=0x{:02x})", msg_type);
 

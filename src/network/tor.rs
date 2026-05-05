@@ -1027,8 +1027,10 @@ pub const MSG_TYPE_REACTION: u8 = 0x10;       // Emoji reaction (inline processi
 
 // CRDT group wire types (not per-member encrypted — ops are Ed25519-signed, content is XChaCha20 group-secret encrypted)
 pub const MSG_TYPE_CRDT_OPS: u8 = 0x30;       // CRDT op bundle: [groupId:32][packedOps]
+pub const MSG_TYPE_SYNC_HELLO: u8 = 0x31;     // Sync session hello: [groupId:32][SyncFrame::Hello]
 pub const MSG_TYPE_SYNC_REQUEST: u8 = 0x32;    // Sync request: [groupId:32][afterLamport:u64 BE][limit:u32 BE]
 pub const MSG_TYPE_SYNC_CHUNK: u8 = 0x33;      // Sync chunk response: [groupId:32][packedOps]
+pub const MSG_TYPE_SYNC_ACK: u8 = 0x34;        // Sync session ACK/close: [groupId:32][SyncFrame::Ack]
 pub const MSG_TYPE_ROUTING_UPDATE: u8 = 0x35;   // Routing directory: [groupId:32][senderPk:32][sig:64][count:u16 BE][entries...]
 pub const MSG_TYPE_ROUTING_REQUEST: u8 = 0x36;  // Routing request: [groupId:32][senderPk:32][sig:64][requestedPubkey:32]
 
@@ -2315,8 +2317,10 @@ impl TorManager {
             MSG_TYPE_PROFILE_UPDATE |
             MSG_TYPE_REACTION |
             MSG_TYPE_CRDT_OPS |
+            MSG_TYPE_SYNC_HELLO |
             MSG_TYPE_SYNC_REQUEST |
             MSG_TYPE_SYNC_CHUNK |
+            MSG_TYPE_SYNC_ACK |
             MSG_TYPE_ROUTING_UPDATE |
             MSG_TYPE_ROUTING_REQUEST |
             MSG_TYPE_CONTACT_LIST_REQUEST |
@@ -2347,7 +2351,7 @@ impl TorManager {
         );
         let sig_len = if is_signed_type { 64 } else { 0 };
         let min_wire_len: usize = match msg_type {
-            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
+            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_HELLO | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK | MSG_TYPE_SYNC_ACK |
             MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32 + sig_len, // type + X25519 + groupId + sig?
             MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH
                 => 1 + 32 + 8 + 2 + 1 + 64, // header + 1-byte CID + Ed25519 sig
@@ -2420,7 +2424,7 @@ impl TorManager {
                 }
             }
             MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED | MSG_TYPE_PROFILE_UPDATE | MSG_TYPE_REACTION |
-            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
+            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_HELLO | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK | MSG_TYPE_SYNC_ACK |
             MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => {
                 log::info!("→ Routing to MESSAGE handler (separate channel, type={})",
                     match msg_type {
@@ -2433,8 +2437,10 @@ impl TorManager {
                         MSG_TYPE_PROFILE_UPDATE => "PROFILE_UPDATE",
                         MSG_TYPE_REACTION => "REACTION",
                         MSG_TYPE_CRDT_OPS => "CRDT_OPS",
+                        MSG_TYPE_SYNC_HELLO => "SYNC_HELLO",
                         MSG_TYPE_SYNC_REQUEST => "SYNC_REQUEST",
                         MSG_TYPE_SYNC_CHUNK => "SYNC_CHUNK",
+                        MSG_TYPE_SYNC_ACK => "SYNC_ACK",
                         MSG_TYPE_ROUTING_UPDATE => "ROUTING_UPDATE",
                         MSG_TYPE_ROUTING_REQUEST => "ROUTING_REQUEST",
                         _ => "UNKNOWN"
@@ -3087,6 +3093,3 @@ impl TorConnection {
         Ok(data)
     }
 }
-
-
-
