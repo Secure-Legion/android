@@ -545,6 +545,22 @@ where
 pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     let _init_guard = ARTI_INIT_MUTEX.lock().await;
 
+    // Arti 0.44 delegates rustls provider selection to the embedding application.
+    // Without this, TorClient::builder().create_unbootstrapped() panics before
+    // bootstrap on Android because rustls has neither ring nor AWS-LC selected.
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        if rustls::crypto::ring::default_provider()
+            .install_default()
+            .is_ok()
+        {
+            log::info!("Installed rustls ring CryptoProvider for Arti");
+        } else {
+            // Another initializer won the process-global race. If it installed a
+            // provider, that provider is valid for this client too.
+            log::debug!("A process-wide rustls CryptoProvider is already installed");
+        }
+    }
+
     {
         let guard = lock_recover(&ARTI_CLIENT);
         if guard.is_some() {
@@ -616,12 +632,13 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
     // The env vars above are fallbacks; this direct call bypasses env var timing issues.
     config_builder.storage().permissions().dangerously_trust_everyone();
 
-    // Pre-build circuits so HS intro points and outbound connections don't block on lazy construction.
-    // Default is threshold=12, min_exit_circs=2. We raise both to have more circuits ready
-    // for our 2 onion services (each needs 3 intro point circuits) + outbound .onion connections.
-    config_builder.preemptive_circuits()
-        .disable_at_threshold(16)
-        .min_exit_circs_for_port(4);
+    // Preemptive circuits are EXIT circuits, not onion-service intro/rendezvous circuits.
+    // Secure's always-on messaging remains reachable without them; clearnet wallet/price
+    // requests build an exit circuit lazily when the user actually invokes those features.
+    config_builder
+        .preemptive_circuits()
+        .initial_predicted_ports()
+        .clear();
 
     let config = config_builder.build()?;
 
@@ -640,7 +657,8 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
             format!("Arti client creation failed: {}", report)
         })?;
 
-    let client_arc = Arc::new(client);
+    // Arti 0.44 returns its client in an Arc already.
+    let client_arc = client;
 
     // Store client early so is_arti_ready() can check BOOTSTRAP_STATUS separately
     {
@@ -873,11 +891,12 @@ fn capture_circuit_path(
 
     // Timely netdir is preferred; fall back to Unchecked so we still fill in
     // what we can when the consensus is borderline stale.
-    let netdir = client
-        .dirmgr()
-        .netdir(Timeliness::Timely)
-        .or_else(|_| client.dirmgr().netdir(Timeliness::Unchecked))
-        .ok();
+    let netdir = client.dirmgr().ok().and_then(|dirmgr| {
+        dirmgr
+            .netdir(Timeliness::Timely)
+            .or_else(|_| dirmgr.netdir(Timeliness::Unchecked))
+            .ok()
+    });
 
     let mut out: Vec<HopInfo> = Vec::with_capacity(n);
     for (i, entry) in hops.iter().enumerate() {
@@ -959,6 +978,53 @@ pub fn get_current_circuit_info_json() -> String {
 /// We convert it to work with the existing TorConnection struct by wrapping in a
 /// tokio task that bridges Arti's DataStream to a local TCP socket pair.
 pub async fn arti_connect_to_onion(
+    onion_address: &str,
+    port: u16,
+) -> Result<ArtiStream, Box<dyn Error + Send + Sync>> {
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
+    let started = std::time::Instant::now();
+    log::info!(
+        "Arti: connecting to {}:{} (single attempt) status=[{}]",
+        onion_address,
+        port,
+        outbound_diagnostic_snapshot()
+    );
+
+    match client.connect((onion_address, port)).await {
+        Ok(stream) => {
+            log::info!(
+                "Arti: connected to {}:{} in {}ms",
+                onion_address,
+                port,
+                started.elapsed().as_millis()
+            );
+            capture_circuit_path(&stream, &client);
+            Ok(ArtiStream {
+                stream,
+                onion_address: onion_address.to_string(),
+                port,
+            })
+        }
+        Err(error) => {
+            let detailed = format_arti_error_chain(&error);
+            record_guard_failure_if_poisoned(&detailed);
+            log::warn!(
+                "Arti connect to {}:{} failed after {}ms: {} status=[{}]",
+                onion_address,
+                port,
+                started.elapsed().as_millis(),
+                detailed,
+                outbound_diagnostic_snapshot()
+            );
+            Err(format!("Arti connect failed: {}", detailed).into())
+        }
+    }
+}
+
+// Retained temporarily for diagnostic comparison only. No production call site uses nested
+// retries or peer-triggered NEWNYM; retry timing is owned by the Android persistent dispatcher.
+#[allow(dead_code)]
+async fn arti_connect_to_onion_legacy(
     onion_address: &str,
     port: u16,
 ) -> Result<ArtiStream, Box<dyn Error + Send + Sync>> {
@@ -2048,7 +2114,7 @@ pub async fn http_post_via_arti(url: &str, body: &str) -> Result<String, Box<dyn
 pub fn send_newnym() {
     let mut guard = lock_recover(&ARTI_CLIENT);
     if let Some(ref client) = *guard {
-        let isolated = Arc::new(client.isolated_client());
+        let isolated = client.isolated_client();
         *guard = Some(isolated);
         log::info!("Arti: NEWNYM — swapped to isolated client (fresh circuits for new connections)");
     } else {
@@ -2542,13 +2608,17 @@ pub fn get_fr_onion_address() -> Option<String> {
     lock_recover(&FR_ONION_ADDRESS).clone()
 }
 
-/// Get the messaging HS publisher status for the in-process Arti client.
+/// Get the messaging HS overall status for the in-process Arti client.
+///
+/// OnionServiceStatus::state() combines the introduction-point manager and
+/// descriptor publisher states. Returning the compact state keeps mobile
+/// health checks stable across Arti's internal Debug representation changes.
 /// On iOS app-side Arti this will usually be "NotLaunched" because the app
 /// only uses Arti for outbound transport; the NE hosts inbound onions.
 pub fn get_hs_publisher_status() -> String {
     let guard = lock_recover(&RUNNING_HS);
     if let Some(service) = guard.as_ref() {
-        format!("{:?}", service.status())
+        format!("{:?}", service.status().state())
     } else {
         "NotLaunched".to_string()
     }

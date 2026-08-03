@@ -50,7 +50,7 @@ base32 = "0.5"
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
-tor-error = "0.41"
+tor-error = "0.44"
 
 # Logging
 log = "0.4"
@@ -78,7 +78,7 @@ tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thre
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1.5"
 futures = "0.3"
-arti-client = { version = "0.41", default-features = false, features = [
+arti-client = { version = "0.44", default-features = false, features = [
     "tokio",
     "rustls",
     "onion-service-client",
@@ -87,18 +87,23 @@ arti-client = { version = "0.41", default-features = false, features = [
     "error_detail",
     "static-sqlite",
     "geoip",
+    "flowctl-cc",
 ] }
-tor-rtcompat = { version = "0.41", features = ["tokio", "rustls"] }
-tor-hsservice = "0.41"
-tor-proto = { version = "0.41", features = ["stream-ctrl"] }
-tor-cell = "0.41"
-tor-config-path = "0.41"
-tor-llcrypto = "0.41"
-tor-hscrypto = "0.41"
-tor-netdir = { version = "0.41", features = ["geoip", "experimental-api"] }
-tor-linkspec = "0.41"
-tor-dirmgr = "0.41"
-tor-geoip = "0.41"
+tor-rtcompat = { version = "0.44", features = ["tokio", "rustls"] }
+# Arti 0.44 no longer chooses a rustls CryptoProvider for applications.
+# Install rustls' ring provider explicitly in initialize_arti(); keeping this
+# provider pure-Rust avoids adding the AWS-LC/CMake toolchain to Android builds.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tor-hsservice = "0.44"
+tor-proto = { version = "0.44", features = ["stream-ctrl"] }
+tor-cell = "0.44"
+tor-config-path = "0.44"
+tor-llcrypto = "0.44"
+tor-hscrypto = "0.44"
+tor-netdir = { version = "0.44", features = ["geoip", "experimental-api"] }
+tor-linkspec = "0.44"
+tor-dirmgr = "0.44"
+tor-geoip = "0.44"
 
 # SHA-pinned cherry-pick of arti MR !3940
 # (https://gitlab.torproject.org/tpo/core/arti/-/merge_requests/3940
@@ -111,7 +116,9 @@ tor-geoip = "0.41"
 # because the MR branch is rebased on a newer main than 2.2.0 — released
 # 0.41 crates have incompatible transitive deps (derive-deftly 1.6 vs 1.11).
 # Pinning all crates to the same SHA keeps the graph version-consistent.
-[patch.crates-io]
+# Historical path list retained as inert package metadata for auditability. It is deliberately
+# not a Cargo [patch] table; upstream Arti 0.44 is the only build graph used by build 33.
+[package.metadata.obsolete-vendored-arti]
 arti-client     = { path = "../third_party/arti-patched/crates/arti-client" }
 caret           = { path = "../third_party/arti-patched/crates/caret" }
 fs-mistrust     = { path = "../third_party/arti-patched/crates/fs-mistrust" }
