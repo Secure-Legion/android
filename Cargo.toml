@@ -54,7 +54,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # Logging
-log = "0.4"
+log = { version = "0.4", features = ["release_max_level_off"] }
 
 # Time
 chrono = "0.4"
