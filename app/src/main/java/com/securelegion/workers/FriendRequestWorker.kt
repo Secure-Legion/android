@@ -1,31 +1,38 @@
 package com.securelegion.workers
 
 import android.content.Context
-import android.util.Log
 import android.util.Base64
-import androidx.work.*
+import android.util.Log
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkRequest
+import androidx.work.WorkerParameters
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.PendingFriendRequest
 import com.securelegion.models.ContactCard
+import com.securelegion.services.ContactCardManager
+import com.securelegion.services.FriendRequestEnvelope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Background worker for retrying pending friend requests
+ * The only owner of persisted friend-request retries.
  *
- * This worker:
- * 1. Queries friend requests with needsRetry = true
- * 2. Retries sending Phase 1/2/3 based on phase field
- * 3. Updates retry count and nextRetryAt (exponential backoff)
- * 4. Marks as completed when Phase 3 ACK confirmed
- *
- * Triggered by:
- * - App start (mark all pending as needsRetry)
- * - Tor reconnection (mark all pending as needsRetry)
- * - Manual retry from UI
- * - Periodic background sweep (every 30 minutes)
+ * Each invocation atomically leases and sends at most one row. Native code performs one bounded
+ * connection attempt; this worker persists the next due time and chains exactly one successor.
  */
 class FriendRequestWorker(
     context: Context,
@@ -34,335 +41,290 @@ class FriendRequestWorker(
 
     companion object {
         private const val TAG = "FriendRequestWorker"
-        private const val PERIODIC_WORK_NAME = "friend_request_retry_work"
-        private const val IMMEDIATE_SWEEP_WORK_NAME = "friend_request_retry_immediate"
+        private const val DISPATCHER_WORK_NAME = "friend_request_dispatcher"
+        private const val LEGACY_PERIODIC_WORK_NAME = "friend_request_retry_work"
+        private const val LEGACY_IMMEDIATE_WORK_NAME = "friend_request_retry_immediate"
+        private const val UPGRADE_PREFS = "friend_request_dispatcher_v33"
+        private const val UPGRADE_COMPLETE = "legacy_work_cancelled"
+        private const val LEASE_DURATION_MS = 90_000L
 
-        /**
-         * Schedule immediate retry for a specific friend request
-         */
+        private fun request(delayMs: Long) = OneTimeWorkRequestBuilder<FriendRequestWorker>()
+            .setInitialDelay(delayMs.coerceAtLeast(0), TimeUnit.MILLISECONDS)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            // Used only for database/key-store initialization failures. Transport failures are
+            // persisted in Room and always return Result.success().
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS
+            )
+            .addTag(DISPATCHER_WORK_NAME)
+            .build()
+
+        fun scheduleDispatcher(context: Context, reason: String = "convergence") {
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                DISPATCHER_WORK_NAME,
+                ExistingWorkPolicy.KEEP,
+                request(0)
+            )
+            Log.i(TAG, "Friend-request dispatcher reconciled (reason=$reason)")
+        }
+
+        /** Compatibility entry point. There is no longer request-specific WorkManager work. */
         fun scheduleForRequest(context: Context, requestId: Long) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
-            val workData = workDataOf("REQUEST_ID" to requestId)
-
-            val retryWork = OneTimeWorkRequestBuilder<FriendRequestWorker>()
-                .setInputData(workData)
-                .setConstraints(constraints)
-                .setBackoffCriteria(
-                    BackoffPolicy.EXPONENTIAL,
-                    WorkRequest.MIN_BACKOFF_MILLIS,
-                    TimeUnit.MILLISECONDS
-                )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "friend_request_retry_$requestId",
-                ExistingWorkPolicy.REPLACE,
-                retryWork
-            )
-
-            Log.i(TAG, "Scheduled immediate retry for friend request $requestId")
+            scheduleDispatcher(context, "request-$requestId")
         }
 
-        /**
-         * Schedule periodic friend request retry sweep (every 30 minutes)
-         */
+        /** Compatibility entry point. The dispatcher schedules itself at the next persisted due time. */
         fun schedulePeriodicSweep(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
-            val sweepWork = PeriodicWorkRequestBuilder<FriendRequestWorker>(
-                30, TimeUnit.MINUTES
-            )
-                .setConstraints(constraints)
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                PERIODIC_WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                sweepWork
-            )
-
-            Log.i(TAG, "Scheduled periodic friend request retry (every 30 minutes)")
+            val workManager = WorkManager.getInstance(context)
+            workManager.cancelUniqueWork(LEGACY_PERIODIC_WORK_NAME)
+            workManager.cancelUniqueWork(LEGACY_IMMEDIATE_WORK_NAME)
+            scheduleDispatcher(context, "legacy-periodic-call")
         }
 
-        /**
-         * Schedule an immediate sweep for all friend requests currently marked needsRetry.
-         */
         fun scheduleImmediateSweep(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
-            val sweep = OneTimeWorkRequestBuilder<FriendRequestWorker>()
-                .setConstraints(constraints)
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                IMMEDIATE_SWEEP_WORK_NAME,
-                ExistingWorkPolicy.REPLACE,
-                sweep
-            )
-
-            Log.i(TAG, "Scheduled immediate friend request retry sweep")
+            scheduleDispatcher(context, "immediate")
         }
 
         /**
-         * Mark all pending friend requests as needing retry
-         * Called on app start and Tor reconnection
+         * One-time code-32 upgrade cleanup. It preserves every pending row and its backoff while
+         * cancelling all known legacy work names. Any already-running legacy worker still uses
+         * this build's lease-aware implementation and therefore cannot double-send.
          */
-        suspend fun markAllPendingNeedRetry(context: Context) {
-            withContext(Dispatchers.IO) {
-                try {
-                    val keyManager = KeyManager.getInstance(context)
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+        suspend fun migrateLegacyScheduling(context: Context) = withContext(Dispatchers.IO) {
+            val prefs = context.getSharedPreferences(UPGRADE_PREFS, Context.MODE_PRIVATE)
+            val keyManager = KeyManager.getInstance(context)
+            val database = SecureLegionDatabase.getInstance(
+                context,
+                keyManager.getDatabasePassphrase()
+            )
+            val dao = database.pendingFriendRequestDao()
+            dao.reclaimExpiredLeases(System.currentTimeMillis())
 
-                    val markedCount = database.pendingFriendRequestDao().markAllPendingNeedRetry()
-
-                    if (markedCount > 0) {
-                        Log.i(TAG, "Marked $markedCount pending friend request(s) for retry")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to mark friend requests for retry", e)
+            if (!prefs.getBoolean(UPGRADE_COMPLETE, false)) {
+                val workManager = WorkManager.getInstance(context)
+                workManager.cancelUniqueWork(LEGACY_PERIODIC_WORK_NAME)
+                workManager.cancelUniqueWork(LEGACY_IMMEDIATE_WORK_NAME)
+                dao.getAllUnfinished().forEach { request ->
+                    workManager.cancelUniqueWork("friend_request_retry_${request.id}")
                 }
+                // Rows that code 32 marked sent still need convergence until an acceptance arrives.
+                dao.markAllPendingNeedRetry()
+                prefs.edit().putBoolean(UPGRADE_COMPLETE, true).apply()
+                Log.i(TAG, "Cancelled code-32 friend-request work without deleting pending rows")
             }
+            scheduleDispatcher(context, "v33-migration")
+        }
+
+        /** Legacy convergence API retained for call sites while preserving backoff after migration. */
+        suspend fun markAllPendingNeedRetry(context: Context) {
+            try {
+                migrateLegacyScheduling(context)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to migrate/reconcile friend-request scheduling", e)
+            }
+        }
+
+        suspend fun scheduleManualRetry(context: Context, requestId: Long): Boolean =
+            withContext(Dispatchers.IO) {
+                val keyManager = KeyManager.getInstance(context)
+                val database = SecureLegionDatabase.getInstance(
+                    context,
+                    keyManager.getDatabasePassphrase()
+                )
+                val changed = database.pendingFriendRequestDao().makeDueForManualRetry(
+                    requestId,
+                    System.currentTimeMillis()
+                ) == 1
+                if (changed) {
+                    WorkManager.getInstance(context).enqueueUniqueWork(
+                        DISPATCHER_WORK_NAME,
+                        ExistingWorkPolicy.REPLACE,
+                        request(0)
+                    )
+                }
+                changed
+            }
+
+        private fun enqueueSuccessor(context: Context, delayMs: Long) {
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                DISPATCHER_WORK_NAME,
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                request(delayMs)
+            )
         }
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        try {
-            val requestId = inputData.getLong("REQUEST_ID", -1L)
-            val isRequestSpecific = requestId != -1L
-
-            if (isRequestSpecific) {
-                Log.d(TAG, "Starting retry for friend request $requestId")
-            } else {
-                Log.d(TAG, "Starting periodic friend request retry sweep")
-            }
-
+        val database = try {
             val keyManager = KeyManager.getInstance(applicationContext)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
+            SecureLegionDatabase.getInstance(applicationContext, keyManager.getDatabasePassphrase())
+        } catch (e: Exception) {
+            Log.e(TAG, "Dispatcher initialization failed", e)
+            return@withContext Result.retry()
+        }
 
-            // DATABASE-AUTHORITATIVE QUERY: Get friend requests needing retry
-            val requestsNeedingRetry = if (isRequestSpecific) {
-                val request = database.pendingFriendRequestDao().getById(requestId)
-                if (request != null && request.needsRetry) listOf(request) else emptyList()
-            } else {
-                database.pendingFriendRequestDao().getFriendRequestsNeedingRetry()
-            }
+        val dao = database.pendingFriendRequestDao()
+        val now = System.currentTimeMillis()
+        val reclaimed = dao.reclaimExpiredLeases(now)
+        if (reclaimed > 0) Log.w(TAG, "Reclaimed $reclaimed expired friend-request lease(s)")
 
-            if (requestsNeedingRetry.isEmpty()) {
-                Log.d(TAG, "No friend requests need retry at this time")
+        val leaseToken = UUID.randomUUID().toString()
+        val request = dao.claimNextDue(now, leaseToken, now + LEASE_DURATION_MS)
+        if (request == null) {
+            scheduleNext(database)
+            return@withContext Result.success()
+        }
+
+        val operationId = "fr:${request.id}:$leaseToken"
+        try {
+            if (isAlreadyFriend(database, request)) {
+                dao.markCompletedIfLeased(request.id, leaseToken, System.currentTimeMillis())
+                Log.i(TAG, "Completed request ${request.id}: contact already exists")
                 return@withContext Result.success()
             }
 
-            Log.i(TAG, "Retrying ${requestsNeedingRetry.size} friend request(s)")
+            val sendResult = when (request.phase) {
+                PendingFriendRequest.PHASE_1_SENT -> retryPhase1(request, operationId)
+                PendingFriendRequest.PHASE_2_SENT -> retryPhase2(request, operationId)
+                PendingFriendRequest.PHASE_3_SENT -> retryPhase3Ack(request, operationId)
+                else -> RustBridge.FriendRequestSendResult.PERMANENT_INPUT
+            }
+            persistResult(database, request, leaseToken, sendResult)
+            Result.success()
+        } catch (cancelled: CancellationException) {
+            RustBridge.cancelFriendRequestOperation(operationId)
+            withContext(NonCancellable) { dao.releaseLease(request.id, leaseToken) }
+            throw cancelled
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected dispatcher failure for request ${request.id}", e)
+            val timestamp = System.currentTimeMillis()
+            dao.updateRetryTrackingIfLeased(
+                request.id,
+                leaseToken,
+                timestamp,
+                request.retryCount + 1,
+                FriendRequestBackoff.nextRetryAt(timestamp, request.retryCount + 1)
+            )
+            Result.success()
+        } finally {
+            withContext(NonCancellable) {
+                dao.releaseLease(request.id, leaseToken)
+                scheduleNext(database)
+            }
+        }
+    }
 
-            var successCount = 0
-            var failureCount = 0
+    private suspend fun scheduleNext(database: SecureLegionDatabase) {
+        val earliest = database.pendingFriendRequestDao().getEarliestRetryAt() ?: return
+        enqueueSuccessor(applicationContext, (earliest - System.currentTimeMillis()).coerceAtLeast(0))
+    }
 
-            for (request in requestsNeedingRetry) {
-                try {
-                    if (isAlreadyFriend(database, request)) {
-                        database.pendingFriendRequestDao().markCompleted(
-                            requestId = request.id,
-                            timestamp = System.currentTimeMillis()
-                        )
-                        Log.i(TAG, "Skipping retry for request ${request.id}: contact already exists")
-                        successCount++
-                        continue
-                    }
-
-                    val success = when (request.phase) {
-                        PendingFriendRequest.PHASE_1_SENT -> retryPhase1(database, request)
-                        PendingFriendRequest.PHASE_2_SENT -> retryPhase2(database, request)
-                        PendingFriendRequest.PHASE_3_SENT -> retryPhase3Ack(database, request)
-                        else -> {
-                            Log.e(TAG, "Unknown phase ${request.phase} for request ${request.id}")
-                            false
-                        }
-                    }
-
-                    if (success) {
-                        successCount++
-                    } else {
-                        failureCount++
-                    }
-
-                    // Delay between retries
-                    if (request != requestsNeedingRetry.last()) {
-                        kotlinx.coroutines.delay(500)
-                    }
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error retrying friend request ${request.id}", e)
-                    failureCount++
+    private suspend fun persistResult(
+        database: SecureLegionDatabase,
+        request: PendingFriendRequest,
+        leaseToken: String,
+        result: RustBridge.FriendRequestSendResult
+    ) {
+        val dao = database.pendingFriendRequestDao()
+        val now = System.currentTimeMillis()
+        when (result) {
+            RustBridge.FriendRequestSendResult.SUCCESS -> {
+                if (request.phase == PendingFriendRequest.PHASE_3_SENT) {
+                    dao.markCompletedIfLeased(request.id, leaseToken, now)
+                } else {
+                    val attempt = request.retryCount + 1
+                    dao.updateRetryTrackingIfLeased(
+                        request.id,
+                        leaseToken,
+                        now,
+                        attempt,
+                        FriendRequestBackoff.nextRetryAt(now, attempt)
+                    )
                 }
             }
-
-            Log.i(TAG, "Friend request retry complete: $successCount success, $failureCount failed")
-
-            Result.success()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Friend request worker failed", e)
-            Result.retry()
+            RustBridge.FriendRequestSendResult.TRANSIENT_NETWORK -> {
+                val attempt = request.retryCount + 1
+                dao.updateRetryTrackingIfLeased(
+                    request.id,
+                    leaseToken,
+                    now,
+                    attempt,
+                    FriendRequestBackoff.nextRetryAt(now, attempt)
+                )
+            }
+            RustBridge.FriendRequestSendResult.TOR_NOT_READY,
+            RustBridge.FriendRequestSendResult.CANCELLED -> {
+                dao.updateRetryTrackingIfLeased(
+                    request.id,
+                    leaseToken,
+                    now,
+                    request.retryCount,
+                    now + 60_000L
+                )
+            }
+            RustBridge.FriendRequestSendResult.PERMANENT_INPUT ->
+                dao.markFailedIfLeased(request.id, leaseToken)
         }
+        Log.i(TAG, "Request ${request.id} attempt result=$result")
     }
 
-    /**
-     * Retry Phase 1 (PIN-encrypted friend request)
-     */
     private suspend fun retryPhase1(
-        database: SecureLegionDatabase,
-        request: PendingFriendRequest
-    ): Boolean {
-        if (request.phase1PayloadJson == null || request.recipientPin == null) {
-            Log.e(TAG, "Cannot retry Phase 1: missing payload or PIN")
-            database.pendingFriendRequestDao().markFailed(request.id)
-            return false
-        }
-
-        Log.d(TAG, "Retrying Phase 1 to ${request.recipientOnion}")
-
-        // Refresh the envelope timestamp so the receiver's anti-replay window accepts it.
-        // Without this, an FR composed yesterday but only delivered today gets rejected
-        // (receiver sees the stale timestamp and treats it as a replay).
-        val refreshedPayload = com.securelegion.services.FriendRequestEnvelope
-            .refreshTimestamp(request.phase1PayloadJson)
-
-        // Re-encrypt Phase 1 with PIN
-        val cardManager = com.securelegion.services.ContactCardManager(applicationContext)
-        val encryptedPhase1 = try {
-            cardManager.encryptWithPin(refreshedPayload, request.recipientPin)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to encrypt Phase 1", e)
-            return false
-        }
-
-        // Send Phase 1
-        val success = try {
-            com.securelegion.crypto.RustBridge.sendFriendRequest(
-                recipientOnion = request.recipientOnion,
-                encryptedFriendRequest = encryptedPhase1
+        request: PendingFriendRequest,
+        operationId: String
+    ): RustBridge.FriendRequestSendResult {
+        val payload = request.phase1PayloadJson
+            ?: return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
+        val pin = request.recipientPin
+            ?: return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
+        val encrypted = try {
+            ContactCardManager(applicationContext).encryptWithPin(
+                FriendRequestEnvelope.refreshTimestamp(payload),
+                pin
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send Phase 1", e)
-            false
+            Log.e(TAG, "Invalid Phase 1 retry payload", e)
+            return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
         }
-
-        // Update retry tracking based on result
-        val nextRetryAt = calculateNextRetryTime(request.retryCount + 1)
-        val timestamp = System.currentTimeMillis()
-
-        if (success) {
-            // Success: Clear needsRetry flag
-            database.pendingFriendRequestDao().markSent(
-                requestId = request.id,
-                timestamp = timestamp,
-                retryCount = request.retryCount + 1,
-                nextRetryAt = nextRetryAt
-            )
-            Log.i(TAG, "Phase 1 retry successful for request ${request.id}")
-        } else {
-            // Failure: Keep needsRetry = 1 for next attempt
-            database.pendingFriendRequestDao().updateRetryTracking(
-                requestId = request.id,
-                timestamp = timestamp,
-                retryCount = request.retryCount + 1,
-                nextRetryAt = nextRetryAt
-            )
-            Log.w(TAG, "Phase 1 retry failed for request ${request.id}, next retry at $nextRetryAt")
+        return runNativeFriendSend(operationId) {
+            RustBridge.sendFriendRequestTyped(request.recipientOnion, encrypted, operationId)
         }
-
-        return success
     }
 
-    /**
-     * Retry Phase 2 (X25519-encrypted acceptance)
-     */
     private suspend fun retryPhase2(
-        database: SecureLegionDatabase,
-        request: PendingFriendRequest
-    ): Boolean {
-        if (request.phase2PayloadBase64 == null) {
-            Log.e(TAG, "Cannot retry Phase 2: missing payload")
-            database.pendingFriendRequestDao().markFailed(request.id)
-            return false
-        }
-
-        Log.d(TAG, "Retrying Phase 2 to ${request.recipientOnion}")
-
-        // Decode Phase 2 payload from Base64
-        val encryptedPhase2 = try {
-            android.util.Base64.decode(request.phase2PayloadBase64, android.util.Base64.NO_WRAP)
+        request: PendingFriendRequest,
+        operationId: String
+    ): RustBridge.FriendRequestSendResult {
+        val payload = request.phase2PayloadBase64
+            ?: return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
+        val encrypted = try {
+            Base64.decode(payload, Base64.NO_WRAP)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to decode Phase 2 payload", e)
-            database.pendingFriendRequestDao().markFailed(request.id)
-            return false
+            Log.e(TAG, "Invalid Phase 2 retry payload", e)
+            return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
         }
-
-        val success = try {
-            com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
-                recipientOnion = request.recipientOnion,
-                encryptedAcceptance = encryptedPhase2
+        return runNativeFriendSend(operationId) {
+            RustBridge.sendFriendRequestAcceptedTyped(
+                request.recipientOnion,
+                encrypted,
+                operationId
             )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send Phase 2", e)
-            false
         }
-
-        // Update retry tracking based on result
-        val nextRetryAt = calculateNextRetryTime(request.retryCount + 1)
-        val timestamp = System.currentTimeMillis()
-
-        if (success) {
-            // Success: Clear needsRetry flag
-            database.pendingFriendRequestDao().markSent(
-                requestId = request.id,
-                timestamp = timestamp,
-                retryCount = request.retryCount + 1,
-                nextRetryAt = nextRetryAt
-            )
-            Log.i(TAG, "Phase 2 retry successful for request ${request.id}")
-        } else {
-            // Failure: Keep needsRetry = 1 for next attempt
-            database.pendingFriendRequestDao().updateRetryTracking(
-                requestId = request.id,
-                timestamp = timestamp,
-                retryCount = request.retryCount + 1,
-                nextRetryAt = nextRetryAt
-            )
-            Log.w(TAG, "Phase 2 retry failed for request ${request.id}, next retry at $nextRetryAt")
-        }
-
-        return success
     }
 
-    /**
-     * Retry Phase 3 ACK (X25519-encrypted confirmation)
-     */
     private suspend fun retryPhase3Ack(
-        database: SecureLegionDatabase,
-        request: PendingFriendRequest
-    ): Boolean {
-        if (request.contactCardJson == null) {
-            Log.e(TAG, "Cannot retry Phase 3: missing contact card")
-            database.pendingFriendRequestDao().markFailed(request.id)
-            return false
-        }
-
-        Log.d(TAG, "Retrying Phase 3 ACK to ${request.recipientOnion}")
-
-        // Rebuild Phase 3 ACK with our contact card
+        request: PendingFriendRequest,
+        operationId: String
+    ): RustBridge.FriendRequestSendResult {
+        val contactCardJson = request.contactCardJson
+            ?: return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
         val keyManager = KeyManager.getInstance(applicationContext)
-
-        val ownContactCard = com.securelegion.models.ContactCard(
+        val ownContactCard = ContactCard(
             displayName = keyManager.getUsername() ?: "Unknown",
             solanaPublicKey = keyManager.getSolanaPublicKey(),
             x25519PublicKey = keyManager.getEncryptionPublicKey(),
@@ -370,86 +332,58 @@ class FriendRequestWorker(
             solanaAddress = keyManager.getSolanaAddress(),
             friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
             messagingOnion = keyManager.getMessagingOnion()
-                ?: com.securelegion.crypto.RustBridge.getHiddenServiceAddress()
+                ?: RustBridge.getHiddenServiceAddress()
                 ?: "",
             voiceOnion = keyManager.getVoiceOnion() ?: "",
             contactPin = keyManager.getContactPin() ?: "",
             inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
             timestamp = System.currentTimeMillis() / 1000
         )
-
-        // Get recipient's X25519 key from stored contact card
         val recipientCard = try {
-            com.securelegion.models.ContactCard.fromJson(request.contactCardJson)
+            ContactCard.fromJson(contactCardJson)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse recipient contact card", e)
-            database.pendingFriendRequestDao().markFailed(request.id)
-            return false
-        }
-
-        if (recipientCard == null) {
-            Log.e(TAG, "Recipient contact card missing invite_token (schema v4 required)")
-            database.pendingFriendRequestDao().markFailed(request.id)
-            return false
-        }
-
-        val encryptedPhase3 = try {
-            com.securelegion.crypto.RustBridge.encryptMessage(
-                plaintext = ownContactCard.toJson(),
-                recipientX25519PublicKey = recipientCard.x25519PublicKey
-            )
+            null
+        } ?: return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
+        val encrypted = try {
+            RustBridge.encryptMessage(ownContactCard.toJson(), recipientCard.x25519PublicKey)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to encrypt Phase 3 ACK", e)
-            return false
+            Log.e(TAG, "Unable to encrypt Phase 3 retry", e)
+            return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
         }
-
-        val success = try {
-            com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
-                recipientOnion = request.recipientOnion,
-                encryptedAcceptance = encryptedPhase3
+        return runNativeFriendSend(operationId) {
+            RustBridge.sendFriendRequestAcceptedTyped(
+                request.recipientOnion,
+                encrypted,
+                operationId
             )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send Phase 3 ACK", e)
-            false
         }
-
-        val timestamp = System.currentTimeMillis()
-
-        if (success) {
-            // Phase 3 complete - mark friend request as completed
-            database.pendingFriendRequestDao().markCompleted(
-                requestId = request.id,
-                timestamp = timestamp
-            )
-            Log.i(TAG, "Phase 3 ACK sent - friend request ${request.id} complete")
-        } else {
-            // Failure: Keep needsRetry = 1 for next attempt
-            val nextRetryAt = calculateNextRetryTime(request.retryCount + 1)
-            database.pendingFriendRequestDao().updateRetryTracking(
-                requestId = request.id,
-                timestamp = timestamp,
-                retryCount = request.retryCount + 1,
-                nextRetryAt = nextRetryAt
-            )
-            Log.w(TAG, "Phase 3 ACK retry failed for request ${request.id}, next retry at $nextRetryAt")
-        }
-
-        return success
     }
 
     /**
-     * Calculate next retry time using exponential backoff
-     * Formula: 30s * (2 ^ retry_count)
-     * Capped at 30 minutes
+     * Run blocking JNI on Dispatchers.IO while exposing WorkManager cancellation to Rust's
+     * operation CancellationToken. Native also enforces a hard 45-second deadline.
      */
-    private fun calculateNextRetryTime(retryCount: Int): Long {
-        val baseDelayMs = 30_000L // 30 seconds
-        val maxDelayMs = 30 * 60 * 1000L // 30 minutes
-
-        val delayMs = (baseDelayMs * Math.pow(2.0, retryCount.toDouble())).toLong()
-        val cappedDelay = minOf(delayMs, maxDelayMs)
-
-        return System.currentTimeMillis() + cappedDelay
+    private suspend fun runNativeFriendSend(
+        operationId: String,
+        send: () -> RustBridge.FriendRequestSendResult
+    ): RustBridge.FriendRequestSendResult = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation {
+            try {
+                RustBridge.cancelFriendRequestOperation(operationId)
+            } catch (e: Throwable) {
+                Log.w(TAG, "Unable to cancel native friend-request operation", e)
+            }
+        }
+        Dispatchers.IO.dispatch(kotlin.coroutines.EmptyCoroutineContext, Runnable {
+            if (!continuation.isActive) return@Runnable
+            val result = try {
+                send()
+            } catch (e: Throwable) {
+                Log.e(TAG, "Native friend-request send threw", e)
+                RustBridge.FriendRequestSendResult.TRANSIENT_NETWORK
+            }
+            continuation.resume(result)
+        })
     }
 
     private suspend fun isAlreadyFriend(
@@ -457,41 +391,21 @@ class FriendRequestWorker(
         request: PendingFriendRequest
     ): Boolean {
         val contactDao = database.contactDao()
+        request.contactId?.let { if (contactDao.getContactById(it) != null) return true }
+        if (contactDao.getContactByOnionAddress(request.recipientOnion) != null) return true
 
-        request.contactId?.let { contactId ->
-            if (contactDao.getContactById(contactId) != null) {
-                return true
-            }
-        }
-
-        if (contactDao.getContactByOnionAddress(request.recipientOnion) != null) {
-            return true
-        }
-
-        val contactCardJson = request.contactCardJson ?: return false
         val card = try {
-            ContactCard.fromJson(contactCardJson)
+            request.contactCardJson?.let(ContactCard::fromJson)
         } catch (_: Exception) {
-            return false
+            null
         } ?: return false
 
-        val publicKeyBase64 = Base64.encodeToString(card.solanaPublicKey, Base64.NO_WRAP)
-        if (contactDao.getContactByPublicKey(publicKeyBase64) != null) {
-            return true
-        }
-
+        val publicKey = Base64.encodeToString(card.solanaPublicKey, Base64.NO_WRAP)
+        if (contactDao.getContactByPublicKey(publicKey) != null) return true
         if (card.friendRequestOnion.isNotBlank() &&
             contactDao.getContactByOnionAddress(card.friendRequestOnion) != null
-        ) {
-            return true
-        }
-
-        if (card.messagingOnion.isNotBlank() &&
+        ) return true
+        return card.messagingOnion.isNotBlank() &&
             contactDao.getContactByOnionAddress(card.messagingOnion) != null
-        ) {
-            return true
-        }
-
-        return false
     }
 }

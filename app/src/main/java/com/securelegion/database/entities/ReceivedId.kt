@@ -51,5 +51,9 @@ data class ReceivedId(
         const val TYPE_PING = "PING"
         const val TYPE_PONG = "PONG"
         const val TYPE_MESSAGE = "MESSAGE"
+        const val TYPE_FRIEND_REQUEST = "FRIEND_REQUEST"
+
+        /** Namespace friend-request nonces away from protocol message IDs. */
+        fun friendRequestNonce(nonce: String): String = "FR1:$nonce"
     }
 }

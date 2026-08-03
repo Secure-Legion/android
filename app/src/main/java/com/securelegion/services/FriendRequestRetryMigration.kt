@@ -96,7 +96,9 @@ object FriendRequestRetryMigration {
                         retryCount = 0,
                         phase1PayloadJson = if (isPhase1Payload) payload else null,
                         contactCardJson = payload,
-                        createdAt = req.timestamp.takeIf { it > 0 } ?: now
+                        createdAt = req.timestamp.takeIf { it > 0 } ?: now,
+                        leaseToken = null,
+                        leaseExpiresAt = 0L
                     )
 
                     val dbId = dao.insertRequest(entity)

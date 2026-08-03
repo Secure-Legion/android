@@ -20,7 +20,11 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["recipientOnion"], unique = false),
         Index(value = ["phase"], unique = false),
-        Index(value = ["needsRetry"], unique = false)
+        Index(value = ["needsRetry"], unique = false),
+        Index(
+            value = ["needsRetry", "isCompleted", "isFailed", "nextRetryAt", "leaseExpiresAt"],
+            name = "index_pending_friend_requests_due"
+        )
     ]
 )
 data class PendingFriendRequest(
@@ -125,7 +129,13 @@ data class PendingFriendRequest(
      * Contact ID (set when contact is added to database)
      * Links friend request to the created Contact entity
      */
-    val contactId: Long? = null
+    val contactId: Long? = null,
+
+    /** UUID owned by the one dispatcher currently sending this row. */
+    val leaseToken: String? = null,
+
+    /** Wall-clock time at which an abandoned claim may be recovered. */
+    val leaseExpiresAt: Long = 0
 ) {
     companion object {
         // Phase constants

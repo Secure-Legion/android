@@ -12,6 +12,7 @@ import com.securelegion.models.TorFailureType
 import com.securelegion.models.TorHealthSnapshot
 import com.securelegion.models.TorHealthStatus
 import com.securelegion.services.MessageService
+import com.securelegion.services.TorService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.net.ConnectivityManager
@@ -20,7 +21,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Periodic Tor health monitor
  *
- * Runs every 60 seconds to detect and recover from Tor PROCESS failures only.
+ * Runs every 15 minutes as a process-death/doze safety net. TorService performs adaptive
+ * in-process monitoring while it is alive.
  *
  * DESIGN PRINCIPLE:
  * - Only restart on process-level failures (SOCKS down, bootstrap stuck)
@@ -53,7 +55,7 @@ class TorHealthMonitorWorker(
     companion object {
         private const val TAG = "TorHealthMonitor"
         private const val WORK_NAME = "tor_health_monitor"
-        private const val CHECK_INTERVAL_SECONDS = 60L
+        private const val CHECK_INTERVAL_MINUTES = 15L
         // Legacy SOCKS constants removed — Arti has no SOCKS proxy
 
         private const val WARMUP_WINDOW_MS = 120000 // 2 minutes: Tor/HS needs time to stabilize after restart
@@ -76,28 +78,21 @@ class TorHealthMonitorWorker(
          * Called once at app startup
          */
         fun schedulePeriodicCheck(context: Context) {
-            // Use a chained OneTimeWork cadence to support sub-15-minute intervals.
-            // WorkManager periodic requests enforce a 15-minute minimum.
             val wm = WorkManager.getInstance(context)
-            wm.cancelUniqueWork(WORK_NAME) // Migrate any legacy periodic registration with same name
-            val kickoff = OneTimeWorkRequestBuilder<TorHealthMonitorWorker>().build()
-            wm.enqueueUniqueWork(
+            val work = PeriodicWorkRequestBuilder<TorHealthMonitorWorker>(
+                CHECK_INTERVAL_MINUTES,
+                TimeUnit.MINUTES
+            ).setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            ).build()
+            wm.enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingWorkPolicy.REPLACE,
-                kickoff
+                ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
+                work
             )
-            Log.i(TAG, "Scheduled Tor health monitor cadence (${CHECK_INTERVAL_SECONDS}s)")
-        }
-
-        private fun scheduleNextCheck(context: Context) {
-            val next = OneTimeWorkRequestBuilder<TorHealthMonitorWorker>()
-                .setInitialDelay(CHECK_INTERVAL_SECONDS, TimeUnit.SECONDS)
-                .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                WORK_NAME,
-                ExistingWorkPolicy.APPEND,
-                next
-            )
+            Log.i(TAG, "Scheduled 15-minute Tor health safety net")
         }
     }
 
@@ -105,10 +100,33 @@ class TorHealthMonitorWorker(
         return withContext(Dispatchers.IO) {
             try {
                 val previousSnapshot = getTorHealthSnapshot()
+                val healthyForegroundService = TorService.isRunning() && runCatching {
+                    RustBridge.getBootstrapStatus() >= 100 &&
+                        RustBridge.getCircuitEstablished() >= 1 &&
+                        RustBridge.isSocksProxyRunning()
+                }.getOrDefault(false)
+                if (healthyForegroundService) {
+                    val now = SystemClock.elapsedRealtime()
+                    saveTorHealthSnapshot(
+                        previousSnapshot.copy(
+                            status = TorHealthStatus.HEALTHY,
+                            lastOkElapsedMs = now,
+                            lastCheckElapsedMs = now,
+                            failCount = 0,
+                            lastError = "",
+                            lastStatusChangeElapsedMs = if (previousSnapshot.status != TorHealthStatus.HEALTHY) {
+                                now
+                            } else {
+                                previousSnapshot.lastStatusChangeElapsedMs
+                            }
+                        )
+                    )
+                    Log.d(TAG, "Healthy TorService owns monitoring; periodic safety net is a no-op")
+                    return@withContext Result.success()
+                }
                 val snapshot = checkTorHealth()
                 saveTorHealthSnapshot(snapshot)
                 flushMessagesIfRecovered(previousSnapshot, snapshot)
-                scheduleNextCheck(applicationContext)
 
                 Log.i(TAG, "Health check complete: ${snapshot.status} (failCount=${snapshot.failCount}, error=${snapshot.lastError.take(50)})")
                 Result.success()

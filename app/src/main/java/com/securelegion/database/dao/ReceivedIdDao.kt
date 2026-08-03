@@ -52,7 +52,7 @@ interface ReceivedIdDao {
      * NOTE: Currently disabled - keeping entries indefinitely in case user is offline for extended periods
      * Only clean up after MESSAGE_ACK confirms successful delivery
      */
-    @Query("DELETE FROM received_ids WHERE receivedTimestamp < :cutoffTimestamp")
+    @Query("DELETE FROM received_ids WHERE receivedTimestamp < :cutoffTimestamp AND idType != 'FRIEND_REQUEST'")
     suspend fun deleteOldIds(cutoffTimestamp: Long): Int
 
     /**

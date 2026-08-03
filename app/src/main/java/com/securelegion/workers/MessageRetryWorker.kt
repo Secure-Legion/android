@@ -35,8 +35,9 @@ class MessageRetryWorker(
     companion object {
         private const val TAG = "MessageRetryWorker"
         private const val WORK_NAME = "message_retry_work"
-        private const val REPEAT_INTERVAL_MINUTES = 3L // Retry every 3 minutes (was 15)
+        private const val REPEAT_INTERVAL_MINUTES = 15L
         private const val RECEIVED_IDS_TTL_MS = 30L * 24 * 60 * 60 * 1000 // 30 days
+        private const val RECEIVED_IDS_CLEANUP_INTERVAL_MS = 24L * 60 * 60 * 1000
         private const val ACK_TIMEOUT_MS = 2 * 60 * 1000L
         private const val FAST_ACK_TIMEOUT_MS = 30 * 1000L
 
@@ -44,29 +45,22 @@ class MessageRetryWorker(
          * Periodic background retry (long-term recovery)
          */
         fun schedule(context: Context) {
-            // Kick off recurring retry chain immediately.
-            // Sub-15-minute cadence must use OneTimeWork chaining, not periodic work.
             val wm = WorkManager.getInstance(context)
-            wm.cancelUniqueWork(WORK_NAME) // Migrate any legacy periodic registration with same name
-            val work = OneTimeWorkRequestBuilder<MessageRetryWorker>().build()
-            wm.enqueueUniqueWork(
+            val work = PeriodicWorkRequestBuilder<MessageRetryWorker>(
+                REPEAT_INTERVAL_MINUTES,
+                TimeUnit.MINUTES
+            ).setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            ).build()
+            wm.enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingWorkPolicy.REPLACE,
+                ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
                 work
             )
 
-            Log.w(TAG, "========== SCHEDULED RECURRING MessageRetryWorker (every ${REPEAT_INTERVAL_MINUTES} minutes) ==========")
-        }
-
-        private fun scheduleNextRecurring(context: Context) {
-            val next = OneTimeWorkRequestBuilder<MessageRetryWorker>()
-                .setInitialDelay(REPEAT_INTERVAL_MINUTES, TimeUnit.MINUTES)
-                .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                WORK_NAME,
-                ExistingWorkPolicy.APPEND,
-                next
-            )
+            Log.i(TAG, "Scheduled 15-minute message retry safety net")
         }
 
         /**
@@ -97,6 +91,22 @@ class MessageRetryWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
+            val contactId = inputData.getLong("CONTACT_ID", -1L)
+            val isContactSpecific = contactId != -1L
+
+            // TorService owns fast retry while its transport is healthy. The periodic worker is
+            // only a process-death/doze safety net, so do not duplicate DB scans and circuits.
+            val healthyForegroundService = !isContactSpecific && TorService.isRunning() &&
+                runCatching {
+                    com.securelegion.crypto.RustBridge.getBootstrapStatus() >= 100 &&
+                        com.securelegion.crypto.RustBridge.isSocksProxyRunning()
+                }.getOrDefault(false)
+            if (healthyForegroundService) {
+                cleanupReceivedIds()
+                Log.d(TAG, "Healthy TorService owns retries; periodic safety net is a no-op")
+                return@withContext Result.success()
+            }
+
             if (TorService.isTransportQuarantined()) {
                 val remainingMs = TorService.getTransportQuarantineRemainingMs()
                 Log.w(TAG, "MessageRetryWorker: transport quarantine active (${remainingMs}ms remaining) - skipping run")
@@ -106,9 +116,6 @@ class MessageRetryWorker(
             Log.d(TAG, "Message retry: waiting for transport gate to open...")
             TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
             Log.d(TAG, "Message retry: transport gate check done, proceeding with retries")
-
-            val contactId = inputData.getLong("CONTACT_ID", -1L)
-            val isContactSpecific = contactId != -1L
 
             Log.w(
                 TAG,
@@ -130,7 +137,6 @@ class MessageRetryWorker(
             // Periodic received_ids cleanup (30-day TTL, runs at most once per day)
             if (!isContactSpecific) {
                 cleanupReceivedIds()
-                scheduleNextRecurring(applicationContext)
             }
 
             // Process profile photo retry queue (iOS parity)
@@ -149,11 +155,15 @@ class MessageRetryWorker(
 
     /**
      * Prune received_ids older than 30 days.
-     * Runs once per worker cycle (every 3 min) but the DELETE is cheap —
-     * SQLite short-circuits when there's nothing to delete.
+     * Runs at most once per day even if WorkManager invokes the safety net more often.
      */
     private suspend fun cleanupReceivedIds() {
         try {
+            val prefs = applicationContext.getSharedPreferences("worker_maintenance", Context.MODE_PRIVATE)
+            val now = System.currentTimeMillis()
+            if (now - prefs.getLong("received_ids_cleanup_ms", 0L) < RECEIVED_IDS_CLEANUP_INTERVAL_MS) {
+                return
+            }
             val keyManager = KeyManager.getInstance(applicationContext)
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
@@ -162,6 +172,7 @@ class MessageRetryWorker(
             if (deleted > 0) {
                 Log.i(TAG, "Pruned $deleted expired received_ids (older than 30 days)")
             }
+            prefs.edit().putLong("received_ids_cleanup_ms", now).apply()
         } catch (e: Exception) {
             Log.e(TAG, "received_ids cleanup failed", e)
         }

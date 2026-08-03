@@ -33,8 +33,14 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 32
+        versionCode = 33
         versionName = "1.0.0"
+
+        // Keep the package aligned with the native build matrix. The removed legacy x86 binary
+        // predates the unified JNI receiver and must not be selected at runtime.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

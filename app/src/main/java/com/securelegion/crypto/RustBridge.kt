@@ -47,6 +47,19 @@ object RustBridge {
         val evolvedChainKey: ByteArray
     )
 
+    enum class FriendRequestSendResult(val code: Int) {
+        SUCCESS(0),
+        TRANSIENT_NETWORK(1),
+        TOR_NOT_READY(2),
+        CANCELLED(3),
+        PERMANENT_INPUT(4);
+
+        companion object {
+            fun fromCode(code: Int): FriendRequestSendResult =
+                entries.firstOrNull { it.code == code } ?: TRANSIENT_NETWORK
+        }
+    }
+
     // ==================== CRYPTOGRAPHY ====================
 
     /**
@@ -904,6 +917,17 @@ object RustBridge {
     external fun pollIncomingMessageBlocking(): ByteArray?
 
     /**
+     * Unified event frame: [version=1][kind][connectionId little-endian u64][payload].
+     * Blocks for at most timeoutMs and must only be called from Dispatchers.IO.
+     */
+    @JvmStatic
+    external fun pollIncomingEventBlocking(timeoutMs: Int): ByteArray?
+
+    /** Wakes the unified blocking poll immediately during service teardown. */
+    @JvmStatic
+    external fun stopIncomingEventPolling()
+
+    /**
      * Poll for incoming VOICE call signaling (CALL_SIGNALING) from listener
      * Returns encoded data: [connection_id (8 bytes)][encrypted call signaling blob]
      * Completely separate from MESSAGE channel to allow simultaneous text messaging during voice calls
@@ -1305,6 +1329,38 @@ object RustBridge {
         recipientOnion: String,
         encryptedAcceptance: ByteArray
     ): Boolean
+
+    /** One bounded native attempt. Room/WorkManager owns all retry timing. */
+    private external fun sendFriendRequestResult(
+        recipientOnion: String,
+        encryptedFriendRequest: ByteArray,
+        operationId: String
+    ): Int
+
+    /** One bounded Phase 2/3 attempt. Room/WorkManager owns all retry timing. */
+    private external fun sendFriendRequestAcceptedResult(
+        recipientOnion: String,
+        encryptedAcceptance: ByteArray,
+        operationId: String
+    ): Int
+
+    external fun cancelFriendRequestOperation(operationId: String)
+
+    fun sendFriendRequestTyped(
+        recipientOnion: String,
+        encryptedFriendRequest: ByteArray,
+        operationId: String
+    ): FriendRequestSendResult = FriendRequestSendResult.fromCode(
+        sendFriendRequestResult(recipientOnion, encryptedFriendRequest, operationId)
+    )
+
+    fun sendFriendRequestAcceptedTyped(
+        recipientOnion: String,
+        encryptedAcceptance: ByteArray,
+        operationId: String
+    ): FriendRequestSendResult = FriendRequestSendResult.fromCode(
+        sendFriendRequestAcceptedResult(recipientOnion, encryptedAcceptance, operationId)
+    )
 
     /**
      * Poll for an incoming tap (non-blocking)

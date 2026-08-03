@@ -2096,7 +2096,9 @@ class MainActivity : BaseActivity() {
                     direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
                     needsRetry = false,
                     phase2PayloadBase64 = Base64.encodeToString(encryptedPhase2, Base64.NO_WRAP),
-                    contactCardJson = partialContactJson
+                    contactCardJson = partialContactJson,
+                    leaseToken = null,
+                    leaseExpiresAt = 0L
                 )
                 val dbId = database.pendingFriendRequestDao().insertRequest(entity)
                 rememberRetryDbId(uiRequestId, dbId)

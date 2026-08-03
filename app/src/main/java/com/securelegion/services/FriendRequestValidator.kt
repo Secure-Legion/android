@@ -76,10 +76,11 @@ class FriendRequestValidator(private val replayCache: NonceReplayCache) {
         previousToken: String?
     ): Result {
         val nowSec = System.currentTimeMillis() / 1000
-        if (kotlin.math.abs(nowSec - timestampSec) > TIMESTAMP_WINDOW_SEC) return Result.INVALID
+        if (timestampSec < nowSec - TIMESTAMP_WINDOW_SEC ||
+            timestampSec > nowSec + TIMESTAMP_WINDOW_SEC
+        ) return Result.INVALID
         if (nonce.isBlank()) return Result.INVALID
         if (incomingToken.length != EXPECTED_TOKEN_LEN) return Result.INVALID
-        if (replayCache.isReplayAndMark(nonce)) return Result.INVALID
 
         val incomingPinHash = sha256(incomingPin)
         val incomingTokenHash = sha256(incomingToken)
@@ -92,7 +93,12 @@ class FriendRequestValidator(private val replayCache: NonceReplayCache) {
             MessageDigest.isEqual(incomingPinHash, sha256(previousPin)) &&
             MessageDigest.isEqual(incomingTokenHash, sha256(previousToken))
 
-        return if (currentMatch || prevMatch) Result.OK else Result.INVALID
+        if (!currentMatch && !prevMatch) return Result.INVALID
+
+        // Only authenticated envelopes consume a nonce. Otherwise an invalid packet could poison
+        // a legitimate request that happens to use the same nonce later in this process.
+        if (replayCache.isReplayAndMark(nonce)) return Result.INVALID
+        return Result.OK
     }
 
     private fun sha256(input: String): ByteArray =

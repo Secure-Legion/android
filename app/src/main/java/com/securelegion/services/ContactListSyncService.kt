@@ -37,7 +37,9 @@ class ContactListSyncService private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "ContactListSyncService"
-        private const val POLL_INTERVAL_MS = 500L
+        // Contact-list backup/recovery is not on the instant-message path. A 5-second idle
+        // interval avoids waking the process twice per second while keeping sync responsive.
+        private const val POLL_INTERVAL_MS = 5_000L
         private const val POLL_BACKOFF_MS = 5000L // after errors
 
         // Header sizes in the Rust → Kotlin serialized frame
