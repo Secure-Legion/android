@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
+import com.securelegion.utils.RestoreSeedSession
 import com.securelegion.utils.ThemedToast
 import org.web3j.crypto.MnemonicUtils
 
@@ -19,6 +20,7 @@ class RestoreAccountActivity : AppCompatActivity() {
 
     private lateinit var seedPhraseInput: EditText
     private lateinit var importButton: TextView
+    private var handoffStarted = false
 
     // BIP39 word list for per-word validation (2048 standard English words)
     private val bip39Words: Set<String> by lazy {
@@ -39,6 +41,9 @@ class RestoreAccountActivity : AppCompatActivity() {
         run { window.statusBarColor = android.graphics.Color.TRANSPARENT }
 
         setContentView(R.layout.activity_restore_account)
+
+        RestoreSeedSession.clear()
+        RestoreSeedSession.clearLegacyDiskCopy(this)
 
         // Enable edge-to-edge display
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -79,6 +84,7 @@ class RestoreAccountActivity : AppCompatActivity() {
     private fun setupClickListeners() {
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
+            RestoreSeedSession.clear()
             finish()
         }
 
@@ -116,15 +122,11 @@ class RestoreAccountActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            // Store seed temporarily and go to CreateAccountActivity
-            val masterKey = androidx.security.crypto.MasterKey.Builder(this)
-                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build()
-            val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-                this, "restore_temp", masterKey,
-                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-            prefs.edit().putString("seed_phrase", seedPhrase).apply()
+            // Keep the phrase only in this process. If Android kills the process,
+            // the user must re-enter it instead of leaving a disk residue.
+            RestoreSeedSession.put(seedPhrase)
+            seedPhraseInput.text.clear()
+            handoffStarted = true
 
             val intent = Intent(this, CreateAccountActivity::class.java)
             intent.putExtra("is_restore", true)
@@ -140,6 +142,13 @@ class RestoreAccountActivity : AppCompatActivity() {
         // Normalize whitespace (handles newlines, tabs, multiple spaces)
         val words = raw.split("\\s+".toRegex()).filter { it.isNotEmpty() }
         return words.joinToString(" ")
+    }
+
+    override fun onDestroy() {
+        if (isFinishing && !handoffStarted) {
+            RestoreSeedSession.clear()
+        }
+        super.onDestroy()
     }
 
 }

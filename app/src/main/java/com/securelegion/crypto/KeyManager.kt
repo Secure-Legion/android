@@ -1,6 +1,10 @@
 package com.securelegion.crypto
 
 import android.content.Context
+import android.os.Build
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
+import android.security.keystore.KeyProperties
 import android.util.Log
 import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -11,9 +15,13 @@ import com.goterl.lazysodium.interfaces.Sign
 import org.web3j.crypto.MnemonicUtils
 import java.io.File
 import java.math.BigInteger
+import java.security.KeyStore
 import java.security.MessageDigest
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 
 /**
  * KeyManager - Unified key management for wallet and messaging
@@ -26,7 +34,8 @@ import java.security.Security
  * - Message encryption (EC DH)
  * - Ping-Pong token encryption
  *
- * All keys stored in Android Keystore (hardware-backed secure storage)
+ * Persistent key material is encrypted by Android Keystore-backed storage.
+ * Hardware enforcement depends on the device and the specific key policy.
  *
  * Note: Uses applicationContext to prevent memory leaks
  */
@@ -39,6 +48,7 @@ class KeyManager private constructor(context: Context) {
         private const val TAG = "KeyManager"
         private const val KEYSTORE_ALIAS_PREFIX = "securelegion_"
         private const val PREFS_NAME = "secure_legion_keys"
+        private const val ANDROIDX_MASTER_KEY_ALIAS = "_androidx_security_master_key_"
 
         // Key aliases
         private const val WALLET_SEED_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_seed"
@@ -50,7 +60,15 @@ class KeyManager private constructor(context: Context) {
         private const val DEVICE_PASSWORD_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_salt"
         private const val SEED_WRAP_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}seed_wrap_salt"
         private const val SEED_WRAP_NONCE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}seed_wrap_nonce"
+        private const val SEED_WRAP_FORMAT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}seed_wrap_format"
+        private const val SEED_WRAP_FORMAT_RAW_BYTES = 2
         private const val SYSTEM_PASSWORD_ALIAS = "${KEYSTORE_ALIAS_PREFIX}system_password"
+        private const val SYSTEM_PASSWORD_CIPHERTEXT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}system_password_ciphertext"
+        private const val SYSTEM_PASSWORD_NONCE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}system_password_nonce"
+        private const val SYSTEM_PASSWORD_FORMAT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}system_password_format"
+        private const val SYSTEM_PASSWORD_FORMAT_HARDWARE_WRAPPED = 1
+        private const val PASSWORDLESS_KEYSTORE_ALIAS = "securelegion_passwordless_unlock_v1"
+        private const val PASSWORDLESS_CREDENTIAL_AAD = "securelegion.passwordless.credential.v1"
         private const val USER_DEFINED_PASSWORD_FLAG = "${KEYSTORE_ALIAS_PREFIX}user_defined_password"
         private const val ZCASH_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_address"
         private const val ZCASH_TRANSPARENT_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_transparent_address"
@@ -68,6 +86,12 @@ class KeyManager private constructor(context: Context) {
         private const val FRIEND_REQ_ROTATION_COUNT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}friend_req_rotation_count"
         private const val IPFS_CID_ALIAS = "${KEYSTORE_ALIAS_PREFIX}ipfs_cid"
         private const val SEED_PHRASE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_main_seed"
+        private const val SEED_PHRASE_NONCE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_main_seed_nonce"
+        private const val SEED_PHRASE_FORMAT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_main_seed_format"
+        private const val SEED_BACKUP_ALIAS = "seed_phrase_backup"
+        private const val SEED_BACKUP_NONCE_ALIAS = "seed_phrase_backup_nonce"
+        private const val SEED_BACKUP_FORMAT_ALIAS = "seed_phrase_backup_format"
+        private const val MNEMONIC_WRAP_FORMAT = 1
 
         init {
             // Register BouncyCastle provider for SHA3-256 support
@@ -86,6 +110,18 @@ class KeyManager private constructor(context: Context) {
         }
 
         /**
+         * Drop every in-process reference after account deletion. The next account
+         * receives fresh preferences and Keystore objects.
+         */
+        @JvmStatic
+        fun resetInstanceAfterWipe() {
+            synchronized(this) {
+                instance?.clearSeedCache()
+                instance = null
+            }
+        }
+
+        /**
          * Generate a 128-bit opaque invite token encoded as 32 lowercase hex chars.
          * Used as the cryptographic half of the FR-onion gate (paired with the 10-digit PIN).
          */
@@ -96,9 +132,10 @@ class KeyManager private constructor(context: Context) {
         }
     }
 
-    /** Decrypted seed hex cached in memory. Zeroized on lock. */
+    /** Decrypted BIP39 seed cached in mutable memory and zeroized on lock. */
     @Volatile
-    private var cachedSeedHex: String? = null
+    private var cachedSeedBytes: ByteArray? = null
+    private val seedCacheLock = Any()
 
     private val masterKey: MasterKey = MasterKey.Builder(appContext)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -120,43 +157,75 @@ class KeyManager private constructor(context: Context) {
      */
     @Suppress("unused") // Will be called during account setup
     fun initializeFromSeed(seedPhrase: String) {
+        // In-place root identity rotation must also re-key the encrypted database
+        // and password wrapper. Refuse the legacy partial rotation path instead of
+        // leaving a new root seed protected only by app-wide preferences.
+        if (isInitialized()) {
+            throw IllegalStateException(
+                "In-place root identity rotation is disabled. Use the account reset flow."
+            )
+        }
+
+        var seed: ByteArray? = null
+        var ed25519KeyPair: KeyPair? = null
+        var x25519KeyPair: KeyPair? = null
+        var hiddenServiceKeyPair: KeyPair? = null
+        var voiceServiceKeyPair: KeyPair? = null
+        var kyberKeyPair: KeyPair? = null
         try {
             Log.d(TAG, "Initializing keys from seed phrase")
 
             // Derive wallet keys from seed phrase
-            val seed = mnemonicToSeed(seedPhrase)
+            val derivedSeed = mnemonicToSeed(seedPhrase)
+            seed = derivedSeed
 
             // Generate Ed25519 signing key (for Solana wallet + message signing)
-            val ed25519KeyPair = deriveEd25519KeyPair(seed)
+            val signingPair = deriveEd25519KeyPair(derivedSeed)
+            ed25519KeyPair = signingPair
 
             // Generate X25519 encryption key (for message encryption)
-            val x25519KeyPair = deriveX25519KeyPair(seed)
+            val encryptionPair = deriveX25519KeyPair(derivedSeed)
+            x25519KeyPair = encryptionPair
 
             // Generate Ed25519 hidden service key (for deterministic .onion address)
-            val hiddenServiceKeyPair = deriveHiddenServiceKeyPair(seed)
+            val hiddenPair = deriveHiddenServiceKeyPair(derivedSeed)
+            hiddenServiceKeyPair = hiddenPair
 
             // Generate Ed25519 voice service key (for voice calling .onion address)
-            val voiceServiceKeyPair = deriveVoiceServiceKeyPair(seed)
+            val voicePair = deriveVoiceServiceKeyPair(derivedSeed)
+            voiceServiceKeyPair = voicePair
 
             // Generate hybrid post-quantum KEM keypair (X25519 + Kyber-1024)
-            val kyberKeyPair = deriveHybridKEMKeypair(seed)
+            val hybridPair = deriveHybridKEMKeypair(derivedSeed)
+            kyberKeyPair = hybridPair
 
             // Store keys securely in encrypted preferences
-            storeKeyPair(ED25519_SIGNING_KEY_ALIAS, ed25519KeyPair)
-            storeKeyPair(X25519_ENCRYPTION_KEY_ALIAS, x25519KeyPair)
-            storeKeyPair(KYBER_KEY_ALIAS, kyberKeyPair)
-            storeKeyPair(HIDDEN_SERVICE_KEY_ALIAS, hiddenServiceKeyPair)
-            storeKeyPair(VOICE_ONION_ALIAS, voiceServiceKeyPair)
+            storeKeyPair(ED25519_SIGNING_KEY_ALIAS, signingPair)
+            storeKeyPair(X25519_ENCRYPTION_KEY_ALIAS, encryptionPair)
+            storeKeyPair(KYBER_KEY_ALIAS, hybridPair)
+            storeKeyPair(HIDDEN_SERVICE_KEY_ALIAS, hiddenPair)
+            storeKeyPair(VOICE_ONION_ALIAS, voicePair)
 
-            // Store seed (encrypted by EncryptedSharedPreferences)
-            encryptedPrefs.edit {
-                putString(WALLET_SEED_ALIAS, bytesToHex(seed))
-            }
+            // Keep the root seed only in mutable process memory until
+            // setupAccountPassword() persists the password-wrapped form.
+            replaceSeedCache(derivedSeed)
 
             Log.i(TAG, "Keys initialized successfully from seed")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize keys from seed", e)
             throw KeyManagerException("Failed to initialize keys: ${e.message}", e)
+        } finally {
+            seed?.fill(0)
+            listOfNotNull(
+                ed25519KeyPair,
+                x25519KeyPair,
+                hiddenServiceKeyPair,
+                voiceServiceKeyPair,
+                kyberKeyPair
+            ).forEach { keyPair ->
+                keyPair.privateKey.fill(0)
+                keyPair.publicKey.fill(0)
+            }
         }
     }
 
@@ -312,19 +381,15 @@ class KeyManager private constructor(context: Context) {
      */
     @Suppress("unused")
     fun getFriendRequestKeyBytes(): ByteArray {
-        // Get seed phrase (stored as plain text, not hex)
-        val seedPhraseString = encryptedPrefs.getString(SEED_PHRASE_ALIAS, null)
-            ?: throw KeyManagerException("Seed phrase not found. Initialize wallet first.")
-
-        // Derive seed from mnemonic
-        val seed = mnemonicToSeed(seedPhraseString)
-
-        // Derive friend request keypair using the active rotation domain.
-        val count = getFriendReqRotationCount()
-        val domain = if (count > 0) "friend_req_$count" else "friend_req"
-        val keyPair = deriveFriendRequestKeyPair(seed, domain)
-
-        return keyPair.privateKey
+        val seed = getSeedBytes()
+        return try {
+            // Derive friend request keypair using the active rotation domain.
+            val count = getFriendReqRotationCount()
+            val domain = if (count > 0) "friend_req_$count" else "friend_req"
+            deriveFriendRequestKeyPair(seed, domain).privateKey
+        } finally {
+            seed.fill(0)
+        }
     }
 
     /**
@@ -360,9 +425,7 @@ class KeyManager private constructor(context: Context) {
      * Zcash SDK will use BIP44 path m/44'/133'/0'/0' for key derivation
      */
     fun getWalletSeed(): ByteArray {
-        val seedHex = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
-            ?: throw KeyManagerException("Wallet seed not found. Initialize wallet first.")
-        return hexToBytes(seedHex)
+        return getSeedBytes()
     }
 
     /**
@@ -504,8 +567,21 @@ class KeyManager private constructor(context: Context) {
     fun wipeAllKeys() {
         Log.w(TAG, "Wiping all keys from KeyManager")
 
-        // Clear encrypted preferences (which manages Android Keystore internally)
-        encryptedPrefs.edit { clear() }
+        clearSeedCache()
+        if (!encryptedPrefs.edit().clear().commit()) {
+            Log.w(TAG, "Encrypted key preferences did not confirm a synchronous clear")
+        }
+
+        // Clearing values does not remove the EncryptedSharedPreferences master
+        // key. Delete it explicitly for cryptographic erase.
+        try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.deleteEntry(PASSWORDLESS_KEYSTORE_ALIAS)
+            keyStore.deleteEntry(ANDROIDX_MASTER_KEY_ALIAS)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete one or more KeyManager Keystore entries", e)
+        }
 
         Log.i(TAG, "All keys wiped successfully")
     }
@@ -905,10 +981,7 @@ class KeyManager private constructor(context: Context) {
      * @return The 62-char .onion address (56 base32 chars + ".onion")
      */
     fun computeOnionAddress(domainSep: String): String {
-        val seedPhrase = encryptedPrefs.getString(SEED_PHRASE_ALIAS, null)
-            ?: throw KeyManagerException("Seed phrase not found. Initialize wallet first.")
-
-        val seed = mnemonicToSeed(seedPhrase)
+        val seed = getSeedBytes()
         try {
             return RustBridge.computeOnionAddressFromSeed(seed, domainSep)
         } finally {
@@ -948,8 +1021,11 @@ class KeyManager private constructor(context: Context) {
      * @return true if keys were written, false if no seed available
      */
     fun seedHiddenServiceDir(dir: File, domainSep: String): Boolean {
-        val seedPhrase = encryptedPrefs.getString(SEED_PHRASE_ALIAS, null) ?: return false
-        val bip39Seed = mnemonicToSeed(seedPhrase)
+        val bip39Seed = try {
+            getSeedBytes()
+        } catch (_: IllegalStateException) {
+            return false
+        }
 
         // Apply rotation counter for friend request identity changes
         val effectiveDomainSep = if (domainSep == "friend_req") {
@@ -1291,20 +1367,28 @@ class KeyManager private constructor(context: Context) {
      * WARNING: This is stored temporarily and should be cleared after user confirms backup
      */
     fun storeSeedPhrase(seedPhrase: String) {
-        encryptedPrefs.edit {
-            putString("seed_phrase_backup", seedPhrase)
-        }
-        Log.i(TAG, "Stored seed phrase for backup display")
+        storeWrappedMnemonic(
+            valueAlias = SEED_BACKUP_ALIAS,
+            nonceAlias = SEED_BACKUP_NONCE_ALIAS,
+            formatAlias = SEED_BACKUP_FORMAT_ALIAS,
+            seedPhrase = seedPhrase
+        )
+        Log.i(TAG, "Stored password-bound seed phrase for backup display")
     }
 
     /**
-     * Store seed phrase permanently for main wallet (needed for Zcash initialization)
+     * Store the recovery phrase encrypted under a key derived from the
+     * password-wrapped BIP39 seed. The app-wide preferences key alone cannot
+     * recover this value.
      */
     fun storeMainWalletSeed(seedPhrase: String) {
-        encryptedPrefs.edit {
-            putString("${KEYSTORE_ALIAS_PREFIX}wallet_main_seed", seedPhrase)
-        }
-        Log.i(TAG, "Stored seed phrase permanently for main wallet")
+        storeWrappedMnemonic(
+            valueAlias = SEED_PHRASE_ALIAS,
+            nonceAlias = SEED_PHRASE_NONCE_ALIAS,
+            formatAlias = SEED_PHRASE_FORMAT_ALIAS,
+            seedPhrase = seedPhrase
+        )
+        Log.i(TAG, "Stored password-bound recovery phrase")
     }
 
     /**
@@ -1312,24 +1396,125 @@ class KeyManager private constructor(context: Context) {
      * This bypasses the export protection in getWalletSeedPhrase()
      */
     fun getMainWalletSeedForZcash(): String? {
-        return encryptedPrefs.getString("${KEYSTORE_ALIAS_PREFIX}wallet_main_seed", null)
+        return readWrappedMnemonic(
+            valueAlias = SEED_PHRASE_ALIAS,
+            nonceAlias = SEED_PHRASE_NONCE_ALIAS,
+            formatAlias = SEED_PHRASE_FORMAT_ALIAS
+        )
     }
 
     /**
      * Get stored seed phrase for display
      */
     fun getSeedPhrase(): String? {
-        return encryptedPrefs.getString("seed_phrase_backup", null)
+        return readWrappedMnemonic(
+            valueAlias = SEED_BACKUP_ALIAS,
+            nonceAlias = SEED_BACKUP_NONCE_ALIAS,
+            formatAlias = SEED_BACKUP_FORMAT_ALIAS
+        )
     }
 
     /**
      * Clear stored seed phrase after user confirms backup
      */
     fun clearSeedPhraseBackup() {
-        encryptedPrefs.edit {
-            remove("seed_phrase_backup")
-        }
+        encryptedPrefs.edit()
+            .remove(SEED_BACKUP_ALIAS)
+            .remove(SEED_BACKUP_NONCE_ALIAS)
+            .remove(SEED_BACKUP_FORMAT_ALIAS)
+            .commit()
         Log.i(TAG, "Cleared seed phrase backup")
+    }
+
+    private fun storeWrappedMnemonic(
+        valueAlias: String,
+        nonceAlias: String,
+        formatAlias: String,
+        seedPhrase: String
+    ) {
+        val rootSeed = getSeedBytes()
+        val wrappingKey = deriveMnemonicWrappingKey(rootSeed, valueAlias)
+        val nonce = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
+        val plaintext = seedPhrase.toByteArray(Charsets.UTF_8)
+        var ciphertext: ByteArray? = null
+        try {
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                javax.crypto.Cipher.ENCRYPT_MODE,
+                javax.crypto.spec.SecretKeySpec(wrappingKey, "AES"),
+                javax.crypto.spec.GCMParameterSpec(128, nonce)
+            )
+            cipher.updateAAD(("securelegion.mnemonic.v1:" + valueAlias).toByteArray(Charsets.UTF_8))
+            ciphertext = cipher.doFinal(plaintext)
+
+            val committed = encryptedPrefs.edit()
+                .putString(valueAlias, bytesToHex(ciphertext))
+                .putString(nonceAlias, bytesToHex(nonce))
+                .putInt(formatAlias, MNEMONIC_WRAP_FORMAT)
+                .commit()
+            check(committed) { "Failed to persist wrapped mnemonic" }
+        } finally {
+            plaintext.fill(0)
+            ciphertext?.fill(0)
+            nonce.fill(0)
+            wrappingKey.fill(0)
+            rootSeed.fill(0)
+        }
+    }
+
+    private fun readWrappedMnemonic(
+        valueAlias: String,
+        nonceAlias: String,
+        formatAlias: String
+    ): String? {
+        if (encryptedPrefs.getInt(formatAlias, 0) != MNEMONIC_WRAP_FORMAT) {
+            val legacyPhrase = encryptedPrefs.getString(valueAlias, null) ?: return null
+            try {
+                storeWrappedMnemonic(valueAlias, nonceAlias, formatAlias, legacyPhrase)
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "Recovery phrase is unavailable until the root seed is unlocked")
+                return null
+            }
+        }
+
+        val ciphertextHex = encryptedPrefs.getString(valueAlias, null) ?: return null
+        val nonceHex = encryptedPrefs.getString(nonceAlias, null) ?: return null
+        val rootSeed = try {
+            getSeedBytes()
+        } catch (_: IllegalStateException) {
+            return null
+        }
+        val wrappingKey = deriveMnemonicWrappingKey(rootSeed, valueAlias)
+        val ciphertext = hexToBytes(ciphertextHex)
+        val nonce = hexToBytes(nonceHex)
+        var plaintext: ByteArray? = null
+        try {
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                javax.crypto.Cipher.DECRYPT_MODE,
+                javax.crypto.spec.SecretKeySpec(wrappingKey, "AES"),
+                javax.crypto.spec.GCMParameterSpec(128, nonce)
+            )
+            cipher.updateAAD(("securelegion.mnemonic.v1:" + valueAlias).toByteArray(Charsets.UTF_8))
+            plaintext = cipher.doFinal(ciphertext)
+            return String(plaintext, Charsets.UTF_8)
+        } catch (e: javax.crypto.AEADBadTagException) {
+            Log.e(TAG, "Wrapped recovery phrase failed authentication")
+            return null
+        } finally {
+            plaintext?.fill(0)
+            ciphertext.fill(0)
+            nonce.fill(0)
+            wrappingKey.fill(0)
+            rootSeed.fill(0)
+        }
+    }
+
+    private fun deriveMnemonicWrappingKey(rootSeed: ByteArray, valueAlias: String): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(rootSeed)
+        digest.update(("securelegion.mnemonic.wrap.v1:" + valueAlias).toByteArray(Charsets.UTF_8))
+        return digest.digest()
     }
 
     // ==================== DEVICE PASSWORD MANAGEMENT ====================
@@ -1471,32 +1656,172 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
-     * Store the system-generated password in encrypted preferences.
-     * Only used when the user has NOT set a custom password.
+     * Store the system-generated password under a second, dedicated Android
+     * Keystore key. This avoids placing the credential and the seed ciphertext
+     * behind the same EncryptedSharedPreferences master key.
      */
     private fun storeSystemPassword(password: String) {
-        encryptedPrefs.edit {
-            putString(SYSTEM_PASSWORD_ALIAS, password)
+        val plaintext = password.toByteArray(Charsets.UTF_8)
+        val nonce = ByteArray(12)
+        var ciphertext: ByteArray? = null
+        try {
+            java.security.SecureRandom().nextBytes(nonce)
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                javax.crypto.Cipher.ENCRYPT_MODE,
+                getOrCreatePasswordlessCredentialKey(),
+                javax.crypto.spec.GCMParameterSpec(128, nonce)
+            )
+            cipher.updateAAD(PASSWORDLESS_CREDENTIAL_AAD.toByteArray(Charsets.UTF_8))
+            ciphertext = cipher.doFinal(plaintext)
+
+            val committed = encryptedPrefs.edit()
+                .putString(SYSTEM_PASSWORD_CIPHERTEXT_ALIAS, bytesToHex(ciphertext))
+                .putString(SYSTEM_PASSWORD_NONCE_ALIAS, bytesToHex(nonce))
+                .putInt(
+                    SYSTEM_PASSWORD_FORMAT_ALIAS,
+                    SYSTEM_PASSWORD_FORMAT_HARDWARE_WRAPPED
+                )
+                .remove(SYSTEM_PASSWORD_ALIAS)
+                .commit()
+            if (!committed) {
+                throw IllegalStateException("Failed to persist protected passwordless credential")
+            }
+            Log.i(TAG, "Passwordless credential stored under a dedicated Keystore key")
+        } finally {
+            plaintext.fill(0)
+            nonce.fill(0)
+            ciphertext?.fill(0)
         }
-        Log.i(TAG, "System password stored")
     }
 
     /**
-     * Retrieve the stored system password, if any.
-     * @return The system password, or null if not stored (user-defined password in use)
+     * Retrieve the system password only through the dedicated Keystore key.
+     * Legacy v33 values are migrated on first successful read.
      */
     fun getSystemPassword(): String? {
-        return encryptedPrefs.getString(SYSTEM_PASSWORD_ALIAS, null)
+        if (
+            encryptedPrefs.getInt(SYSTEM_PASSWORD_FORMAT_ALIAS, 0) !=
+            SYSTEM_PASSWORD_FORMAT_HARDWARE_WRAPPED
+        ) {
+            val legacyPassword = encryptedPrefs.getString(SYSTEM_PASSWORD_ALIAS, null)
+                ?: return null
+            return try {
+                storeSystemPassword(legacyPassword)
+                legacyPassword
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not migrate the passwordless credential", e)
+                null
+            }
+        }
+
+        var ciphertext: ByteArray? = null
+        var nonce: ByteArray? = null
+        var plaintext: ByteArray? = null
+        try {
+            val ciphertextHex = encryptedPrefs.getString(
+                SYSTEM_PASSWORD_CIPHERTEXT_ALIAS,
+                null
+            ) ?: return null
+            val nonceHex = encryptedPrefs.getString(SYSTEM_PASSWORD_NONCE_ALIAS, null)
+                ?: return null
+            ciphertext = hexToBytes(ciphertextHex)
+            nonce = hexToBytes(nonceHex)
+
+            val key = getPasswordlessCredentialKey() ?: return null
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                javax.crypto.Cipher.DECRYPT_MODE,
+                key,
+                javax.crypto.spec.GCMParameterSpec(128, nonce)
+            )
+            cipher.updateAAD(PASSWORDLESS_CREDENTIAL_AAD.toByteArray(Charsets.UTF_8))
+            plaintext = cipher.doFinal(ciphertext)
+            return String(plaintext, Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not unlock the passwordless credential", e)
+            return null
+        } finally {
+            ciphertext?.fill(0)
+            nonce?.fill(0)
+            plaintext?.fill(0)
+        }
     }
 
     /**
-     * Clear the stored system password from encrypted preferences.
+     * Clear the stored passwordless credential and its independent Keystore key.
      */
     private fun clearSystemPassword() {
-        encryptedPrefs.edit {
-            remove(SYSTEM_PASSWORD_ALIAS)
+        encryptedPrefs.edit()
+            .remove(SYSTEM_PASSWORD_ALIAS)
+            .remove(SYSTEM_PASSWORD_CIPHERTEXT_ALIAS)
+            .remove(SYSTEM_PASSWORD_NONCE_ALIAS)
+            .remove(SYSTEM_PASSWORD_FORMAT_ALIAS)
+            .commit()
+        try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.deleteEntry(PASSWORDLESS_KEYSTORE_ALIAS)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not remove passwordless credential key", e)
         }
-        Log.i(TAG, "System password cleared")
+        Log.i(TAG, "Passwordless credential cleared")
+    }
+
+    private fun getPasswordlessCredentialKey(): SecretKey? {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore")
+        keyStore.load(null)
+        return keyStore.getKey(PASSWORDLESS_KEYSTORE_ALIAS, null) as? SecretKey
+    }
+
+    private fun getOrCreatePasswordlessCredentialKey(): SecretKey {
+        getPasswordlessCredentialKey()?.let { return it }
+
+        val key = try {
+            generatePasswordlessCredentialKey(useStrongBox = true)
+        } catch (e: Exception) {
+            Log.i(TAG, "StrongBox unavailable for passwordless credential; using Android Keystore")
+            generatePasswordlessCredentialKey(useStrongBox = false)
+        }
+
+        val hardwareBacked = try {
+            val factory = SecretKeyFactory.getInstance(
+                key.algorithm,
+                "AndroidKeyStore"
+            )
+            val keyInfo = factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo
+            keyInfo.isInsideSecureHardware
+        } catch (e: Exception) {
+            false
+        }
+        Log.i(TAG, "Passwordless credential key created (hardwareBacked=$hardwareBacked)")
+        return key
+    }
+
+    private fun generatePasswordlessCredentialKey(useStrongBox: Boolean): SecretKey {
+        val builder = KeyGenParameterSpec.Builder(
+            PASSWORDLESS_KEYSTORE_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+
+        // Android documents unlocked-device enforcement bugs through API 34.
+        // Enable it only where the platform fixes are present.
+        if (Build.VERSION.SDK_INT >= 35) {
+            builder.setUnlockedDeviceRequired(true)
+        }
+        if (useStrongBox) {
+            builder.setIsStrongBoxBacked(true)
+        }
+
+        val generator = KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_AES,
+            "AndroidKeyStore"
+        )
+        generator.init(builder.build())
+        return generator.generateKey()
     }
 
     /**
@@ -1528,26 +1853,34 @@ class KeyManager private constructor(context: Context) {
      * @param isUserDefined true if the user chose this password, false if system-generated
      */
     fun setupAccountPassword(password: String, isUserDefined: Boolean) {
-        // Read the current plaintext seed (still unencrypted during account creation)
-        val seedHex = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
-            ?: throw IllegalStateException("Wallet seed not found — cannot set up account password")
+        // initializeFromSeed() leaves the new root only in mutable process
+        // memory. Its first persistent representation is password-wrapped.
+        val seedBytes = getSeedBytes()
 
-        // Wrap (encrypt) the seed with the password
-        wrapSeed(seedHex, password)
+        try {
+            // For passwordless accounts, protect the random credential with its
+            // independent Keystore key before committing the wrapped root.
+            if (!isUserDefined) {
+                storeSystemPassword(password)
+            }
 
-        // Store Argon2id hash for lock screen verification
-        setDevicePassword(password)
+            // Wrap (encrypt) the seed with the password
+            wrapSeedBytes(seedBytes, password)
 
-        // Track whether this is a user-defined or system-generated password
-        setUserDefinedPasswordFlag(isUserDefined)
+            // Store Argon2id hash for lock screen verification
+            setDevicePassword(password)
 
-        // If system-generated, store the password so the app can auto-unlock
-        if (!isUserDefined) {
-            storeSystemPassword(password)
+            // Track whether this is a user-defined or system-generated password
+            setUserDefinedPasswordFlag(isUserDefined)
+
+            if (isUserDefined) {
+                clearSystemPassword()
+            }
+
+            replaceSeedCache(seedBytes)
+        } finally {
+            seedBytes.fill(0)
         }
-
-        // Cache the seed in memory so getSeedBytes() works immediately
-        cachedSeedHex = seedHex
 
         Log.i(TAG, "Account password setup complete (userDefined=$isUserDefined)")
     }
@@ -1557,9 +1890,14 @@ class KeyManager private constructor(context: Context) {
      * Called on successful lock screen authentication or auto-unlock.
      */
     fun unlockSeed(password: String): Boolean {
-        val seedHex = unwrapSeed(password)
-        if (seedHex != null) {
-            cachedSeedHex = seedHex
+        val seedBytes = unwrapSeedBytes(password)
+        if (seedBytes != null) {
+            try {
+                replaceSeedCache(seedBytes)
+                migrateLegacyMnemonicStorage()
+            } finally {
+                seedBytes.fill(0)
+            }
             Log.i(TAG, "Seed unlocked and cached in memory")
             return true
         }
@@ -1571,8 +1909,37 @@ class KeyManager private constructor(context: Context) {
      * Zeroize the cached seed from memory. Called on app lock / background timeout.
      */
     fun clearSeedCache() {
-        cachedSeedHex = null
+        synchronized(seedCacheLock) {
+            cachedSeedBytes?.fill(0)
+            cachedSeedBytes = null
+        }
         Log.i(TAG, "Seed cache cleared from memory")
+    }
+
+    private fun replaceSeedCache(seedBytes: ByteArray) {
+        synchronized(seedCacheLock) {
+            cachedSeedBytes?.fill(0)
+            cachedSeedBytes = seedBytes.copyOf()
+        }
+    }
+
+    private fun migrateLegacyMnemonicStorage() {
+        val entries = listOf(
+            Triple(SEED_PHRASE_ALIAS, SEED_PHRASE_NONCE_ALIAS, SEED_PHRASE_FORMAT_ALIAS),
+            Triple(SEED_BACKUP_ALIAS, SEED_BACKUP_NONCE_ALIAS, SEED_BACKUP_FORMAT_ALIAS)
+        )
+        entries.forEach { (valueAlias, nonceAlias, formatAlias) ->
+            if (encryptedPrefs.getInt(formatAlias, 0) == MNEMONIC_WRAP_FORMAT) {
+                return@forEach
+            }
+            val legacyPhrase = encryptedPrefs.getString(valueAlias, null) ?: return@forEach
+            try {
+                storeWrappedMnemonic(valueAlias, nonceAlias, formatAlias, legacyPhrase)
+                Log.i(TAG, "Migrated legacy recovery phrase to password-bound storage")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to migrate legacy recovery phrase", e)
+            }
+        }
     }
 
     /**
@@ -1593,16 +1960,25 @@ class KeyManager private constructor(context: Context) {
             Log.e(TAG, "No seed found — cannot migrate")
             return false
         }
+        val seedBytes = try {
+            hexToBytes(seedHex)
+        } catch (e: Exception) {
+            Log.e(TAG, "Stored seed has an invalid format", e)
+            return false
+        }
 
         try {
-            wrapSeed(seedHex, password)
+            wrapSeedBytes(seedBytes, password)
             setUserDefinedPasswordFlag(true)
-            cachedSeedHex = seedHex
+            replaceSeedCache(seedBytes)
+            migrateLegacyMnemonicStorage()
             Log.i(TAG, "Successfully migrated seed to wrapped format")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Seed migration failed", e)
             return false
+        } finally {
+            seedBytes.fill(0)
         }
     }
 
@@ -1610,82 +1986,82 @@ class KeyManager private constructor(context: Context) {
      * Re-wrap seed with a new password. Used when changing, setting, or removing password.
      */
     fun rewrapSeed(oldPassword: String, newPassword: String, isNewUserDefined: Boolean): Boolean {
-        val seedHex = unwrapSeed(oldPassword) ?: return false
+        val seedBytes = unwrapSeedBytes(oldPassword) ?: return false
+        return try {
+            if (!isNewUserDefined) {
+                storeSystemPassword(newPassword)
+            }
 
-        wrapSeed(seedHex, newPassword)
-        setDevicePassword(newPassword)
-        setUserDefinedPasswordFlag(isNewUserDefined)
+            wrapSeedBytes(seedBytes, newPassword)
+            setDevicePassword(newPassword)
+            setUserDefinedPasswordFlag(isNewUserDefined)
 
-        if (isNewUserDefined) {
-            clearSystemPassword()
-        } else {
-            storeSystemPassword(newPassword)
+            if (isNewUserDefined) {
+                clearSystemPassword()
+            }
+
+            replaceSeedCache(seedBytes)
+            migrateLegacyMnemonicStorage()
+            Log.i(TAG, "Seed re-wrapped with new password (userDefined=$isNewUserDefined)")
+            true
+        } finally {
+            seedBytes.fill(0)
         }
-
-        cachedSeedHex = seedHex
-        Log.i(TAG, "Seed re-wrapped with new password (userDefined=$isNewUserDefined)")
-        return true
     }
 
     /**
-     * Wrap (encrypt) the seed hex string with AES-256-GCM using a password-derived key.
-     * The wrapping key is derived via Argon2id from the password + random salt.
-     *
-     * @param seedHex The hex-encoded seed to wrap
-     * @param password The password to derive the wrapping key from
+     * Wrap raw BIP39 seed bytes with AES-256-GCM using an Argon2id
+     * password-derived key.
      */
-    private fun wrapSeed(seedHex: String, password: String) {
+    private fun wrapSeedBytes(seedBytes: ByteArray, password: String) {
         var wrappingKey: ByteArray? = null
+        val salt = ByteArray(32)
+        val nonce = ByteArray(12)
+        val plaintext = seedBytes.copyOf()
+        var encryptedBlob: ByteArray? = null
         try {
-            // Generate random 32-byte salt for Argon2id key derivation
-            val salt = ByteArray(32)
             java.security.SecureRandom().nextBytes(salt)
-
-            // Derive 32-byte wrapping key via Argon2id
             wrappingKey = RustBridge.hashPassword(password, salt)
-
-            // Generate random 12-byte nonce for AES-GCM
-            val nonce = ByteArray(12)
             java.security.SecureRandom().nextBytes(nonce)
 
-            // Encrypt seed with AES-256-GCM
             val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
             val secretKey = javax.crypto.spec.SecretKeySpec(wrappingKey, "AES")
-            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce) // 128-bit auth tag
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
             cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey, gcmSpec)
+            cipher.updateAAD("securelegion.seed.wrap.v2".toByteArray(Charsets.UTF_8))
+            encryptedBlob = cipher.doFinal(plaintext)
 
-            val plaintext = seedHex.toByteArray(Charsets.UTF_8)
-            val encryptedBlob = cipher.doFinal(plaintext)
-
-            // Store encrypted blob, salt, and nonce in encrypted preferences
-            encryptedPrefs.edit {
-                putString(WALLET_SEED_ALIAS, bytesToHex(encryptedBlob))
-                putString(SEED_WRAP_SALT_ALIAS, bytesToHex(salt))
-                putString(SEED_WRAP_NONCE_ALIAS, bytesToHex(nonce))
+            val committed = encryptedPrefs.edit()
+                .putString(WALLET_SEED_ALIAS, bytesToHex(encryptedBlob))
+                .putString(SEED_WRAP_SALT_ALIAS, bytesToHex(salt))
+                .putString(SEED_WRAP_NONCE_ALIAS, bytesToHex(nonce))
+                .putInt(SEED_WRAP_FORMAT_ALIAS, SEED_WRAP_FORMAT_RAW_BYTES)
+                .commit()
+            if (!committed) {
+                throw IllegalStateException("Failed to persist wrapped seed")
             }
-
-            // Zeroize plaintext copy
-            java.util.Arrays.fill(plaintext, 0.toByte())
 
             Log.i(TAG, "Seed wrapped successfully with AES-256-GCM")
         } finally {
-            // SECURITY: Zeroize wrapping key from memory
-            wrappingKey?.let { java.util.Arrays.fill(it, 0.toByte()) }
+            plaintext.fill(0)
+            encryptedBlob?.fill(0)
+            salt.fill(0)
+            nonce.fill(0)
+            wrappingKey?.fill(0)
         }
     }
 
     /**
-     * Unwrap (decrypt) the seed hex string using a password-derived key.
-     * Re-derives the wrapping key from password + stored salt via Argon2id,
-     * then decrypts with AES-256-GCM.
-     *
-     * @param password The password to derive the wrapping key from
-     * @return The decrypted seed hex string, or null if decryption fails
+     * Unwrap the BIP39 seed. Format 2 stores raw bytes; legacy v33 payloads
+     * stored ASCII hex and are decoded without creating an immutable String.
      */
-    private fun unwrapSeed(password: String): String? {
+    private fun unwrapSeedBytes(password: String): ByteArray? {
         var wrappingKey: ByteArray? = null
+        var encryptedBlob: ByteArray? = null
+        var salt: ByteArray? = null
+        var nonce: ByteArray? = null
+        var decrypted: ByteArray? = null
         try {
-            // Read encrypted seed, salt, and nonce from preferences
             val encryptedHex = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
                 ?: return null
             val saltHex = encryptedPrefs.getString(SEED_WRAP_SALT_ALIAS, null)
@@ -1693,27 +2069,29 @@ class KeyManager private constructor(context: Context) {
             val nonceHex = encryptedPrefs.getString(SEED_WRAP_NONCE_ALIAS, null)
                 ?: return null
 
-            val encryptedBlob = hexToBytes(encryptedHex)
-            val salt = hexToBytes(saltHex)
-            val nonce = hexToBytes(nonceHex)
+            encryptedBlob = hexToBytes(encryptedHex)
+            salt = hexToBytes(saltHex)
+            nonce = hexToBytes(nonceHex)
+            val format = encryptedPrefs.getInt(SEED_WRAP_FORMAT_ALIAS, 0)
 
-            // Re-derive wrapping key from password + stored salt
             wrappingKey = RustBridge.hashPassword(password, salt)
-
-            // Decrypt seed with AES-256-GCM
             val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
             val secretKey = javax.crypto.spec.SecretKeySpec(wrappingKey, "AES")
-            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce) // 128-bit auth tag
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
             cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, gcmSpec)
+            if (format == SEED_WRAP_FORMAT_RAW_BYTES) {
+                cipher.updateAAD("securelegion.seed.wrap.v2".toByteArray(Charsets.UTF_8))
+            }
 
-            val decrypted = cipher.doFinal(encryptedBlob)
-            val seedHex = String(decrypted, Charsets.UTF_8)
-
-            // Zeroize decrypted bytes
-            java.util.Arrays.fill(decrypted, 0.toByte())
+            decrypted = cipher.doFinal(encryptedBlob)
+            val result = if (format == SEED_WRAP_FORMAT_RAW_BYTES) {
+                decrypted.copyOf()
+            } else {
+                decodeHexAscii(decrypted)
+            }
 
             Log.i(TAG, "Seed unwrapped successfully")
-            return seedHex
+            return result
         } catch (e: javax.crypto.AEADBadTagException) {
             Log.w(TAG, "Seed unwrap failed: wrong password or corrupted data")
             return null
@@ -1721,9 +2099,24 @@ class KeyManager private constructor(context: Context) {
             Log.e(TAG, "Error unwrapping seed", e)
             return null
         } finally {
-            // SECURITY: Zeroize wrapping key from memory
-            wrappingKey?.let { java.util.Arrays.fill(it, 0.toByte()) }
+            decrypted?.fill(0)
+            encryptedBlob?.fill(0)
+            salt?.fill(0)
+            nonce?.fill(0)
+            wrappingKey?.fill(0)
         }
+    }
+
+    private fun decodeHexAscii(hexAscii: ByteArray): ByteArray {
+        require(hexAscii.size % 2 == 0) { "Invalid legacy seed length" }
+        val output = ByteArray(hexAscii.size / 2)
+        for (index in output.indices) {
+            val high = Character.digit(hexAscii[index * 2].toInt().toChar(), 16)
+            val low = Character.digit(hexAscii[index * 2 + 1].toInt().toChar(), 16)
+            require(high >= 0 && low >= 0) { "Invalid legacy seed encoding" }
+            output[index] = ((high shl 4) or low).toByte()
+        }
+        return output
     }
 
     // ==================== DATABASE ENCRYPTION ====================
@@ -1733,9 +2126,8 @@ class KeyManager private constructor(context: Context) {
      */
     private fun getSeedBytes(): ByteArray {
         // Use cached seed if available (normal path after unlock)
-        val cached = cachedSeedHex
-        if (cached != null) {
-            return hexToBytes(cached)
+        synchronized(seedCacheLock) {
+            cachedSeedBytes?.let { return it.copyOf() }
         }
 
         // Fallback: read from prefs (only works if seed is NOT wrapped)
@@ -1745,14 +2137,16 @@ class KeyManager private constructor(context: Context) {
         if (isSeedWrapped()) {
             // Background rehydration for passwordless accounts. Android can restart
             // the sticky TorService process without routing through SplashActivity,
-            // so cachedSeedHex is null even though the account can auto-unlock.
+            // so the memory cache is empty even though the account can auto-unlock.
             // User-defined-password accounts fall through intentionally — they must
             // unlock the app for anything to happen anyway (e.g. accept an FR).
             if (!hasUserDefinedPassword()) {
                 val systemPassword = getSystemPassword()
                 if (systemPassword != null && unlockSeed(systemPassword)) {
                     Log.i(TAG, "Background rehydration: auto-unlocked seed from system password")
-                    cachedSeedHex?.let { return hexToBytes(it) }
+                    synchronized(seedCacheLock) {
+                        cachedSeedBytes?.let { return it.copyOf() }
+                    }
                 }
             }
             throw IllegalStateException("Seed is wrapped — call unlockSeed() first")

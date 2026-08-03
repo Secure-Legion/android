@@ -1290,7 +1290,7 @@ class MainActivity : BaseActivity() {
 
                 // Delete all ping_inbox entries for this contact
                 database.pingInboxDao().deleteByContact(chat.id.toLong())
-                Log.i("MainActivity", "Securely deleted all messages (DOD 3-pass) and pending Pings for contact: ${chat.nickname}")
+                Log.i("MainActivity", "Deleted contact messages, associated media, and pending Pings")
 
                 // Reload the chat list
                 setupChatList()

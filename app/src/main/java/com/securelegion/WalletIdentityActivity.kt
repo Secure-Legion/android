@@ -492,6 +492,16 @@ class WalletIdentityActivity : AppCompatActivity() {
             try {
                 Log.i("WalletIdentity", "Creating new identity...")
 
+                val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
+                if (keyManager.isInitialized()) {
+                    Log.w("WalletIdentity", "Blocked unsafe in-place root identity rotation")
+                    ThemedToast.showLong(
+                        this@WalletIdentityActivity,
+                        "For security, use Wipe Account before creating a new root identity."
+                    )
+                    return@launch
+                }
+
                 // Show loading
                 // findViewById<View>(R.id.updateUsernameButton).isEnabled = false
                 ThemedToast.showLong(this@WalletIdentityActivity, "Creating new identity...")
@@ -503,7 +513,6 @@ class WalletIdentityActivity : AppCompatActivity() {
                 Log.i("WalletIdentity", "Generated new mnemonic")
 
                 // Step 2: Initialize KeyManager with new seed (creates new wallet & Tor address)
-                val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
                 withContext(Dispatchers.IO) {
                     keyManager.initializeFromSeed(mnemonic)
                 }

@@ -1,7 +1,7 @@
 package com.securelegion.utils
 
 import android.content.Context
-import android.content.SharedPreferences
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * SessionManager - Tracks whether the app is currently unlocked
@@ -15,37 +15,30 @@ import android.content.SharedPreferences
  * - User manually locked the app
  */
 object SessionManager {
-    private const val PREFS_NAME = "session"
-    private const val KEY_IS_UNLOCKED = "is_unlocked"
-
-    private fun getPrefs(context: Context): SharedPreferences {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    }
+    // Never persist authentication state. A new process always starts locked,
+    // and notification intents must route through the real unlock flow.
+    private val unlocked = AtomicBoolean(false)
 
     /**
      * Mark the app as unlocked (user successfully authenticated)
      */
-    fun setUnlocked(context: Context) {
-        getPrefs(context).edit()
-            .putBoolean(KEY_IS_UNLOCKED, true)
-            .apply()
+    fun setUnlocked(@Suppress("UNUSED_PARAMETER") context: Context) {
+        unlocked.set(true)
     }
 
     /**
      * Mark the app as locked (user on lock screen or auto-lock triggered)
      */
-    fun setLocked(context: Context) {
-        getPrefs(context).edit()
-            .putBoolean(KEY_IS_UNLOCKED, false)
-            .apply()
+    fun setLocked(@Suppress("UNUSED_PARAMETER") context: Context) {
+        unlocked.set(false)
     }
 
     /**
      * Check if the app is currently unlocked
      * Returns true if user has authenticated and is using the app
      */
-    fun isUnlocked(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_IS_UNLOCKED, false)
+    fun isUnlocked(@Suppress("UNUSED_PARAMETER") context: Context): Boolean {
+        return unlocked.get()
     }
 
     /**

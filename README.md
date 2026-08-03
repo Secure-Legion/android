@@ -36,13 +36,13 @@
 - **Truly Serverless P2P** - Messages route directly peer-to-peer at the application layer; no Secure-owned servers exist to collect metadata or relay messages. Uses Tor network for anonymous transport.
 - **No Exit Nodes** - All communication stays within Tor network via hidden services; traffic never exits to clearnet
 - **No Push Notification Servers** - No FCM, no APNs, no third-party notification infrastructure
-- **Multi-Layered Access Control Hierarchy** - Hardware-backed keystores (StrongBox/TEE) with biometric authentication, Argon2id password hashing, domain-separated key derivation, memory zeroization, and duress PIN protection
+- **Multi-Layered Access Control Hierarchy** - Android Keystore wrapping, cryptographically bound Class 3 biometric authentication, Argon2id password hashing, domain-separated key derivation, mutable-secret zeroization, and duress PIN protection
 - **Advanced ACH State Machine** - Sophisticated message tracking system managing ping/pong protocol states, delivery confirmations, exponential backoff retry logic, and persistent queue management for guaranteed offline message delivery
 - **TAP Heartbeat Protocol** - When Tor connects, broadcasts encrypted "I'm online" signal to all contacts on port 9151; recipients immediately retry pending messages and check for available downloads, with TAP_ACK confirmation
 - **Triple .onion Architecture** - Three separate deterministic Tor hidden services: friend discovery, friend requests, and encrypted messaging
 - **Offline-First Design** - Send messages anytime; they queue locally and deliver automatically when recipient comes online
 - **Ping-Pong Wake Protocol** - Recipient must authenticate via biometrics before message delivery
-- **Hardware-Backed Security** - Private keys stored in Android StrongBox (Pixel, Samsung Knox) or Trusted Execution Environment, never accessible to software
+- **Device-Bound Key Protection** - Root secrets are password-wrapped and app data is encrypted with Android Keystore keys that are hardware-backed when the device supports it
 - **Secure Pay** *(coming soon)* - Built-in multi-chain cryptocurrency wallet (Zcash + Solana) with in-chat payment protocol
 - **Three-Phase Friend Protocol** - PIN-based initial request, post-quantum hybrid (X25519 + Kyber-1024) encrypted acceptance, and mutual acknowledgment for bidirectional contact addition, all over Tor
 
@@ -56,7 +56,7 @@
 
 3. **Complete Offline Support** - Both sender and recipient can be offline. Messages queue locally, sync automatically, no server required.
 
-4. **Hardware-Backed Keys** - All cryptographic keys stored in dedicated security hardware (StrongBox/TEE), never exposed to Android OS or apps.
+4. **Layered Local Key Protection** - Password-wrapped recovery secrets, Android Keystore-backed encryption at rest, and hardware-enforced biometric authorization where supported.
 
 5. **Integrated Private Payments** *(coming soon)* - Send Zcash (shielded) and Solana payments directly in conversations via Secure Pay protocol.
 
@@ -82,7 +82,7 @@
 | **In-Chat Payments** | Secure Pay (coming soon) | No | No | No | No |
 | **Tor VPN Mode** | System-wide (if turned on) | No | No | No | No |
 | **Voice Calls** | Over Tor (in development) | VoIP | No | No | WebRTC |
-| **Hardware Keys** | StrongBox/TEE | Software only | Software only | Software only | Software only |
+| **Local Key Protection** | Password wrap + Android Keystore | Software only | Software only | Software only | Software only |
 | **Friend Requests** | 3-phase Tor + opaque token | Phone number | Session ID | Bloom filter | QR code |
 
 ## Features
@@ -136,18 +136,18 @@
   - HMAC-based key derivation (HKDF-SHA256)
 
 **Hardware Security:**
-- Private keys stored in Android StrongBox (Pixel 3+, Samsung Galaxy S9+ with Knox)
-- Fallback to Trusted Execution Environment (TEE) on devices without StrongBox
-- Keys never accessible to Android OS, apps, or even Secure itself
-- Hardware-backed key attestation prevents extraction
-- Secure element tamper detection
+- Android Keystore master and biometric keys are hardware-backed when StrongBox/TEE support is available
+- The recovery seed is independently wrapped with an Argon2id password-derived key
+- Passwordless auto-unlock credentials use a separate StrongBox-preferred Keystore key; Android 15+ also restricts that key while the device is locked
+- Messaging and Tor operational keys are encrypted at rest but must be materialized inside the Secure process to support background delivery
+- A rooted or otherwise compromised live Android OS is outside the local key-extraction guarantee
 
 **Access Protection:**
-- Biometric authentication (fingerprint/face) required on every app launch
-- Duress PIN triggers instant cryptographic data wipe and network revocation
+- Optional Class 3 biometric unlock is cryptographically bound to each Keystore operation, with password fallback
+- Duress PIN prioritizes local key destruction, comprehensively removes app-owned data, and gives alerts a strict best-effort deadline
 - Automatic screen lock after inactivity
 - Screenshot prevention for sensitive screens
-- Secure deletion with cryptographic key destruction (DOD 5220.22-M standard)
+- Cryptographic key destruction followed by best-effort deletion; no unreliable flash overwrite-pass claim
 
 **Network Privacy:**
 - All traffic routed exclusively through Tor network
@@ -178,7 +178,7 @@
 - **Zcash (ZEC)**: Privacy-focused payments with shielded transactions (z-addresses)
 - **Solana (SOL)**: Fast, low-fee payments
 - **SPL Tokens**: USDC and USDT stablecoin support
-- Hardware wallet-grade security (keys in StrongBox/TEE)
+- Password-wrapped recovery seed with Android Keystore defense in depth
 - Transaction history with block explorer links
 - Testnet mode for safe development and testing
 
@@ -349,7 +349,7 @@ DEVICE A                        DEVICE B
 **Data Management:**
 - Encrypted Room database with SQLCipher (AES-256-GCM)
 - Automatic database migrations for seamless updates
-- Secure deletion with cryptographic key destruction (DOD 5220.22-M standard)
+- Cryptographic key destruction plus comprehensive app-owned data deletion
 - Database backup and restore (manual, coming soon)
 - Export/import account data (encrypted, planned)
 
@@ -372,7 +372,7 @@ DEVICE A                        DEVICE B
 │  │ ML-KEM   │SecurePay │   SPL    ││
 │  └──────────┴──────────┴──────────┘│
 ├─────────────────────────────────────┤
-│   Hardware Security (StrongBox/TEE)│
+│ Android Keystore + password wrapping│
 └─────────────────────────────────────┘
 ```
 
@@ -400,9 +400,9 @@ DEVICE A                        DEVICE B
 - **Zcash Blockchain**: Privacy-focused blockchain for shielded ZEC payments
 
 **Security Hardware:**
-- Android StrongBox (Titan M on Pixel, Knox on Samsung)
-- Trusted Execution Environment (TEE) fallback for non-StrongBox devices
-- Hardware-backed key attestation and tamper detection
+- Android StrongBox/TEE is used for Keystore keys when the device and key operation support it
+- Software-backed Keystore remains a device-dependent fallback
+- Operational cryptographic key bytes exist in process memory while required for messaging
 
 ### Cryptographic Primitives
 
@@ -417,11 +417,11 @@ DEVICE A                        DEVICE B
 | **Voice Encryption** | XChaCha20-Poly1305 | 256-bit | Real-time audio stream encryption |
 | **Voice Codec** | Opus | Variable | High-quality audio encoding/decoding |
 | **Password Hashing** | Argon2id | Variable | PIN/password derivation (memory-hard) |
-| **Database Encryption** | AES-256-GCM | 256-bit | SQLCipher local storage encryption |
+| **Database Encryption** | SQLCipher (AES-256 + HMAC) | 256-bit | Authenticated local database storage |
 | **Friend Request Phase 1** | XSalsa20-Poly1305 | 256-bit | PIN-based encryption for initial key exchange |
 
 **Implementation Details:**
-- All crypto operations delegated to Rust core (memory-safe, side-channel resistant)
+- Protocol cryptography is implemented in Rust; Android Keystore wrapping and biometric authorization use platform cryptographic APIs
 - **Per-message forward secrecy**: Every message uses unique ephemeral key derived from ratcheting chain
 - **Bidirectional key chains**: Separate ratchets for sending and receiving
 - **Immediate key destruction**: Ephemeral keys zeroized from memory after use (Rust zeroize crate)
@@ -432,8 +432,8 @@ DEVICE A                        DEVICE B
   - Protects against "harvest now, decrypt later" attacks by quantum adversaries
 - Nonces never reused (random for XChaCha20, deterministic counter for signatures)
 - Constant-time comparisons prevent timing attacks
-- Secure memory wiping after use (DOD 5220.22-M 3-pass standard)
-- Hardware-backed keys used where available (StrongBox/TEE)
+- Mutable secret buffers are zeroized after use where the runtime permits; immutable JVM strings cannot carry an absolute zeroization guarantee
+- Android Keystore keys are hardware-backed where the device reports StrongBox/TEE support
 
 ### Threat Model
 
@@ -442,21 +442,23 @@ DEVICE A                        DEVICE B
 - Active man-in-the-middle attacks (Ed25519 signatures + Tor end-to-end encryption)
 - Server compromise (no servers exist to compromise)
 - Metadata analysis (no centralized logs, no "who talks to whom" data)
-- Device seizure with duress (PIN triggers instant cryptographic wipe)
+- Device seizure while Android and the app are locked; duress provides rapid key destruction and best-effort data removal
 - Traffic correlation attacks (Tor + three separate .onion addresses)
 - Traffic analysis (Tor hidden services obscure patterns)
 - Future quantum computer attacks (ML-KEM-1024 post-quantum crypto)
-- Key extraction attacks (hardware-backed keys in StrongBox/TEE)
+- Offline extraction of password-wrapped recovery material from ordinary app storage
 
 **Not Protected Against:**
 - Hardware implants in the device itself (physical supply chain attacks)
 - Endpoint security failures (keyloggers, screen recorders, clipboard sniffers)
+- A rooted, instrumented, or otherwise compromised Android OS while Secure is running or unlocked
+- Guaranteed physical overwrite of deleted blocks on flash storage
 - Social engineering attacks (phishing, impersonation)
 - Physical coercion ($5 wrench attack - duress PIN provides limited defense)
 
 **Assumptions:**
 - Android secure boot chain is intact and not compromised
-- Hardware security module (StrongBox/TEE) is not backdoored
+- Android Keystore and any available StrongBox/TEE implementation enforce their documented key-use policy
 - User maintains physical security of device (screen lock, safe storage)
 - Cryptographic algorithms (XChaCha20, Ed25519, X25519, ML-KEM-1024) are secure
 
@@ -466,16 +468,16 @@ See [Security Model](https://securelegion.org/security-model) for complete threa
 
 ### Runtime Requirements
 
-- Android 8.1 (API 27) or higher
-- ARMv8-A 64-bit processor (arm64-v8a)
-- Biometric hardware (fingerprint or face unlock)
+- Android 10 (API 29) or higher
+- arm64-v8a, armeabi-v7a, or x86_64 processor
+- Class 3 biometric hardware is optional; password unlock remains available
 - 200 MB free storage minimum
 - Internet connection for Tor (optional for offline messaging)
 
 ### First Run
 
-1. **Create Account**: Generate new identity with hardware-backed keys (30 seconds)
-2. **Set Biometric Lock**: Configure fingerprint or face unlock
+1. **Create Account**: Generate a new device-bound encrypted identity (30 seconds)
+2. **Set Biometric Lock**: Configure a Class 3 biometric where supported
 3. **Set Duress PIN**: Emergency wipe trigger (optional but highly recommended)
 4. **Add Contacts**: Share your friend discovery .onion address via QR code
 
@@ -554,7 +556,7 @@ secure-legion-android/
 
 - [x] Rust cryptography core library with memory safety
 - [x] Android app architecture with Material Design 3
-- [x] Hardware security module integration (StrongBox/TEE)
+- [x] Android Keystore integration with StrongBox/TEE use where supported
 - [x] Encrypted Room database with SQLCipher
 - [x] Tor integration via Guardian Project libraries
 - [x] Ping-Pong wake protocol implementation
@@ -566,8 +568,8 @@ secure-legion-android/
 - [x] Message reactions (emoji)
 - [x] Message edits
 - [x] Animated GIFs and stickers
-- [x] Biometric authentication (fingerprint/face)
-- [x] Duress PIN with instant cryptographic wipe
+- [x] Cryptographically bound Class 3 biometric authentication
+- [x] Duress PIN with prioritized key destruction and comprehensive app-data deletion
 - [x] Two-phase friend request protocol (PIN + ephemeral key)
 - [x] Self-destruct timers for messages (disappearing messages)
 - [x] Disappearing messages (auto-delete after configurable time)
@@ -638,9 +640,9 @@ cargo test --verbose          # Detailed output
 
 ### Manual Testing Checklist
 
-1. **Account Creation**: Create account, verify keys stored in StrongBox/TEE
-2. **Biometric Lock**: Test fingerprint/face unlock on app launch
-3. **Duress PIN**: Verify cryptographic data wipe on duress PIN entry
+1. **Account Creation**: Create account and verify password-wrapped seed migration
+2. **Biometric Lock**: Test Class 3 biometric unlock and forced legacy re-enrollment
+3. **Duress PIN**: Verify Keystore aliases, Tor/Arti state, databases, preferences, media, and caches are removed
 4. **Contact Sharing**: Share friend discovery .onion address via QR code
 5. **Add Contact**: Scan friend's QR code, complete 2-phase friend request
 6. **Text Messaging**: Send/receive text messages, verify encryption
@@ -780,7 +782,7 @@ A: No data to hand over. Secure has no servers, no databases, no logs. We cannot
 
 **Q: What about the $5 wrench attack (physical coercion)?**
 
-A: The duress PIN provides limited defense—entering it triggers instant cryptographic data wipe and network revocation broadcast. However, physical security is ultimately your responsibility. Use full-disk encryption, secure screen lock, and maintain physical control of your device.
+A: The duress PIN provides limited defense. Entering it prioritizes local cryptographic key destruction and comprehensive app-data deletion; contact alerts are best effort and cannot delay the wipe past a strict deadline. Flash storage cannot provide a guaranteed physical overwrite. Use Android file-based encryption, a secure screen lock, and maintain physical control of your device.
 
 **Q: Is Secure vulnerable to quantum computers?**
 
@@ -802,7 +804,7 @@ A: APK size is approximately 45-50 MB (includes Tor libraries, Rust core, Zcash 
 
 **Q: What Android devices are supported?**
 
-A: Android 8.1 (API 27) or higher. ARMv8-A 64-bit processor (arm64-v8a) required. Most devices from 2018+ are supported. StrongBox available on Pixel 3+, Samsung Galaxy S9+ (Knox), and other flagship devices.
+A: Android 10 (API 29) or higher. Supported ABIs are defined by the published build. StrongBox availability and biometric strength vary by device; Secure falls back to the standard Android Keystore where required.
 
 **Q: Can messages be sent when both users are offline?**
 

@@ -480,18 +480,13 @@
 
 # ==================== LOG REMOVAL (Security) ====================
 
-# Remove debug/info logging in release builds (keep w/e for crash diagnostics)
+# Remove verbose/debug/info logging and its arguments in release builds.
+# Warning/error logs remain for redacted crash diagnostics.
 -assumenosideeffects class android.util.Log {
     public static int d(...);
     public static int v(...);
+    public static int i(...);
 }
-
-# DIAGNOSTIC ONLY: disable R8 optimization passes so Log.i/w/e are not stripped
-# by the bundled proguard-android-optimize.txt's class-wide assumenosideeffects.
-# Without this, every Log.i call site is removed, hiding the retry/ACK/TAP chain.
-# Trade-off: ~5-15% larger APK, marginal hot-path perf loss. Re-enable optimize
-# once we've diagnosed the stuck-backlog flow end-to-end.
--dontoptimize
 
 # ==================== OPTIMIZATION ====================
 

@@ -59,7 +59,7 @@ class WipeAccountActivity : AppCompatActivity() {
             // Final confirmation dialog with dark theme
             val wipeDialog = GlassDialog.builder(this)
                 .setTitle("FINAL WARNING")
-                .setMessage("This will permanently delete ALL your data including:\n• All messages and chats\n• All contacts\n• Wallet information\n• Recovery phrases\n• All settings\n\nData will be securely overwritten 3 times to prevent forensic recovery.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?")
+                .setMessage("This will permanently delete ALL your data including:\n• All messages and chats\n• All contacts\n• Wallet information\n• Recovery phrases\n• All settings\n\nAccount keys will be destroyed and all app-owned data will be deleted. Flash storage cannot provide a reliable overwrite-pass guarantee.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?")
                 .setPositiveButton("WIPE ACCOUNT") { _, _ ->
                     performSecureWipe()
                 }
@@ -70,7 +70,7 @@ class WipeAccountActivity : AppCompatActivity() {
     }
 
     /**
-     * Perform secure wipe with 3-pass overwrite
+     * Perform cryptographic erase followed by comprehensive app-data deletion.
      */
     private fun performSecureWipe() {
         lifecycleScope.launch {
@@ -87,11 +87,7 @@ class WipeAccountActivity : AppCompatActivity() {
                     // Clear database instance first
                     SecureLegionDatabase.clearInstance()
 
-                    // Wipe all cryptographic keys
-                    val keyManager = KeyManager.getInstance(this@WipeAccountActivity)
-                    keyManager.wipeAllKeys()
-
-                    // Securely wipe all data (3-pass overwrite)
+                    // Cryptographically erase keys and delete all app-owned data.
                     SecureWipe.wipeAllData(this@WipeAccountActivity)
                 }
 

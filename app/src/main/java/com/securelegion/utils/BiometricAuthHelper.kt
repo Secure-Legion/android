@@ -1,9 +1,10 @@
 package com.securelegion.utils
 
 import android.content.Context
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
-import android.security.keystore.UserNotAuthenticatedException
 import android.util.Base64
 import android.util.Log
 import androidx.biometric.BiometricManager
@@ -21,9 +22,9 @@ import javax.crypto.spec.GCMParameterSpec
  *
  * Security Features:
  * - Uses Android Keystore (hardware-backed when available)
- * - Biometric key never leaves TEE/StrongBox
- * - Encrypts password hash with biometric-protected key
- * - Requires biometric authentication to decrypt
+ * - Biometric key is non-exportable from Android Keystore
+ * - Encrypts the account password with a per-use authenticated Keystore key
+ * - Binds each encrypt/decrypt operation to BiometricPrompt.CryptoObject
  */
 class BiometricAuthHelper(private val context: Context) {
 
@@ -37,20 +38,21 @@ class BiometricAuthHelper(private val context: Context) {
         private const val PREFS_NAME = "biometric_auth"
         private const val PREF_ENCRYPTED_PASSWORD_HASH = "encrypted_password_hash"
         private const val PREF_IV = "iv"
+        private const val PREF_KEY_VERSION = "key_version"
+        private const val KEY_VERSION = 2
     }
 
     /**
      * Check if biometric authentication is available on this device
-     * Accepts both BIOMETRIC_STRONG (fingerprint) and BIOMETRIC_WEAK (face unlock)
+     * Only Class 3 (BIOMETRIC_STRONG) authenticators can authorize the
+     * per-operation cryptographic key used by this helper.
      */
     fun isBiometricAvailable(): BiometricStatus {
         val biometricManager = BiometricManager.from(context)
-        // Check for any biometric (strong OR weak) — face unlock is Class 2 (WEAK) on most devices
-        val allowedAuthenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        val allowedAuthenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
         val result = biometricManager.canAuthenticate(allowedAuthenticators)
 
-        android.util.Log.d(TAG, "BiometricManager.canAuthenticate(STRONG|WEAK) returned: $result")
+        android.util.Log.d(TAG, "BiometricManager.canAuthenticate(BIOMETRIC_STRONG) returned: $result")
 
         return when (result) {
             BiometricManager.BIOMETRIC_SUCCESS -> {
@@ -87,7 +89,16 @@ class BiometricAuthHelper(private val context: Context) {
             return false
         }
 
-        // Also verify the key still exists (it can be invalidated by lockout)
+        // Legacy keys relied on a UI-only prompt and were usable without a
+        // cryptographic authentication token. Require secure re-enrollment.
+        if (prefs.getInt(PREF_KEY_VERSION, 0) != KEY_VERSION) {
+            Log.w(TAG, "Legacy biometric key found; forcing secure re-enrollment")
+            disableBiometric()
+            return false
+        }
+
+        // Also verify the key still exists (it can be invalidated by lockout or
+        // biometric enrollment changes).
         val keyExists = try {
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
             keyStore.load(null)
@@ -127,33 +138,44 @@ class BiometricAuthHelper(private val context: Context) {
         onError: (String) -> Unit
     ) {
         try {
+            // Enrollment always creates a fresh, authentication-bound key. This
+            // also removes any legacy UI-gated key left by an older app version.
+            disableBiometric()
             val secretKey = getOrCreateSecretKey()
+            val cipher = getCipher().apply {
+                init(Cipher.ENCRYPT_MODE, secretKey)
+            }
 
             val biometricPrompt = createBiometricPrompt(activity,
-                onAuthSuccess = {
+                onAuthSuccess = { result ->
+                    var passwordBytes: ByteArray? = null
                     try {
-                        // Encrypt actual password after biometric gate passes
-                        val passwordBytes = password.toByteArray(Charsets.UTF_8)
-                        val cipher = getCipher()
-                        cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-                        val encryptedData = cipher.doFinal(passwordBytes)
-                        val iv = cipher.iv
-
-                        // Zeroize plaintext bytes
-                        passwordBytes.fill(0)
+                        val authorizedCipher = result.cryptoObject?.cipher
+                            ?: throw SecurityException("Authenticated cipher unavailable")
+                        passwordBytes = password.toByteArray(Charsets.UTF_8)
+                        val encryptedData = authorizedCipher.doFinal(passwordBytes)
+                        val iv = authorizedCipher.iv
 
                         // Store encrypted password and IV
                         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                        prefs.edit()
+                        val stored = prefs.edit()
                             .putString(PREF_ENCRYPTED_PASSWORD_HASH, Base64.encodeToString(encryptedData, Base64.NO_WRAP))
                             .putString(PREF_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
-                            .apply()
+                            .putInt(PREF_KEY_VERSION, KEY_VERSION)
+                            .commit()
+                        encryptedData.fill(0)
+                        if (!stored) {
+                            throw IllegalStateException("Failed to persist biometric enrollment")
+                        }
 
                         Log.i(TAG, "Biometric authentication enabled - password encrypted")
                         onSuccess()
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to encrypt password", e)
+                        disableBiometric()
                         onError("Failed to encrypt password: ${e.message}")
+                    } finally {
+                        passwordBytes?.fill(0)
                     }
                 },
                 onAuthError = { errorMsg ->
@@ -164,16 +186,12 @@ class BiometricAuthHelper(private val context: Context) {
 
             val promptInfo = BiometricPrompt.PromptInfo.Builder()
                 .setTitle("Enable Biometric Unlock")
-                .setSubtitle("Authenticate to enable fingerprint/face unlock")
+                .setSubtitle("Authenticate to enable secure biometric unlock")
                 .setNegativeButtonText("Cancel")
-                .setAllowedAuthenticators(
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    BiometricManager.Authenticators.BIOMETRIC_WEAK
-                )
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 .build()
 
-            // Authenticate without CryptoObject — allows both fingerprint (Class 3) and face (Class 2)
-            biometricPrompt.authenticate(promptInfo)
+            biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to enable biometric", e)
             onError("Failed to enable biometric: ${e.message}")
@@ -209,35 +227,41 @@ class BiometricAuthHelper(private val context: Context) {
 
             val encryptedData = Base64.decode(encryptedDataB64, Base64.NO_WRAP)
             val iv = Base64.decode(ivB64, Base64.NO_WRAP)
+            val secretKey = getSecretKey()
+            if (secretKey == null) {
+                disableBiometric()
+                onError("Biometric setup needs to be refreshed. Please use your password and re-enable biometrics in settings.")
+                return
+            }
+            val cipher = getCipher().apply {
+                init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+            }
 
             val biometricPrompt = createBiometricPrompt(activity,
-                onAuthSuccess = {
+                onAuthSuccess = { result ->
                     try {
-                        // Decrypt after biometric gate passes
-                        val cipher = getCipher()
-                        val secretKey = getSecretKey()
-                        if (secretKey == null) {
-                            onError("Biometric key not found")
-                            return@createBiometricPrompt
-                        }
-                        cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
-                        val decryptedBytes = cipher.doFinal(encryptedData)
+                        val authorizedCipher = result.cryptoObject?.cipher
+                            ?: throw SecurityException("Authenticated cipher unavailable")
+                        val decryptedBytes = authorizedCipher.doFinal(encryptedData)
                         val password = String(decryptedBytes, Charsets.UTF_8)
                         decryptedBytes.fill(0) // Zeroize plaintext bytes
                         Log.i(TAG, "Biometric authentication successful - password decrypted")
                         onSuccess(password)
-                    } catch (e: UserNotAuthenticatedException) {
-                        // Old key was created with setUserAuthenticationRequired(true)
-                        // It can't be used without CryptoObject binding — force re-enrollment
-                        Log.w(TAG, "Old biometric key requires re-enrollment (migrating to new key format)")
+                    } catch (e: KeyPermanentlyInvalidatedException) {
+                        Log.w(TAG, "Biometric key invalidated; re-enrollment required")
                         disableBiometric()
                         onError("Biometric setup needs to be refreshed. Please use your password and re-enable biometrics in settings.")
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to decrypt password", e)
                         onError("Failed to decrypt password: ${e.message}")
+                    } finally {
+                        encryptedData.fill(0)
+                        iv.fill(0)
                     }
                 },
                 onAuthError = { errorMsg ->
+                    encryptedData.fill(0)
+                    iv.fill(0)
                     Log.w(TAG, "Biometric authentication failed: $errorMsg")
                     onError(errorMsg)
                 }
@@ -245,15 +269,16 @@ class BiometricAuthHelper(private val context: Context) {
 
             val promptInfo = BiometricPrompt.PromptInfo.Builder()
                 .setTitle("Unlock Secure Legion")
-                .setSubtitle("Use fingerprint, face, or device PIN to unlock")
-                .setAllowedAuthenticators(
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                )
+                .setSubtitle("Use a strong enrolled biometric to unlock")
+                .setNegativeButtonText("Use Password")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 .build()
 
-            // Authenticate without CryptoObject — allows both fingerprint (Class 3) and face (Class 2)
-            biometricPrompt.authenticate(promptInfo)
+            biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            Log.w(TAG, "Biometric key invalidated; re-enrollment required")
+            disableBiometric()
+            onError("Biometric setup needs to be refreshed. Please use your password and re-enable biometrics in settings.")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to authenticate with biometric", e)
             onError("Failed to authenticate: ${e.message}")
@@ -270,7 +295,8 @@ class BiometricAuthHelper(private val context: Context) {
             prefs.edit()
                 .remove(PREF_ENCRYPTED_PASSWORD_HASH)
                 .remove(PREF_IV)
-                .apply()
+                .remove(PREF_KEY_VERSION)
+                .commit()
 
             // Delete biometric key from keystore
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
@@ -287,10 +313,9 @@ class BiometricAuthHelper(private val context: Context) {
      * Create or retrieve the secret key for biometric-gated encryption.
      * Key is stored in Android Keystore (hardware-backed when available).
      *
-     * Note: The key itself does NOT require biometric auth at the hardware level.
-     * Instead, the BiometricPrompt serves as the authentication gate before the key
-     * is used. This allows both Class 2 (face unlock) and Class 3 (fingerprint)
-     * biometrics to work. The key material still never leaves the TEE/StrongBox.
+     * Every key operation requires a fresh Class 3 biometric authentication and is
+     * bound to BiometricPrompt through a CryptoObject. UI success alone cannot use
+     * this key.
      */
     private fun getOrCreateSecretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
@@ -300,13 +325,13 @@ class BiometricAuthHelper(private val context: Context) {
             return keyStore.getKey(KEY_NAME, null) as SecretKey
         }
 
-        // Create new key - try with StrongBox first, fallback to regular TEE if unavailable
+        // Create a new key, preferring StrongBox when the device supports it.
         val keyGenerator = KeyGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_AES,
             ANDROID_KEYSTORE
         )
 
-        // Try with StrongBox first (highest security, but not all devices have it)
+        // Try StrongBox first; not all devices or AES modes support it.
         var secretKey: SecretKey? = null
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             try {
@@ -317,6 +342,7 @@ class BiometricAuthHelper(private val context: Context) {
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .setKeySize(256)
+                    .applyPerUseAuthentication()
                     .setIsStrongBoxBacked(true)
                     .build()
 
@@ -328,7 +354,8 @@ class BiometricAuthHelper(private val context: Context) {
             }
         }
 
-        // Fallback to regular hardware-backed Keystore (TEE) if StrongBox unavailable
+        // Fall back to the standard Android Keystore provider. Its security
+        // level is device-specific and must not be described as guaranteed TEE.
         if (secretKey == null) {
             val keyGenParameterSpec = KeyGenParameterSpec.Builder(
                 KEY_NAME,
@@ -337,14 +364,27 @@ class BiometricAuthHelper(private val context: Context) {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(256)
+                .applyPerUseAuthentication()
                 .build()
 
             keyGenerator.init(keyGenParameterSpec)
             secretKey = keyGenerator.generateKey()
-            Log.i(TAG, "Created biometric key in TEE (hardware-backed)")
+            Log.i(TAG, "Created biometric key in Android Keystore")
         }
 
         return secretKey
+    }
+
+    private fun KeyGenParameterSpec.Builder.applyPerUseAuthentication(): KeyGenParameterSpec.Builder {
+        setUserAuthenticationRequired(true)
+        setInvalidatedByBiometricEnrollment(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+        } else {
+            @Suppress("DEPRECATION")
+            setUserAuthenticationValidityDurationSeconds(-1)
+        }
+        return this
     }
 
     /**
@@ -377,7 +417,7 @@ class BiometricAuthHelper(private val context: Context) {
      */
     private fun createBiometricPrompt(
         activity: FragmentActivity,
-        onAuthSuccess: () -> Unit,
+        onAuthSuccess: (BiometricPrompt.AuthenticationResult) -> Unit,
         onAuthError: (String) -> Unit
     ): BiometricPrompt {
         val executor = ContextCompat.getMainExecutor(activity)
@@ -390,7 +430,7 @@ class BiometricAuthHelper(private val context: Context) {
 
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 super.onAuthenticationSucceeded(result)
-                onAuthSuccess()
+                onAuthSuccess(result)
             }
 
             override fun onAuthenticationFailed() {

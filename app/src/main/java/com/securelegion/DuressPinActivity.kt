@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.securelegion.crypto.KeyManager
 import com.securelegion.utils.ThemedToast
 
 class DuressPinActivity : AppCompatActivity() {
@@ -47,19 +48,26 @@ class DuressPinActivity : AppCompatActivity() {
             val storedHashB64 = prefs.getString(KEY_DURESS_PIN, null) ?: return false
             val storedSaltB64 = prefs.getString(KEY_DURESS_SALT, null) ?: return false
 
+            var storedHash: ByteArray? = null
+            var salt: ByteArray? = null
+            var enteredPinHash: ByteArray? = null
             try {
                 // Decode stored hash and salt
-                val storedHash = android.util.Base64.decode(storedHashB64, android.util.Base64.NO_WRAP)
-                val salt = android.util.Base64.decode(storedSaltB64, android.util.Base64.NO_WRAP)
+                storedHash = android.util.Base64.decode(storedHashB64, android.util.Base64.NO_WRAP)
+                salt = android.util.Base64.decode(storedSaltB64, android.util.Base64.NO_WRAP)
 
                 // Hash entered PIN with same salt
-                val enteredPinHash = com.securelegion.crypto.RustBridge.hashPassword(enteredPin, salt)
+                enteredPinHash = com.securelegion.crypto.RustBridge.hashPassword(enteredPin, salt)
 
                 // Constant-time comparison to prevent timing attacks
                 return java.security.MessageDigest.isEqual(storedHash, enteredPinHash)
             } catch (e: Exception) {
                 Log.e(TAG, "Error verifying duress PIN", e)
                 return false
+            } finally {
+                storedHash?.fill(0)
+                salt?.fill(0)
+                enteredPinHash?.fill(0)
             }
         }
 
@@ -107,8 +115,13 @@ class DuressPinActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            if (pin.length < 4) {
-                ThemedToast.show(this, "PIN must be at least 4 digits")
+            if (pin.length !in 6..12 || !pin.all { it.isDigit() }) {
+                ThemedToast.show(this, "PIN must be 6 to 12 digits")
+                return@setOnClickListener
+            }
+
+            if (KeyManager.getInstance(this).verifyDevicePassword(pin)) {
+                ThemedToast.showLong(this, "Duress PIN must be different from your unlock password")
                 return@setOnClickListener
             }
 
@@ -148,10 +161,13 @@ class DuressPinActivity : AppCompatActivity() {
         val pinHash = com.securelegion.crypto.RustBridge.hashPassword(pin, salt)
 
         // Store both hash and salt (salt is not secret, hash is)
-        prefs.edit()
+        val stored = prefs.edit()
             .putString(KEY_DURESS_PIN, android.util.Base64.encodeToString(pinHash, android.util.Base64.NO_WRAP))
             .putString(KEY_DURESS_SALT, android.util.Base64.encodeToString(salt, android.util.Base64.NO_WRAP))
-            .apply()
+            .commit()
+        pinHash.fill(0)
+        salt.fill(0)
+        check(stored) { "Failed to save duress PIN" }
 
         Log.i(TAG, "Duress PIN hash saved securely (Argon2id)")
     }

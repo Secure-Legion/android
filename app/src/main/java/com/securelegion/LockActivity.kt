@@ -25,7 +25,12 @@ import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 class LockActivity : AppCompatActivity() {
+
+    companion object {
+        private const val DURESS_ALERT_DEADLINE_MS = 2_500L
+    }
 
     private lateinit var passwordSection: LinearLayout
     private lateinit var biometricHelper: BiometricAuthHelper
@@ -473,16 +478,29 @@ class LockActivity : AppCompatActivity() {
             try {
                 Log.w("LockActivity", "Executing distress protocol")
 
-                // Send panic notifications to distress contacts
-                sendPanicNotifications()
-
                 // Check if phone should be wiped
                 val shouldWipe = DuressPinActivity.shouldWipePhoneOnDistress(this@LockActivity)
 
                 if (shouldWipe) {
+                    // Alerts are best effort. A stalled network must never postpone
+                    // local key destruction beyond the strict deadline.
+                    val alertJob = launch(Dispatchers.IO) {
+                        sendPanicNotifications()
+                    }
+                    val alertsFinished = withTimeoutOrNull(DURESS_ALERT_DEADLINE_MS) {
+                        alertJob.join()
+                        true
+                    } ?: false
+                    if (!alertsFinished) {
+                        Log.w("LockActivity", "Distress alert deadline reached; prioritizing local wipe")
+                        alertJob.cancel()
+                    }
+
                     Log.w("LockActivity", "Wipe toggle ON - wiping all data")
                     wipeAllData()
+                    return@launch
                 } else {
+                    sendPanicNotifications()
                     Log.w("LockActivity", "Wipe toggle OFF - enabling silent message blocking")
                     enableMessageBlocking()
                 }
@@ -543,7 +561,7 @@ class LockActivity : AppCompatActivity() {
                 var sentCount = 0
                 for (contact in trustedContacts) {
                     try {
-                        Log.i("LockActivity", "Sending silent distress alert to ${contact.displayName}")
+                        Log.i("LockActivity", "Queueing silent distress alert")
 
                         val result = messageService.sendMessage(
                             contactId = contact.id,
@@ -560,16 +578,16 @@ class LockActivity : AppCompatActivity() {
                             if (message != null) {
                                 try {
                                     database.messageDao().deleteMessageById(message.id)
-                                    Log.i("LockActivity", "Distress alert sent and erased locally for ${contact.displayName}")
+                                    Log.i("LockActivity", "Distress alert sent and erased locally")
                                 } catch (e: Exception) {
                                     Log.e("LockActivity", "Failed to erase local distress message", e)
                                 }
                             }
                         } else {
-                            Log.e("LockActivity", "Failed to queue distress alert for ${contact.displayName}: ${result.exceptionOrNull()?.message}")
+                            Log.e("LockActivity", "Failed to queue a distress alert")
                         }
                     } catch (e: Exception) {
-                        Log.e("LockActivity", "Failed to send distress alert to ${contact.displayName}", e)
+                        Log.e("LockActivity", "Failed to send a distress alert", e)
                     }
                 }
 
@@ -581,12 +599,12 @@ class LockActivity : AppCompatActivity() {
     }
 
     /**
-     * Wipe all data (keys, database, settings) with 3-pass secure overwrite
+     * Cryptographically erase keys, then remove all app-owned account data.
      */
     private suspend fun wipeAllData() {
         withContext(Dispatchers.IO) {
             try {
-                Log.w("LockActivity", "WIPING ALL DATA (3-pass secure overwrite)")
+                Log.w("LockActivity", "WIPING ALL ACCOUNT DATA")
 
                 // Stop TorService FIRST to prevent connection loops after wipe
                 withContext(Dispatchers.Main) {
@@ -599,11 +617,7 @@ class LockActivity : AppCompatActivity() {
                     }
                 }
 
-                // Wipe all cryptographic keys
-                val keyManager = KeyManager.getInstance(this@LockActivity)
-                keyManager.wipeAllKeys()
-
-                // Securely wipe all data (3-pass overwrite)
+                // Cryptographically erase keys and delete all app-owned data.
                 SecureWipe.wipeAllData(this@LockActivity)
 
                 Log.w("LockActivity", "All data securely wiped")

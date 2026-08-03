@@ -2639,7 +2639,7 @@ class ChatActivity : BaseActivity() {
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
 
-                    // If it's a voice message, securely wipe the audio file using DOD 3-pass
+                    // If it's a voice message, delete the app-owned encrypted audio file.
                     if (message.messageType == Message.MESSAGE_TYPE_VOICE && message.voiceFilePath != null) {
                         try {
                             val voiceFile = File(message.voiceFilePath)
@@ -2786,7 +2786,7 @@ class ChatActivity : BaseActivity() {
                         // Get the message to check if it's a voice message
                         val message = database.messageDao().getMessageById(messageId)
 
-                        // If it's a voice message, securely wipe the audio file using DOD 3-pass
+                        // If it's a voice message, delete the app-owned encrypted audio file.
                         if (message?.messageType == Message.MESSAGE_TYPE_VOICE && message.voiceFilePath != null) {
                             try {
                                 val voiceFile = File(message.voiceFilePath)
@@ -2806,7 +2806,7 @@ class ChatActivity : BaseActivity() {
                     Log.d(TAG, "Deleted ${regularMessageIds.size} messages")
                 }
 
-                Log.d(TAG, "Securely deleted ${selectedIds.size} messages using DOD 3-pass wiping")
+                Log.d(TAG, "Deleted ${selectedIds.size} messages and associated app-owned media")
 
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {

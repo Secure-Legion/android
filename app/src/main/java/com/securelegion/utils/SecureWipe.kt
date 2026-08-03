@@ -1,252 +1,151 @@
 package com.securelegion.utils
 
+import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.util.Log
+import androidx.work.WorkManager
+import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.RustBridge
+import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.services.TorService
 import java.io.File
-import java.io.RandomAccessFile
-import java.security.SecureRandom
+import java.nio.file.Files
+import java.security.KeyStore
 
 /**
- * SecureWipe - Secure data deletion utility
+ * Cryptographically erase account keys, then remove every app-owned data
+ * location that can contain messages, Tor state, media, caches, or settings.
  *
- * Implements DoD 5220.22-M standard (3-pass overwrite):
- * - Pass 1: Write 0x00 (all zeros)
- * - Pass 2: Write 0xFF (all ones)
- * - Pass 3: Write random data
- *
- * This makes forensic data recovery extremely difficult.
+ * Flash storage remapping makes overwrite-pass guarantees unreliable. The
+ * security boundary is key deletion plus Android file-based encryption, followed
+ * by best-effort deletion of all remaining app files.
  */
 object SecureWipe {
-
     private const val TAG = "SecureWipe"
-    private const val BUFFER_SIZE = 4096 // 4KB buffer for efficient writing
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 
-    /**
-     * Securely wipe all app data
-     * - Overwrites database file 3 times
-     * - Wipes all cryptographic keys
-     * - Clears all SharedPreferences
-     * - Deletes all app files
-     */
+    @Synchronized
     fun wipeAllData(context: Context) {
-        try {
-            Log.w(TAG, "Starting secure wipe of all data")
+        val appContext = context.applicationContext
+        Log.w(TAG, "Starting cryptographic account wipe")
 
-            // 1. Securely wipe database file
-            val dbPath = context.getDatabasePath("secure_legion.db")
-            if (dbPath.exists()) {
-                Log.i(TAG, "Securely wiping database: ${dbPath.absolutePath}")
-                secureDeleteFile(dbPath)
-            }
-
-            // 2. Securely wipe database journal files
-            val dbJournal = File(dbPath.absolutePath + "-journal")
-            if (dbJournal.exists()) {
-                Log.i(TAG, "Securely wiping journal file")
-                secureDeleteFile(dbJournal)
-            }
-
-            val dbWal = File(dbPath.absolutePath + "-wal")
-            if (dbWal.exists()) {
-                Log.i(TAG, "Securely wiping WAL file")
-                secureDeleteFile(dbWal)
-            }
-
-            val dbShm = File(dbPath.absolutePath + "-shm")
-            if (dbShm.exists()) {
-                Log.i(TAG, "Securely wiping SHM file")
-                secureDeleteFile(dbShm)
-            }
-
-            // 3. Securely wipe all encrypted voice files
-            val voiceDir = File(context.filesDir, "voice_messages")
-            if (voiceDir.exists() && voiceDir.isDirectory) {
-                Log.i(TAG, "Securely wiping voice files")
-                val voiceFiles = voiceDir.listFiles()
-                voiceFiles?.forEach { voiceFile ->
-                    if (voiceFile.isFile && voiceFile.extension == "enc") {
-                        Log.d(TAG, "Securely wiping voice file: ${voiceFile.name}")
-                        secureDeleteFile(voiceFile)
-                    }
-                }
-                // Delete the directory
-                voiceDir.delete()
-            }
-
-            // 3b. Securely wipe all image files (encrypted .enc and legacy .img)
-            val imageDir = File(context.filesDir, "image_messages")
-            if (imageDir.exists() && imageDir.isDirectory) {
-                Log.i(TAG, "Securely wiping image files")
-                val imageFiles = imageDir.listFiles()
-                imageFiles?.forEach { imageFile ->
-                    if (imageFile.isFile) {
-                        Log.d(TAG, "Securely wiping image file: ${imageFile.name}")
-                        secureDeleteFile(imageFile)
-                    }
-                }
-                imageDir.delete()
-            }
-
-            // 4. Securely wipe temp voice files (cache)
-            val voiceTempDir = File(context.cacheDir, "voice_temp")
-            if (voiceTempDir.exists() && voiceTempDir.isDirectory) {
-                Log.i(TAG, "Securely wiping temp voice files")
-                val tempFiles = voiceTempDir.listFiles()
-                tempFiles?.forEach { tempFile ->
-                    if (tempFile.isFile) {
-                        secureDeleteFile(tempFile)
-                    }
-                }
-                // Delete the directory
-                voiceTempDir.delete()
-            }
-
-            // 5. Clear all SharedPreferences
-            Log.i(TAG, "Clearing all SharedPreferences")
-            clearAllSharedPreferences(context)
-
-            // 6. Wipe cryptographic keys (managed by EncryptedSharedPreferences)
-            // Keys are stored in Android Keystore and will be removed when prefs are cleared
-
-            Log.w(TAG, "Secure wipe completed successfully")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to securely wipe data", e)
-            throw SecureWipeException("Failed to securely wipe data: ${e.message}", e)
+        bestEffort("mark session locked") {
+            SessionManager.setLocked(appContext)
         }
+        bestEffort("cancel background work") {
+            WorkManager.getInstance(appContext).cancelAllWork()
+        }
+        bestEffort("stop Tor service") {
+            appContext.stopService(Intent(appContext, TorService::class.java))
+        }
+        bestEffort("stop native listeners") {
+            RustBridge.stopIncomingEventPolling()
+            RustBridge.stopListeners()
+            RustBridge.clearAllEphemeralServices()
+            RustBridge.shutdownArti()
+        }
+        bestEffort("close encrypted database") {
+            SecureLegionDatabase.clearInstance()
+        }
+
+        // Delete user-authenticated and root-seed keys before deleting ciphertext.
+        bestEffort("remove biometric key") {
+            BiometricAuthHelper(appContext).disableBiometric()
+        }
+        bestEffort("clear root keys") {
+            KeyManager.getInstance(appContext).wipeAllKeys()
+        }
+        bestEffort("remove Android Keystore entries") {
+            deleteAllKeystoreEntries()
+        }
+
+        // Clear live SharedPreferences instances before deleting their XML files.
+        bestEffort("clear preferences") {
+            clearAllSharedPreferences(appContext)
+        }
+        bestEffort("remove app-owned files") {
+            deleteAppOwnedData(appContext)
+        }
+
+        RestoreSeedSession.clear()
+        KeyManager.resetInstanceAfterWipe()
+        bestEffort("clear notifications") {
+            appContext.getSystemService(NotificationManager::class.java)?.cancelAll()
+        }
+
+        Log.w(TAG, "Cryptographic account wipe completed")
     }
 
     /**
-     * Securely delete a file using DoD 5220.22-M standard (3-pass overwrite)
-     * @param file The file to securely delete
+     * Compatibility entry point for media/database cleanup. On flash storage,
+     * deletion plus platform file-based encryption is more honest than claiming
+     * overwrite passes that the storage controller may remap.
      */
     fun secureDeleteFile(file: File) {
-        if (!file.exists()) {
-            Log.w(TAG, "File does not exist: ${file.absolutePath}")
-            return
-        }
-
-        try {
-            val fileSize = file.length()
-            Log.i(TAG, "Securely deleting file: ${file.name} (${fileSize} bytes)")
-
-            RandomAccessFile(file, "rws").use { raf ->
-                // Pass 1: Write all zeros (0x00)
-                Log.d(TAG, "Pass 1/3: Writing zeros")
-                overwriteFile(raf, fileSize, 0x00.toByte())
-
-                // Pass 2: Write all ones (0xFF)
-                Log.d(TAG, "Pass 2/3: Writing ones")
-                overwriteFile(raf, fileSize, 0xFF.toByte())
-
-                // Pass 3: Write random data
-                Log.d(TAG, "Pass 3/3: Writing random data")
-                overwriteFileRandom(raf, fileSize)
-            }
-
-            // Delete the file after overwriting
-            if (file.delete()) {
-                Log.i(TAG, "File deleted successfully: ${file.name}")
-            } else {
-                Log.e(TAG, "Failed to delete file: ${file.name}")
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to securely delete file: ${file.name}", e)
-            // Still try to delete the file even if overwrite failed
-            file.delete()
-        }
+        deleteTree(file)
     }
 
-    /**
-     * Overwrite file with a specific byte pattern
-     */
-    private fun overwriteFile(raf: RandomAccessFile, fileSize: Long, pattern: Byte) {
-        raf.seek(0)
-        val buffer = ByteArray(BUFFER_SIZE) { pattern }
-
-        var remaining = fileSize
-        while (remaining > 0) {
-            val toWrite = minOf(remaining, BUFFER_SIZE.toLong()).toInt()
-            raf.write(buffer, 0, toWrite)
-            remaining -= toWrite
-        }
-
-        // Force write to disk
-        raf.fd.sync()
+    private fun deleteAllKeystoreEntries() {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+        keyStore.load(null)
+        val aliases = keyStore.aliases().toList()
+        aliases.forEach { alias -> keyStore.deleteEntry(alias) }
     }
 
-    /**
-     * Overwrite file with random data
-     */
-    private fun overwriteFileRandom(raf: RandomAccessFile, fileSize: Long) {
-        raf.seek(0)
-        val random = SecureRandom()
-        val buffer = ByteArray(BUFFER_SIZE)
-
-        var remaining = fileSize
-        while (remaining > 0) {
-            val toWrite = minOf(remaining, BUFFER_SIZE.toLong()).toInt()
-            random.nextBytes(buffer)
-            raf.write(buffer, 0, toWrite)
-            remaining -= toWrite
-        }
-
-        // Force write to disk
-        raf.fd.sync()
-    }
-
-    /**
-     * Clear all SharedPreferences except critical security settings
-     */
     private fun clearAllSharedPreferences(context: Context) {
-        try {
-            // List of SharedPreferences to preserve during wipe
-            val preservedPrefs = setOf(
-                "duress_settings_enc" // Preserve duress PIN so it can be used again
-            )
-
-            // Get all SharedPreferences files
-            val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
-
-            if (prefsDir.exists() && prefsDir.isDirectory) {
-                val prefsFiles = prefsDir.listFiles()
-                prefsFiles?.forEach { prefsFile ->
-                    if (prefsFile.name.endsWith(".xml")) {
-                        val prefsName = prefsFile.name.removeSuffix(".xml")
-
-                        // Skip preserved SharedPreferences
-                        if (prefsName in preservedPrefs) {
-                            Log.i(TAG, "Preserving SharedPreferences: $prefsName (critical security settings)")
-                            return@forEach
-                        }
-
-                        Log.i(TAG, "Clearing SharedPreferences: $prefsName")
-
-                        try {
-                            context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
-                                .edit()
-                                .clear()
-                                .commit()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to clear SharedPreferences: $prefsName", e)
-                        }
-
-                        // Securely delete the XML file
-                        if (prefsFile.exists()) {
-                            secureDeleteFile(prefsFile)
-                        }
-                    }
+        val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
+        prefsDir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".xml") }
+            ?.forEach { prefsFile ->
+                val prefsName = prefsFile.name.removeSuffix(".xml")
+                bestEffort("clear preference file") {
+                    context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+                        .edit()
+                        .clear()
+                        .commit()
                 }
             }
+    }
 
+    private fun deleteAppOwnedData(context: Context) {
+        // Preserve only installed native libraries needed by the running process.
+        context.dataDir.listFiles()
+            ?.filterNot { it.name == "lib" }
+            ?.forEach(::deleteTree)
+
+        context.getExternalFilesDirs(null)
+            .filterNotNull()
+            .forEach(::deleteTree)
+        context.externalCacheDirs
+            .filterNotNull()
+            .forEach(::deleteTree)
+    }
+
+    private fun deleteTree(file: File) {
+        try {
+            if (Files.isSymbolicLink(file.toPath())) {
+                file.delete()
+                return
+            }
+            if (file.isDirectory) {
+                file.listFiles()?.forEach(::deleteTree)
+            }
+            if (file.exists() && !file.delete()) {
+                Log.w(TAG, "Could not delete one app-owned path")
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear SharedPreferences", e)
+            Log.w(TAG, "Failed to delete one app-owned path", e)
+        }
+    }
+
+    private inline fun bestEffort(label: String, action: () -> Unit) {
+        try {
+            action()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Wipe step failed: " + label, e)
         }
     }
 }
 
-/**
- * SecureWipe exception
- */
 class SecureWipeException(message: String, cause: Throwable? = null) : Exception(message, cause)

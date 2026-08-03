@@ -81,6 +81,14 @@ class DevicePasswordActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+            if (
+                DuressPinActivity.isDuressPinSet(this) &&
+                DuressPinActivity.verifyDuressPin(this, newPassword)
+            ) {
+                ThemedToast.showLong(this, "Unlock password must be different from your duress PIN")
+                return@setOnClickListener
+            }
+
             // Disable button while changing password
             findViewById<View>(R.id.changePasswordButton).isEnabled = false
 

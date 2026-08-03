@@ -904,7 +904,7 @@ class ContactOptionsActivity : BaseActivity() {
                             Log.w(TAG, "Non-critical: pending_requests_v2 SharedPrefs cleanup failed", e)
                         }
 
-                        Log.i(TAG, "Contact and all messages securely deleted (DOD 3-pass): ${contact.displayName}")
+                        Log.i(TAG, "Contact, messages, and associated app-owned media deleted")
                     }
 
                     ThemedToast.show(this@ContactOptionsActivity, "Contact deleted")

@@ -43,6 +43,7 @@ import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
 import com.securelegion.utils.BiometricAuthHelper
 import com.securelegion.utils.PasswordValidator
+import com.securelegion.utils.RestoreSeedSession
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +94,9 @@ class CreateAccountActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         isRestore = intent.getBooleanExtra("is_restore", false)
+        if (isRestore) {
+            RestoreSeedSession.clearLegacyDiskCopy(this)
+        }
 
         initializeViews()
         setupClickListeners()
@@ -339,16 +343,10 @@ class CreateAccountActivity : AppCompatActivity() {
                     // Get or generate seed phrase
                     val mnemonic: String
                     if (isRestore) {
-                        val masterKey = androidx.security.crypto.MasterKey.Builder(this@CreateAccountActivity)
-                            .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build()
-                        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-                            this@CreateAccountActivity, "restore_temp", masterKey,
-                            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                        )
-                        mnemonic = prefs.getString("seed_phrase", "")!!
-                        // Clear temporary storage immediately
-                        prefs.edit().remove("seed_phrase").apply()
+                        mnemonic = RestoreSeedSession.peek()
+                            ?: throw IllegalStateException(
+                                "Recovery phrase expired. Return to Import Recovery and enter it again."
+                            )
                         Log.d("CreateAccount", "Using imported seed phrase")
                     } else {
                         // Generate 128-bit entropy for 12-word BIP39 mnemonic
@@ -361,7 +359,7 @@ class CreateAccountActivity : AppCompatActivity() {
                     // Auto-wipe any existing on-device account before provisioning the new one.
                     // Covers "forgot password" (user can't reach WipeAccountActivity) and
                     // seed-phrase restore (explicit overwrite). Runs AFTER the restore-seed
-                    // capture above, since wipeAllData clears `restore_temp` SharedPrefs too.
+                    // is copied from the process-only handoff above.
                     val preCheckKeyManager = KeyManager.getInstance(this@CreateAccountActivity)
                     if (preCheckKeyManager.isAccountSetupComplete()) {
                         Log.w("CreateAccount", "Existing account detected — wiping before provisioning new one")
@@ -371,7 +369,6 @@ class CreateAccountActivity : AppCompatActivity() {
                             Log.w("CreateAccount", "Failed to stop TorService before wipe", e)
                         }
                         SecureLegionDatabase.clearInstance()
-                        preCheckKeyManager.wipeAllKeys()
                         com.securelegion.utils.SecureWipe.wipeAllData(this@CreateAccountActivity)
                         Log.i("CreateAccount", "Existing account wiped, proceeding with new account provisioning")
                     }
@@ -585,6 +582,10 @@ class CreateAccountActivity : AppCompatActivity() {
                     } else {
                         // New account — user must confirm backup
                         setupPrefs.edit().putBoolean("seed_phrase_confirmed", false).apply()
+                    }
+
+                    if (isRestore) {
+                        RestoreSeedSession.clear()
                     }
                 }
 
