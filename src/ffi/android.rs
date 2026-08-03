@@ -19,6 +19,7 @@ use crate::network::{TorManager, PENDING_CONNECTIONS, RX_MESSAGE_ACCEPT_COUNT, R
 use crate::audio::voice_streaming::{VoiceStreamingListener, VoicePacket};
 use tokio::sync::mpsc;
 use tokio::io::AsyncReadExt;
+use tokio_util::sync::CancellationToken;
 use ed25519_dalek::Signer;
 
 // ==================== PORT CONSTANTS (Single Source of Truth) ====================
@@ -48,7 +49,28 @@ const PING_PONG_HANDSHAKE_PORT: u16 = 9150; // Ping/Pong handshake port (used in
 static FR_SEND_INFLIGHT: Lazy<Mutex<HashMap<(u8, String), std::time::Instant>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-const FR_INFLIGHT_TTL_SECS: u64 = 130; // 24 retries × 5s + 10s buffer
+const FR_INFLIGHT_TTL_SECS: u64 = 50; // 45-second native deadline + cleanup margin
+
+/// Operation-scoped cancellation. Shutdown/network-generation changes cancel every token before
+/// dropping Arti so cloned clients cannot keep an obsolete outbound request alive.
+static FR_SEND_CANCELLATIONS: Lazy<Mutex<HashMap<String, CancellationToken>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+const FR_RESULT_SUCCESS: jint = 0;
+const FR_RESULT_TRANSIENT_NETWORK: jint = 1;
+const FR_RESULT_TOR_NOT_READY: jint = 2;
+const FR_RESULT_CANCELLED: jint = 3;
+const FR_RESULT_PERMANENT_INPUT: jint = 4;
+
+fn cancel_all_friend_request_operations() {
+    let tokens: Vec<CancellationToken> = {
+        let map = FR_SEND_CANCELLATIONS.lock().unwrap_or_else(|p| p.into_inner());
+        map.values().cloned().collect()
+    };
+    for token in tokens {
+        token.cancel();
+    }
+}
 
 fn try_acquire_fr_send_slot(wire_type: u8, target: &str) -> bool {
     let mut map = match FR_SEND_INFLIGHT.lock() {
@@ -204,8 +226,19 @@ macro_rules! catch_panic {
     ($env:expr, $code:expr, $default:expr) => {
         match panic::catch_unwind(panic::AssertUnwindSafe(|| $code)) {
             Ok(result) => result,
-            Err(_) => {
-                let _ = $env.throw_new("java/lang/RuntimeException", "Rust panic occurred");
+            Err(payload) => {
+                let message = if let Some(text) = payload.downcast_ref::<&str>() {
+                    (*text).to_owned()
+                } else if let Some(text) = payload.downcast_ref::<String>() {
+                    text.clone()
+                } else {
+                    "non-string panic payload".to_owned()
+                };
+                log::error!("Rust panic crossed JNI boundary: {}", message);
+                let _ = $env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("Rust panic occurred: {}", message),
+                );
                 $default
             }
         }
@@ -304,6 +337,48 @@ static GLOBAL_MESSAGE_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u
 static GLOBAL_VOICE_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
 static GLOBAL_FRIEND_REQUEST_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<Vec<u8>>>> = ArcSwapOption::const_empty();
 
+#[derive(Debug)]
+struct InboundEvent {
+    kind: u8,
+    connection_id: u64,
+    payload: Vec<u8>,
+}
+
+const INBOUND_EVENT_SHUTDOWN: u8 = 0;
+const INBOUND_EVENT_PING: u8 = 1;
+const INBOUND_EVENT_MESSAGE: u8 = 2;
+const INBOUND_EVENT_VOICE: u8 = 3;
+const INBOUND_EVENT_TAP: u8 = 4;
+const INBOUND_EVENT_FRIEND_REQUEST: u8 = 5;
+const INBOUND_EVENT_PONG: u8 = 6;
+const INBOUND_EVENT_ACK: u8 = 7;
+
+static GLOBAL_INBOUND_EVENT_SENDER: OnceCell<std::sync::mpsc::Sender<InboundEvent>> = OnceCell::new();
+static GLOBAL_INBOUND_EVENT_RECEIVER: OnceCell<Mutex<std::sync::mpsc::Receiver<InboundEvent>>> = OnceCell::new();
+
+fn inbound_event_sender() -> std::sync::mpsc::Sender<InboundEvent> {
+    GLOBAL_INBOUND_EVENT_SENDER
+        .get_or_init(|| {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let _ = GLOBAL_INBOUND_EVENT_RECEIVER.set(Mutex::new(receiver));
+            sender
+        })
+        .clone()
+}
+
+fn inbound_event_kind(name: &str) -> u8 {
+    match name {
+        "PING" => INBOUND_EVENT_PING,
+        "MESSAGE" => INBOUND_EVENT_MESSAGE,
+        "VOICE" => INBOUND_EVENT_VOICE,
+        "TAP" => INBOUND_EVENT_TAP,
+        "FRIEND_REQUEST" => INBOUND_EVENT_FRIEND_REQUEST,
+        "PONG" => INBOUND_EVENT_PONG,
+        "ACK" => INBOUND_EVENT_ACK,
+        _ => INBOUND_EVENT_SHUTDOWN,
+    }
+}
+
 /// Global Voice Streaming Listener (v2.0) — resettable for Android service restart.
 static GLOBAL_VOICE_LISTENER: Mutex<Option<Arc<tokio::sync::Mutex<VoiceStreamingListener>>>> = Mutex::new(None);
 
@@ -400,18 +475,20 @@ fn bridge_async_to_sync_pair(
     name: &'static str,
     mut async_rx: mpsc::UnboundedReceiver<(u64, Vec<u8>)>,
 ) -> std::sync::mpsc::Receiver<(u64, Vec<u8>)> {
-    let (sync_tx, sync_rx) = std::sync::mpsc::channel();
+    let (_legacy_tx, sync_rx) = std::sync::mpsc::channel();
+    let event_tx = inbound_event_sender();
+    let kind = inbound_event_kind(name);
     GLOBAL_RUNTIME.spawn(async move {
-        log::info!("async→sync bridge [{}]: forwarder task started", name);
+        log::info!("async→unified bridge [{}]: forwarder task started", name);
         let mut count: u64 = 0;
-        while let Some(msg) = async_rx.recv().await {
+        while let Some((connection_id, payload)) = async_rx.recv().await {
             count += 1;
-            if sync_tx.send(msg).is_err() {
-                log::warn!("async→sync bridge [{}]: sync receiver dropped after {} msgs, stopping", name, count);
+            if event_tx.send(InboundEvent { kind, connection_id, payload }).is_err() {
+                log::warn!("async→unified bridge [{}]: receiver dropped after {} msgs", name, count);
                 break;
             }
         }
-        log::warn!("async→sync bridge [{}]: async channel closed after {} msgs (all senders dropped)", name, count);
+        log::warn!("async→unified bridge [{}]: channel closed after {} msgs", name, count);
     });
     sync_rx
 }
@@ -421,18 +498,20 @@ fn bridge_async_to_sync_vec(
     name: &'static str,
     mut async_rx: mpsc::UnboundedReceiver<Vec<u8>>,
 ) -> std::sync::mpsc::Receiver<Vec<u8>> {
-    let (sync_tx, sync_rx) = std::sync::mpsc::channel();
+    let (_legacy_tx, sync_rx) = std::sync::mpsc::channel();
+    let event_tx = inbound_event_sender();
+    let kind = inbound_event_kind(name);
     GLOBAL_RUNTIME.spawn(async move {
-        log::info!("async→sync bridge [{}]: forwarder task started", name);
+        log::info!("async→unified bridge [{}]: forwarder task started", name);
         let mut count: u64 = 0;
-        while let Some(msg) = async_rx.recv().await {
+        while let Some(payload) = async_rx.recv().await {
             count += 1;
-            if sync_tx.send(msg).is_err() {
-                log::warn!("async→sync bridge [{}]: sync receiver dropped after {} msgs, stopping", name, count);
+            if event_tx.send(InboundEvent { kind, connection_id: 0, payload }).is_err() {
+                log::warn!("async→unified bridge [{}]: receiver dropped after {} msgs", name, count);
                 break;
             }
         }
-        log::warn!("async→sync bridge [{}]: async channel closed after {} msgs (all senders dropped)", name, count);
+        log::warn!("async→unified bridge [{}]: channel closed after {} msgs", name, count);
     });
     sync_rx
 }
@@ -1037,6 +1116,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_shutdownArti(
     _class: JClass,
 ) {
     log::info!("JNI: shutdownArti() called");
+    cancel_all_friend_request_operations();
     crate::network::arti::shutdown_arti();
 
     // Clear global TorManager (holds stale TorManager pointing at dead Arti client)
@@ -1630,6 +1710,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_notifyNetworkChanged(
     _env: JNIEnv,
     _class: JClass,
 ) {
+    cancel_all_friend_request_operations();
     crate::network::arti::notify_network_changed();
 }
 
@@ -2871,6 +2952,89 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendTap(
     }, 0)
 }
 
+fn send_friend_request_once(
+    recipient_onion: String,
+    payload: Vec<u8>,
+    wire_type: u8,
+    operation_id: String,
+) -> jint {
+    if recipient_onion.is_empty()
+        || !recipient_onion.to_ascii_lowercase().ends_with(".onion")
+        || payload.is_empty()
+        || operation_id.is_empty()
+    {
+        return FR_RESULT_PERMANENT_INPUT;
+    }
+    if !crate::network::arti::is_arti_ready() {
+        return FR_RESULT_TOR_NOT_READY;
+    }
+    if !try_acquire_fr_send_slot(wire_type, &recipient_onion) {
+        return FR_RESULT_TRANSIENT_NETWORK;
+    }
+
+    let token = CancellationToken::new();
+    {
+        let mut operations = FR_SEND_CANCELLATIONS.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(previous) = operations.insert(operation_id.clone(), token.clone()) {
+            previous.cancel();
+        }
+    }
+
+    let mut wire_message = Vec::with_capacity(payload.len() + 1);
+    wire_message.push(wire_type);
+    wire_message.extend_from_slice(&payload);
+    const FRIEND_REQUEST_PORT: u16 = 9151;
+    const SEND_DEADLINE_SECS: u64 = 45;
+
+    let result = GLOBAL_RUNTIME.block_on(async {
+        let send = async {
+            let mut stream = crate::network::arti::arti_connect_to_onion(
+                &recipient_onion,
+                FRIEND_REQUEST_PORT,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            stream.write_message(&wire_message).await.map_err(|e| e.to_string())?;
+            Ok::<(), String>(())
+        };
+        tokio::select! {
+            _ = token.cancelled() => FR_RESULT_CANCELLED,
+            outcome = tokio::time::timeout(
+                std::time::Duration::from_secs(SEND_DEADLINE_SECS),
+                send,
+            ) => match outcome {
+                Ok(Ok(())) => FR_RESULT_SUCCESS,
+                Ok(Err(error)) => {
+                    log::warn!("[FR] bounded send failed: {}", error);
+                    FR_RESULT_TRANSIENT_NETWORK
+                }
+                Err(_) => {
+                    log::warn!("[FR] bounded send reached {}s deadline", SEND_DEADLINE_SECS);
+                    FR_RESULT_TRANSIENT_NETWORK
+                }
+            }
+        }
+    });
+
+    FR_SEND_CANCELLATIONS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&operation_id);
+    release_fr_send_slot(wire_type, &recipient_onion);
+    result
+}
+
+fn parse_friend_request_args(
+    env: &mut JNIEnv,
+    recipient_onion: JString,
+    payload: JByteArray,
+) -> Result<(String, Vec<u8>), String> {
+    Ok((
+        jstring_to_string(env, recipient_onion)?,
+        jbytearray_to_vec(env, payload)?,
+    ))
+}
+
 /// Send friend request (fire-and-forget notification)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
@@ -2897,6 +3061,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
                 return 0;
             }
         };
+
+        let operation_id = format!("legacy-fr-{}", uuid::Uuid::new_v4());
+        return if send_friend_request_once(
+            recipient_onion_str,
+            friend_request_bytes,
+            crate::network::tor::MSG_TYPE_FRIEND_REQUEST,
+            operation_id,
+        ) == FR_RESULT_SUCCESS { JNI_TRUE } else { JNI_FALSE };
 
         log::info!(
             "[FR][FR_SEND] start target={} payload_bytes={}",
@@ -3006,6 +3178,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
             }
         };
 
+        let operation_id = format!("legacy-fra-{}", uuid::Uuid::new_v4());
+        return if send_friend_request_once(
+            recipient_onion_str,
+            acceptance_bytes,
+            crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED,
+            operation_id,
+        ) == FR_RESULT_SUCCESS { JNI_TRUE } else { JNI_FALSE };
+
         log::info!(
             "[FRA][FR_ACCEPT] start target={} payload_bytes={}",
             recipient_onion_str, acceptance_bytes.len()
@@ -3080,6 +3260,86 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
         release_fr_send_slot(wt, &recipient_onion_str);
         final_result
     }, 0)
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestResult(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    encrypted_friend_request: JByteArray,
+    operation_id: JString,
+) -> jint {
+    catch_panic!(env, {
+        let (target, payload) = match parse_friend_request_args(
+            &mut env,
+            recipient_onion,
+            encrypted_friend_request,
+        ) {
+            Ok(values) => values,
+            Err(_) => return FR_RESULT_PERMANENT_INPUT,
+        };
+        let operation_id = match jstring_to_string(&mut env, operation_id) {
+            Ok(value) => value,
+            Err(_) => return FR_RESULT_PERMANENT_INPUT,
+        };
+        send_friend_request_once(
+            target,
+            payload,
+            crate::network::tor::MSG_TYPE_FRIEND_REQUEST,
+            operation_id,
+        )
+    }, FR_RESULT_TRANSIENT_NETWORK)
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAcceptedResult(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    encrypted_acceptance: JByteArray,
+    operation_id: JString,
+) -> jint {
+    catch_panic!(env, {
+        let (target, payload) = match parse_friend_request_args(
+            &mut env,
+            recipient_onion,
+            encrypted_acceptance,
+        ) {
+            Ok(values) => values,
+            Err(_) => return FR_RESULT_PERMANENT_INPUT,
+        };
+        let operation_id = match jstring_to_string(&mut env, operation_id) {
+            Ok(value) => value,
+            Err(_) => return FR_RESULT_PERMANENT_INPUT,
+        };
+        send_friend_request_once(
+            target,
+            payload,
+            crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED,
+            operation_id,
+        )
+    }, FR_RESULT_TRANSIENT_NETWORK)
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_cancelFriendRequestOperation(
+    mut env: JNIEnv,
+    _class: JClass,
+    operation_id: JString,
+) {
+    catch_panic!(env, {
+        if let Ok(operation_id) = jstring_to_string(&mut env, operation_id) {
+            if let Some(token) = FR_SEND_CANCELLATIONS
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&operation_id)
+                .cloned()
+            {
+                token.cancel();
+            }
+        }
+    }, ())
 }
 
 /// Reset TorManager singleton state
@@ -9732,6 +9992,56 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_xchacha20Decrypt(
 // ==================== BLOCKING POLL JNI FUNCTIONS ====================
 // These block the JNI thread for up to 5 seconds waiting for data.
 // Used by Kotlin poller coroutines on Dispatchers.IO for zero-latency message receipt.
+
+/// Unified blocking event poll. Wire: [version=1][kind][connection_id LE u64][payload].
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingEventBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+    timeout_ms: jint,
+) -> jbyteArray {
+    catch_panic!(env, {
+        // Ensure the channel exists even if the Kotlin poller starts just before listeners.
+        let _ = inbound_event_sender();
+        let receiver = match GLOBAL_INBOUND_EVENT_RECEIVER.get() {
+            Some(receiver) => receiver,
+            None => return std::ptr::null_mut(),
+        };
+        let timeout = std::time::Duration::from_millis(timeout_ms.clamp(1, 60_000) as u64);
+        let event = receiver
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .recv_timeout(timeout)
+            .ok();
+        match event {
+            Some(event) => {
+                let mut encoded = Vec::with_capacity(10 + event.payload.len());
+                encoded.push(1);
+                encoded.push(event.kind);
+                encoded.extend_from_slice(&event.connection_id.to_le_bytes());
+                encoded.extend_from_slice(&event.payload);
+                match vec_to_jbytearray(&mut env, &encoded) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Wake the unified poller immediately during service shutdown.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopIncomingEventPolling(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    let _ = inbound_event_sender().send(InboundEvent {
+        kind: INBOUND_EVENT_SHUTDOWN,
+        connection_id: 0,
+        payload: Vec::new(),
+    });
+}
 
 /// Blocking poll for incoming Ping (blocks up to 5s)
 #[no_mangle]
