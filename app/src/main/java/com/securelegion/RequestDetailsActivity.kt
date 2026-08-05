@@ -8,7 +8,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.database.entities.Message
 import com.securelegion.services.SolanaService
-import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.launch
 
@@ -105,6 +104,7 @@ class RequestDetailsActivity : AppCompatActivity() {
         cryptoAmount = intent.getDoubleExtra(EXTRA_AMOUNT, 0.0)
         currency = intent.getStringExtra(EXTRA_CURRENCY) ?: "SOL"
         val paymentStatus = intent.getStringExtra(EXTRA_PAYMENT_STATUS) ?: Message.PAYMENT_STATUS_PENDING
+        val supportedCurrency = currency.uppercase() in setOf("SOL", "USDC", "USDT", "USD1", "SECURE")
 
         recipientName.text = name
 
@@ -113,7 +113,9 @@ class RequestDetailsActivity : AppCompatActivity() {
         sentSol.text = formattedCrypto
 
         // Update status message based on payment status
-        statusMessage.text = when (paymentStatus) {
+        statusMessage.text = if (!supportedCurrency) {
+            "This legacy payment is no longer supported"
+        } else when (paymentStatus) {
             Message.PAYMENT_STATUS_PAID -> "Request has been paid!"
             Message.PAYMENT_STATUS_EXPIRED -> "Request has expired"
             Message.PAYMENT_STATUS_CANCELLED -> "Request was cancelled"
@@ -132,17 +134,17 @@ class RequestDetailsActivity : AppCompatActivity() {
     }
 
     private fun fetchPriceAndUpdateUsd() {
+        if (currency.uppercase() !in setOf("SOL", "USDC", "USDT", "USD1", "SECURE")) {
+            amountRequested.text = "Unsupported"
+            moneySent.text = "Legacy payment"
+            return
+        }
         lifecycleScope.launch {
             try {
                 val price = when (currency.uppercase()) {
                     "SOL" -> {
                         val solanaService = SolanaService(this@RequestDetailsActivity)
                         val result = solanaService.getSolPrice()
-                        if (result.isSuccess) result.getOrNull() ?: 0.0 else 0.0
-                    }
-                    "ZEC" -> {
-                        val zcashService = ZcashService.getInstance(this@RequestDetailsActivity)
-                        val result = zcashService.getZecPrice()
                         if (result.isSuccess) result.getOrNull() ?: 0.0 else 0.0
                     }
                     else -> 0.0

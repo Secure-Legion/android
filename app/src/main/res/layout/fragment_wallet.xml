@@ -214,7 +214,7 @@
 
                 </LinearLayout>
 
-                <!-- Shield/Private Button -->
+                <!-- Swap Button -->
                 <LinearLayout
                     android:id="@+id/shieldButton"
                     android:layout_width="85dp"
@@ -230,16 +230,16 @@
                         android:id="@+id/shieldButtonIcon"
                         android:layout_width="28dp"
                         android:layout_height="28dp"
-                        android:src="@drawable/ic_shield"
+                        android:src="@drawable/ic_swap"
                         app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
-                        android:contentDescription="Shield" />
+                        android:contentDescription="Swap" />
 
                     <TextView
                         android:id="@+id/shieldButtonLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Shield"
+                        android:text="Swap"
                         android:textSize="12sp"
                         android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_medium" />
@@ -348,271 +348,9 @@
 
                 </LinearLayout>
 
-                <!-- ZEC Token -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:background="@drawable/wallet_token_bg"
-                    android:padding="16dp"
-                    android:layout_marginBottom="12dp"
-                    android:gravity="center_vertical"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <FrameLayout
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:layout_marginEnd="12dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:layout_width="34dp"
-                            android:layout_height="34dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_zcash"
-                            android:contentDescription="Zcash" />
-
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Zcash"
-                            android:textSize="16sp"
-                            android:textColor="?attr/colorOnSurface"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="ZEC"
-                            android:textSize="12sp"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:fontFamily="@font/poppins_regular" />
-
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:gravity="end">
-
-                        <TextView
-                            android:id="@+id/zecBalance"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="$0.00"
-                            android:textSize="16sp"
-                            android:textColor="?attr/colorOnSurface"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <TextView
-                            android:id="@+id/zecAmount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0.0000 ZEC"
-                            android:textSize="12sp"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:fontFamily="@font/poppins_regular"
-                            android:layout_marginTop="2dp" />
-
-                    </LinearLayout>
-
-                </LinearLayout>
 
             </LinearLayout>
 
-            <!-- Shielded Section -->
-            <LinearLayout
-                android:id="@+id/shieldedSection"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
-                android:paddingBottom="120dp">
-
-                <!-- Section Header -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Shielded"
-                    android:textSize="18sp"
-                    android:textColor="?attr/colorOnSurface"
-                    android:fontFamily="@font/space_grotesk_bold"
-                    android:paddingBottom="16dp" />
-
-                <!-- SOL Shielded -->
-                <LinearLayout
-                    android:id="@+id/solShieldedItem"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:background="@drawable/wallet_token_bg"
-                    android:padding="16dp"
-                    android:layout_marginBottom="12dp"
-                    android:gravity="center_vertical"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <FrameLayout
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:layout_marginEnd="12dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:layout_width="34dp"
-                            android:layout_height="34dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_solana"
-                            android:contentDescription="Solana" />
-
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Solana"
-                            android:textSize="16sp"
-                            android:textColor="?attr/colorOnSurface"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="SOL"
-                            android:textSize="12sp"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:fontFamily="@font/poppins_regular" />
-
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:gravity="end">
-
-                        <TextView
-                            android:id="@+id/solShieldedBalance"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="$0.00"
-                            android:textSize="16sp"
-                            android:textColor="?attr/colorOnSurface"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <TextView
-                            android:id="@+id/solShieldedAmount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0.0000 SOL"
-                            android:textSize="12sp"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:fontFamily="@font/poppins_regular"
-                            android:layout_marginTop="2dp" />
-
-                    </LinearLayout>
-
-                </LinearLayout>
-
-                <!-- ZEC Shielded -->
-                <LinearLayout
-                    android:id="@+id/zecShieldedItem"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:background="@drawable/wallet_token_bg"
-                    android:padding="16dp"
-                    android:layout_marginBottom="12dp"
-                    android:gravity="center_vertical"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <FrameLayout
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:layout_marginEnd="12dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:layout_width="34dp"
-                            android:layout_height="34dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_zcash"
-                            android:contentDescription="Zcash" />
-
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Zcash"
-                            android:textSize="16sp"
-                            android:textColor="?attr/colorOnSurface"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="ZEC"
-                            android:textSize="12sp"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:fontFamily="@font/poppins_regular" />
-
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:gravity="end">
-
-                        <TextView
-                            android:id="@+id/zecShieldedBalance"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="$0.00"
-                            android:textSize="16sp"
-                            android:textColor="?attr/colorOnSurface"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <TextView
-                            android:id="@+id/zecShieldedAmount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0.0000 ZEC"
-                            android:textSize="12sp"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:fontFamily="@font/poppins_regular"
-                            android:layout_marginTop="2dp" />
-
-                    </LinearLayout>
-
-                </LinearLayout>
-
-            </LinearLayout>
 
         </LinearLayout>
 

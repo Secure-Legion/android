@@ -266,7 +266,7 @@ class ContactListSyncService private constructor(private val context: Context) {
         val ourCid = runCatching { KeyManager.getInstance(context).deriveContactListCID() }.getOrNull()
         if (ourCid == frame.cid) {
             val keyManager = KeyManager.getInstance(context)
-            val seed = runCatching { keyManager.getMainWalletSeedForZcash() }.getOrNull()
+            val seed = runCatching { keyManager.getMainAccountMnemonic() }.getOrNull()
             if (seed != null) {
                 val pin = runCatching { keyManager.deriveContactPinFromSeed(seed) }.getOrNull()
                 if (pin != null) {

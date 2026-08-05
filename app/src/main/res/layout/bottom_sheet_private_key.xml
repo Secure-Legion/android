@@ -199,55 +199,6 @@
 
     </LinearLayout>
 
-    <!-- Birthday Height Container (for Zcash) -->
-    <TextView
-        android:id="@+id/birthdayHeightLabel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Birthday Height:"
-        android:textSize="12sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:fontFamily="@font/poppins_regular"
-        android:layout_marginStart="24dp"
-        android:layout_marginBottom="8dp"
-        android:visibility="gone" />
-
-    <LinearLayout
-        android:id="@+id/birthdayHeightContainer"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:background="@drawable/settings_box_bg"
-        android:padding="16dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
-        android:layout_marginBottom="24dp"
-        android:gravity="center_vertical"
-        android:clickable="true"
-        android:focusable="true"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/birthdayHeightText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="2500000"
-            android:textSize="14sp"
-            android:textColor="?attr/colorOnSurface"
-            android:fontFamily="@font/poppins_medium"
-            android:layout_marginEnd="12dp" />
-
-        <ImageView
-            android:id="@+id/copyBirthdayHeightIcon"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_copy"
-            app:tint="?attr/colorOnSurfaceVariant"
-            android:contentDescription="Copy birthday height" />
-
-    </LinearLayout>
-
     <!-- Close Button -->
     <androidx.appcompat.widget.AppCompatButton
         android:id="@+id/closeButton"

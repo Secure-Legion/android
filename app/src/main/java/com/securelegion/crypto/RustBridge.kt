@@ -1492,9 +1492,9 @@ object RustBridge {
 
     /**
      * Create a payment quote for NLx402 protocol
-     * @param recipient Recipient wallet address (Solana/Zcash)
+     * @param recipient Recipient wallet address
      * @param amount Amount in smallest unit (lamports/zatoshis)
-     * @param token Token type (SOL, ZEC, USDC, etc.)
+     * @param token Token type (SOL, USDC, etc.)
      * @param description Optional human-readable description (empty string for none)
      * @param senderHandle Optional sender's handle (empty string for none)
      * @param recipientHandle Optional recipient's handle (empty string for none)

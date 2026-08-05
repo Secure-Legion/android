@@ -19,6 +19,14 @@ interface ContactDao {
     suspend fun insertContact(contact: Contact): Long
 
     /**
+     * Identity-preserving insert for protocol finalization. Unlike REPLACE, IGNORE never deletes
+     * an existing parent row (and therefore cannot invalidate child foreign keys).
+     * Returns -1 when another path already inserted the same unique identity.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertContactIfAbsent(contact: Contact): Long
+
+    /**
      * Update existing contact
      */
     @Update

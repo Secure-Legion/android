@@ -61,7 +61,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class],
-    version = 56,
+    version = 57,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1195,6 +1195,42 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 56 to 57: remove the retired wallet fields.
+         *
+         * Room/SQLite cannot portably drop columns on every supported Android
+         * version, so rebuild the table and copy only the supported wallet data.
+         * Room wraps migrations in a transaction, leaving v56 intact on failure.
+         */
+        private val MIGRATION_56_57 = object : Migration(56, 57) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "UPDATE messages SET paymentToken = 'UNSUPPORTED' " +
+                        "WHERE UPPER(paymentToken) = 'ZEC'"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS wallets_v57 (" +
+                        "walletId TEXT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "solanaAddress TEXT NOT NULL, " +
+                        "isMainWallet INTEGER NOT NULL, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "lastUsedAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(walletId)" +
+                        ")"
+                )
+                db.execSQL(
+                    "INSERT INTO wallets_v57 " +
+                        "(walletId, name, solanaAddress, isMainWallet, createdAt, lastUsedAt) " +
+                        "SELECT walletId, name, solanaAddress, isMainWallet, createdAt, lastUsedAt " +
+                        "FROM wallets"
+                )
+                db.execSQL("DROP TABLE wallets")
+                db.execSQL("ALTER TABLE wallets_v57 RENAME TO wallets")
+                Log.i(TAG, "Migration 56→57: removed retired wallet columns")
+            }
+        }
+
+        /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
          */
@@ -1213,7 +1249,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48,
             MIGRATION_48_49, MIGRATION_49_50,
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
-            MIGRATION_54_55, MIGRATION_55_56
+            MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57
         )
 
         /**
@@ -1310,7 +1346,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 56) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 57) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

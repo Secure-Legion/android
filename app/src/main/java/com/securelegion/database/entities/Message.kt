@@ -307,12 +307,12 @@ data class Message(
 
     /**
      * Transaction signature (for completed payments)
-     * Solana/Zcash transaction ID
+     * Blockchain transaction ID
      */
     val txSignature: String? = null,
 
     /**
-     * Token type for payment (SOL, ZEC, USDC, etc.)
+     * Token type for payment (SOL, USDC, etc.)
      */
     val paymentToken: String? = null,
 

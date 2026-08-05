@@ -146,7 +146,7 @@
 
     </LinearLayout>
 
-    <!-- Option 3 (Anonymous - SOL only, hidden for ZEC) -->
+    <!-- Reserved third payment option -->
     <LinearLayout
         android:id="@+id/paymentTypeOption3"
         android:layout_width="match_parent"

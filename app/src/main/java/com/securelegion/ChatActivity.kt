@@ -3056,7 +3056,6 @@ class ChatActivity : BaseActivity() {
     private fun getTokenDivisor(token: String?): Double {
         return when (token?.uppercase()) {
             "SOL" -> 1_000_000_000.0 // 9 decimals
-            "ZEC" -> 100_000_000.0 // 8 decimals
             "USDC", "USDT" -> 1_000_000.0 // 6 decimals
             else -> 1_000_000_000.0 // Default to SOL
         }
@@ -3079,20 +3078,11 @@ class ChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 val solanaService = com.securelegion.services.SolanaService(this@ChatActivity)
-                val zcashService = com.securelegion.services.ZcashService.getInstance(this@ChatActivity)
-
                 // Fetch SOL price
                 val solResult = solanaService.getSolPrice()
                 if (solResult.isSuccess) {
                     MessageAdapter.cachedSolPrice = solResult.getOrNull() ?: 0.0
                     Log.d(TAG, "Cached SOL price: ${MessageAdapter.cachedSolPrice}")
-                }
-
-                // Fetch ZEC price
-                val zecResult = zcashService.getZecPrice()
-                if (zecResult.isSuccess) {
-                    MessageAdapter.cachedZecPrice = zecResult.getOrNull() ?: 0.0
-                    Log.d(TAG, "Cached ZEC price: ${MessageAdapter.cachedZecPrice}")
                 }
 
                 // Refresh adapter to show updated prices
@@ -3124,14 +3114,6 @@ class ChatActivity : BaseActivity() {
                             MessageAdapter.cachedSolPrice
                         } else 0.0
                     }
-                    "ZEC" -> {
-                        val zcashService = com.securelegion.services.ZcashService.getInstance(this@ChatActivity)
-                        val result = zcashService.getZecPrice()
-                        if (result.isSuccess) {
-                            MessageAdapter.cachedZecPrice = result.getOrNull() ?: 0.0
-                            MessageAdapter.cachedZecPrice
-                        } else 0.0
-                    }
                     else -> 0.0
                 }
 
@@ -3140,7 +3122,6 @@ class ChatActivity : BaseActivity() {
                     val amount = message.paymentAmount ?: 0L
                     val decimals = when (token.uppercase()) {
                         "SOL" -> 9
-                        "ZEC" -> 8
                         "USDC", "USDT" -> 6
                         else -> 9
                     }

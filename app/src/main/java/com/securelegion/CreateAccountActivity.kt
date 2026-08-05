@@ -405,69 +405,13 @@ class CreateAccountActivity : AppCompatActivity() {
                     keyManager.storeSeedPhrase(mnemonic)
                     Log.i("CreateAccount", "Seed phrase stored for display")
 
-                    // Store permanently for main wallet (needed for Zcash)
+                    // Preserve the account root for deterministic identity recovery.
                     keyManager.storeMainWalletSeed(mnemonic)
-                    Log.i("CreateAccount", "Seed phrase stored permanently for main wallet")
+                    Log.i("CreateAccount", "Account recovery seed stored")
 
                     // Get the Solana wallet address
                     val walletAddress = keyManager.getSolanaAddress()
                     Log.i("CreateAccount", "Solana address: $walletAddress")
-
-                    // Initialize Zcash wallet (async - runs in background)
-                    if (BuildConfig.ENABLE_ZCASH_WALLET) {
-                        Log.i("CreateAccount", "Starting Zcash wallet initialization in background...")
-                        val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
-                        zcashPrefs.edit().putBoolean("initializing", true).apply()
-
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                val zcashService = com.securelegion.services.ZcashService.getInstance(this@CreateAccountActivity)
-                                val result = zcashService.initialize(mnemonic, useTestnet = false)
-                                if (result.isSuccess) {
-                                    val zcashAddress = result.getOrNull()
-                                    Log.i("CreateAccount", "Zcash wallet initialized: $zcashAddress")
-
-                                    // Create wallet entry in database now that initialization is complete
-                                    if (zcashAddress != null) {
-                                        val km = KeyManager.getInstance(this@CreateAccountActivity)
-                                        val dbPassphrase = km.getDatabasePassphrase()
-                                        val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
-
-                                        // Get birthday height from ZcashService
-                                        val birthdayHeight = zcashService.getBirthdayHeight()
-                                        Log.i("CreateAccount", "Zcash birthday height: $birthdayHeight")
-
-                                        val zcashWalletId = "wallet_zcash_${System.currentTimeMillis()}"
-                                        val defaultZcashWallet = Wallet(
-                                            walletId = zcashWalletId,
-                                            name = "Wallet 2",
-                                            solanaAddress = "",
-                                            zcashUnifiedAddress = zcashAddress,
-                                            zcashAccountIndex = 0,
-                                            zcashBirthdayHeight = birthdayHeight,
-                                            isActiveZcash = true,
-                                            isMainWallet = false,
-                                            createdAt = System.currentTimeMillis(),
-                                            lastUsedAt = System.currentTimeMillis() - 1
-                                        )
-                                        database.walletDao().insertWallet(defaultZcashWallet)
-
-                                        // Store seed phrase for Zcash wallet
-                                        km.storeWalletSeed(zcashWalletId, mnemonic)
-                                        Log.i("CreateAccount", "Zcash wallet entry created in database with birthday height: $birthdayHeight")
-                                    }
-                                } else {
-                                    Log.e("CreateAccount", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()?.message}")
-                                }
-                            } catch (e: Exception) {
-                                Log.e("CreateAccount", "Error initializing Zcash wallet", e)
-                            } finally {
-                                // Mark initialization as complete
-                                zcashPrefs.edit().putBoolean("initializing", false).apply()
-                                Log.i("CreateAccount", "Zcash initialization complete")
-                            }
-                        }
-                    }
 
                     // Pre-compute all 3 onion addresses from seed (no Tor needed)
                     // These are deterministic from the BIP39 seed, so they're known immediately
@@ -554,9 +498,6 @@ class CreateAccountActivity : AppCompatActivity() {
                     )
                     database.walletDao().insertWallet(defaultSolanaWallet)
                     Log.i("CreateAccount", "Default Solana wallet created: $defaultSolAddress")
-
-                    // Note: Zcash wallet will be created in background when initialization completes
-                    Log.i("CreateAccount", "Zcash wallet will be created automatically when initialization finishes")
 
                     Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
 

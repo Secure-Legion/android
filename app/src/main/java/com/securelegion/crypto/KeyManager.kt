@@ -70,8 +70,6 @@ class KeyManager private constructor(context: Context) {
         private const val PASSWORDLESS_KEYSTORE_ALIAS = "securelegion_passwordless_unlock_v1"
         private const val PASSWORDLESS_CREDENTIAL_AAD = "securelegion.passwordless.credential.v1"
         private const val USER_DEFINED_PASSWORD_FLAG = "${KEYSTORE_ALIAS_PREFIX}user_defined_password"
-        private const val ZCASH_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_address"
-        private const val ZCASH_TRANSPARENT_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_transparent_address"
 
         // NEW v2.0 - Two .onion system keys
         private const val FRIEND_REQUEST_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}friend_request_onion"
@@ -417,64 +415,6 @@ class KeyManager private constructor(context: Context) {
      */
     fun getSolanaPublicKey(): ByteArray {
         return getSigningPublicKey()
-    }
-
-    /**
-     * Get wallet seed for Zcash SDK initialization
-     * Returns the same BIP39 seed used for Solana (64 bytes)
-     * Zcash SDK will use BIP44 path m/44'/133'/0'/0' for key derivation
-     */
-    fun getWalletSeed(): ByteArray {
-        return getSeedBytes()
-    }
-
-    /**
-     * Get Zcash unified address (stored after Zcash SDK initialization)
-     * Returns the shielded address for receiving ZEC
-     */
-    fun getZcashAddress(): String? {
-        return encryptedPrefs.getString(ZCASH_ADDRESS_ALIAS, null)
-    }
-
-    /**
-     * Store Zcash unified address
-     * Called after Zcash SDK generates the address
-     */
-    fun setZcashAddress(address: String) {
-        encryptedPrefs.edit {
-            putString(ZCASH_ADDRESS_ALIAS, address)
-        }
-        Log.d(TAG, "Zcash address stored")
-    }
-
-    /**
-     * Get Zcash transparent address (for exchange compatibility)
-     */
-    fun getZcashTransparentAddress(): String? {
-        return encryptedPrefs.getString(ZCASH_TRANSPARENT_ADDRESS_ALIAS, null)
-    }
-
-    /**
-     * Store Zcash transparent address
-     * This is the t1... address compatible with exchanges
-     */
-    fun setZcashTransparentAddress(address: String) {
-        encryptedPrefs.edit {
-            putString(ZCASH_TRANSPARENT_ADDRESS_ALIAS, address)
-        }
-        Log.d(TAG, "Zcash transparent address stored")
-    }
-
-    /**
-     * Clear all stored Zcash addresses
-     * Use this when deleting a Zcash wallet or switching accounts
-     */
-    fun clearZcashAddresses() {
-        encryptedPrefs.edit {
-            remove(ZCASH_ADDRESS_ALIAS)
-            remove(ZCASH_TRANSPARENT_ADDRESS_ALIAS)
-        }
-        Log.d(TAG, "Zcash addresses cleared from KeyManager")
     }
 
     /**
@@ -1268,7 +1208,7 @@ class KeyManager private constructor(context: Context) {
      * Returns CIDv1 format for IPFS mesh backup
      */
     fun deriveContactListCID(): String {
-        val seedPhrase = getMainWalletSeedForZcash()
+        val seedPhrase = getMainAccountMnemonic()
             ?: throw KeyManagerException("Seed phrase not found. Initialize wallet first.")
         return deriveContactListCIDFromSeed(seedPhrase)
     }
@@ -1392,10 +1332,10 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
-     * Get main wallet seed phrase for internal use (Zcash initialization)
-     * This bypasses the export protection in getWalletSeedPhrase()
+     * Get the account recovery mnemonic for internal identity and recovery work.
+     * This bypasses the export protection in getWalletSeedPhrase().
      */
-    fun getMainWalletSeedForZcash(): String? {
+    fun getMainAccountMnemonic(): String? {
         return readWrappedMnemonic(
             valueAlias = SEED_PHRASE_ALIAS,
             nonceAlias = SEED_PHRASE_NONCE_ALIAS,
@@ -1662,22 +1602,23 @@ class KeyManager private constructor(context: Context) {
      */
     private fun storeSystemPassword(password: String) {
         val plaintext = password.toByteArray(Charsets.UTF_8)
-        val nonce = ByteArray(12)
+        var nonce: ByteArray? = null
         var ciphertext: ByteArray? = null
         try {
-            java.security.SecureRandom().nextBytes(nonce)
             val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(
                 javax.crypto.Cipher.ENCRYPT_MODE,
-                getOrCreatePasswordlessCredentialKey(),
-                javax.crypto.spec.GCMParameterSpec(128, nonce)
+                getOrCreatePasswordlessCredentialKey()
             )
+            val generatedNonce = cipher.iv?.copyOf()
+                ?: throw IllegalStateException("Android Keystore did not generate an AES-GCM IV")
+            nonce = generatedNonce
             cipher.updateAAD(PASSWORDLESS_CREDENTIAL_AAD.toByteArray(Charsets.UTF_8))
             ciphertext = cipher.doFinal(plaintext)
 
             val committed = encryptedPrefs.edit()
                 .putString(SYSTEM_PASSWORD_CIPHERTEXT_ALIAS, bytesToHex(ciphertext))
-                .putString(SYSTEM_PASSWORD_NONCE_ALIAS, bytesToHex(nonce))
+                .putString(SYSTEM_PASSWORD_NONCE_ALIAS, bytesToHex(generatedNonce))
                 .putInt(
                     SYSTEM_PASSWORD_FORMAT_ALIAS,
                     SYSTEM_PASSWORD_FORMAT_HARDWARE_WRAPPED
@@ -1690,7 +1631,7 @@ class KeyManager private constructor(context: Context) {
             Log.i(TAG, "Passwordless credential stored under a dedicated Keystore key")
         } finally {
             plaintext.fill(0)
-            nonce.fill(0)
+            nonce?.fill(0)
             ciphertext?.fill(0)
         }
     }
@@ -2770,61 +2711,6 @@ class KeyManager private constructor(context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to import Solana wallet from private key", e)
-            return false
-        }
-    }
-
-    /**
-     * Import Zcash wallet from private key (WIF format)
-     */
-    fun importZcashWalletFromPrivateKey(walletId: String, privateKeyWIF: String): Boolean {
-        try {
-            Log.i(TAG, "Importing Zcash wallet from private key: $walletId")
-
-            // For now, treat WIF as base58 and decode
-            // Note: Full WIF parsing would require checksum validation
-            val privateKeyBytes = try {
-                org.bitcoinj.core.Base58.decode(privateKeyWIF)
-            } catch (e: Exception) {
-                Log.e(TAG, "Invalid WIF private key", e)
-                return false
-            }
-
-            // Remove version byte and checksum if present
-            val actualPrivateKey = when {
-                privateKeyBytes.size == 37 && privateKeyBytes[0] == 0x80.toByte() -> {
-                    // Mainnet WIF: 1 byte version + 32 bytes key + 4 bytes checksum
-                    privateKeyBytes.copyOfRange(1, 33)
-                }
-                privateKeyBytes.size == 38 && privateKeyBytes[0] == 0x80.toByte() -> {
-                    // Compressed WIF: 1 byte version + 32 bytes key + 1 byte compression flag + 4 bytes checksum
-                    privateKeyBytes.copyOfRange(1, 33)
-                }
-                privateKeyBytes.size == 32 -> {
-                    // Raw 32-byte key
-                    privateKeyBytes
-                }
-                else -> {
-                    Log.e(TAG, "Invalid WIF key size: ${privateKeyBytes.size}")
-                    return false
-                }
-            }
-
-            // Derive public key from private key
-            val publicKey = deriveEd25519PublicKey(actualPrivateKey)
-
-            // Store Ed25519 keys
-            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
-            encryptedPrefs.edit {
-                putString(walletKeyAlias + "_private", bytesToHex(actualPrivateKey))
-                putString(walletKeyAlias + "_public", bytesToHex(publicKey))
-            }
-
-            Log.i(TAG, "Zcash wallet imported successfully from private key: $walletId")
-            return true
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to import Zcash wallet from private key", e)
             return false
         }
     }

@@ -267,7 +267,6 @@ class MessageAdapter(
 
         // Cached prices for display (updated by ChatActivity)
         var cachedSolPrice: Double = 0.0
-        var cachedZecPrice: Double = 0.0
     }
 
     // Track which message is currently showing swipe-revealed time
@@ -1412,17 +1411,22 @@ class MessageAdapter(
     // ==================== PAYMENT CARD BINDING FUNCTIONS ====================
 
     private fun bindPaymentRequestSent(holder: PaymentRequestSentViewHolder, message: Message, position: Int) {
+        val isUnsupported = !isSupportedPaymentToken(message.paymentToken)
         holder.paymentAmount.text = getUsdAmount(message)
         holder.paymentAmountUsd.text = getCryptoAmount(message)
 
         // Click to refresh price
-        holder.paymentAmountUsd.setOnClickListener {
-            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
-        }
+        holder.paymentAmountUsd.setOnClickListener(
+            if (isUnsupported) null else View.OnClickListener {
+                onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+            }
+        )
 
         // Set status based on payment status
         val status = message.paymentStatus ?: Message.PAYMENT_STATUS_PENDING
-        holder.paymentStatus.text = when (status) {
+        holder.paymentStatus.text = if (isUnsupported) {
+            "Unsupported"
+        } else when (status) {
             Message.PAYMENT_STATUS_PAID -> "Paid"
             Message.PAYMENT_STATUS_EXPIRED -> "Expired"
             Message.PAYMENT_STATUS_CANCELLED -> "Cancelled"
@@ -1431,7 +1435,9 @@ class MessageAdapter(
 
         // Update status color
         val ctx = holder.itemView.context
-        val statusColor = when (status) {
+        val statusColor = if (isUnsupported) {
+            ContextCompat.getColor(ctx, R.color.warning_red)
+        } else when (status) {
             Message.PAYMENT_STATUS_PAID -> ContextCompat.getColor(ctx, R.color.success_green)
             Message.PAYMENT_STATUS_EXPIRED -> com.google.android.material.color.MaterialColors.getColor(holder.itemView, com.google.android.material.R.attr.colorOnSurfaceVariant)
             Message.PAYMENT_STATUS_CANCELLED -> ContextCompat.getColor(ctx, R.color.warning_red)
@@ -1462,13 +1468,16 @@ class MessageAdapter(
     }
 
     private fun bindPaymentRequestReceived(holder: PaymentRequestReceivedViewHolder, message: Message, position: Int) {
+        val isUnsupported = !isSupportedPaymentToken(message.paymentToken)
         holder.paymentAmount.text = getUsdAmount(message)
         holder.paymentAmountUsd.text = getCryptoAmount(message)
 
         // Click to refresh price
-        holder.paymentAmountUsd.setOnClickListener {
-            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
-        }
+        holder.paymentAmountUsd.setOnClickListener(
+            if (isUnsupported) null else View.OnClickListener {
+                onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+            }
+        )
 
         // Check if this is a "Send Money" offer (empty recipient) or "Request Money" (has recipient)
         val isSendMoneyOffer = try {
@@ -1491,7 +1500,13 @@ class MessageAdapter(
         val isPending = status == Message.PAYMENT_STATUS_PENDING
 
         // Show/hide Pay/Accept button vs status text
-        if (isPending) {
+        if (isUnsupported) {
+            holder.payButton.visibility = View.GONE
+            holder.payButton.setOnClickListener(null)
+            holder.paymentStatus.visibility = View.VISIBLE
+            holder.paymentStatus.text = "Unsupported"
+            holder.paymentLabel.text = "Legacy payment"
+        } else if (isPending) {
             holder.payButton.visibility = View.VISIBLE
             holder.paymentStatus.visibility = View.GONE
 
@@ -1528,13 +1543,16 @@ class MessageAdapter(
     }
 
     private fun bindPaymentSent(holder: PaymentSentViewHolder, message: Message, position: Int) {
+        val isUnsupported = !isSupportedPaymentToken(message.paymentToken)
         holder.paymentAmount.text = getUsdAmount(message)
         holder.paymentAmountUsd.text = getCryptoAmount(message)
 
         // Click to refresh price
-        holder.paymentAmountUsd.setOnClickListener {
-            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
-        }
+        holder.paymentAmountUsd.setOnClickListener(
+            if (isUnsupported) null else View.OnClickListener {
+                onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+            }
+        )
 
         // Show timestamp header if needed
         if (shouldShowTimestampHeader(position)) {
@@ -1556,13 +1574,16 @@ class MessageAdapter(
     }
 
     private fun bindPaymentReceived(holder: PaymentReceivedViewHolder, message: Message, position: Int) {
+        val isUnsupported = !isSupportedPaymentToken(message.paymentToken)
         holder.paymentAmount.text = getUsdAmount(message)
         holder.paymentAmountUsd.text = getCryptoAmount(message)
 
         // Click to refresh price
-        holder.paymentAmountUsd.setOnClickListener {
-            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
-        }
+        holder.paymentAmountUsd.setOnClickListener(
+            if (isUnsupported) null else View.OnClickListener {
+                onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+            }
+        )
 
         // Show timestamp header if needed
         if (shouldShowTimestampHeader(position)) {
@@ -1623,10 +1644,10 @@ class MessageAdapter(
     private fun getUsdAmount(message: Message): String {
         val amount = message.paymentAmount ?: 0L
         val token = message.paymentToken ?: "SOL"
+        if (!isSupportedPaymentToken(token)) return "Unsupported"
 
         val decimals = when (token.uppercase()) {
             "SOL" -> 9
-            "ZEC" -> 8
             "USDC", "USDT" -> 6
             else -> 9
         }
@@ -1636,7 +1657,6 @@ class MessageAdapter(
         // Use cached live price, fallback to estimates
         val usdPrice = when (token.uppercase()) {
             "SOL" -> if (cachedSolPrice > 0) cachedSolPrice else 150.0
-            "ZEC" -> if (cachedZecPrice > 0) cachedZecPrice else 35.0
             "USDC", "USDT" -> 1.0
             else -> 0.0
         }
@@ -1651,10 +1671,10 @@ class MessageAdapter(
     private fun getCryptoAmount(message: Message): String {
         val amount = message.paymentAmount ?: 0L
         val token = message.paymentToken ?: "SOL"
+        if (!isSupportedPaymentToken(token)) return "Legacy payment unsupported"
 
         val decimals = when (token.uppercase()) {
             "SOL" -> 9
-            "ZEC" -> 8
             "USDC", "USDT" -> 6
             else -> 9
         }
@@ -1670,6 +1690,10 @@ class MessageAdapter(
         }
 
         return "$formatted $token"
+    }
+
+    private fun isSupportedPaymentToken(token: String?): Boolean {
+        return token?.uppercase() in setOf("SOL", "USDC", "USDT", "USD1", "SECURE")
     }
 
     private fun loadImageIntoView(imageView: ImageView, imageData: String?) {

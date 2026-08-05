@@ -87,7 +87,7 @@ object NLx402Manager {
      *
      * @param recipientAddress Recipient wallet address
      * @param amount Amount in smallest unit (lamports/zatoshis)
-     * @param token Token type (SOL, ZEC, USDC)
+     * @param token Token type (SOL, USDC, USDT)
      * @param description Optional description
      * @param senderHandle Optional sender's handle
      * @param recipientHandle Optional recipient's handle
@@ -273,7 +273,6 @@ object NLx402Manager {
     private fun getTokenDecimals(token: String): Int {
         return when (token.uppercase()) {
             "SOL" -> 9 // 1 SOL = 1,000,000,000 lamports
-            "ZEC" -> 8 // 1 ZEC = 100,000,000 zatoshis
             "USDC" -> 6 // 1 USDC = 1,000,000 micro-USDC
             "USDT" -> 6 // 1 USDT = 1,000,000 micro-USDT
             else -> 9 // Default to 9 decimals

@@ -194,7 +194,7 @@
                         android:id="@+id/sentSol"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0.00 ZEC"
+                        android:text="0.00 SOL"
                         android:textSize="13sp"
                         android:textColor="?attr/colorOnSurface"
                         android:fontFamily="@font/poppins_regular" />

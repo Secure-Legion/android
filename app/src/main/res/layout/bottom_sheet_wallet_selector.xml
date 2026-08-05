@@ -55,36 +55,6 @@
 
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/zcashChainButton"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/wallet_dropdown_bg"
-            android:orientation="horizontal"
-            android:gravity="center"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_zcash"
-                android:layout_marginEnd="8dp"
-                android:contentDescription="Zcash" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="ZEC"
-                android:textSize="14sp"
-                android:textColor="?attr/colorOnSurface"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
     </LinearLayout>
 
     <!-- Wallet List Container -->

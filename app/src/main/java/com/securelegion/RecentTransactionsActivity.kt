@@ -26,7 +26,6 @@ class RecentTransactionsActivity : AppCompatActivity() {
     private lateinit var emptyState: View
 
     private var walletAddress: String? = null
-    private var walletZcashAddress: String? = null
     private var walletName: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,10 +38,9 @@ class RecentTransactionsActivity : AppCompatActivity() {
 
         // Get wallet info from intent
         walletAddress = intent.getStringExtra("WALLET_ADDRESS")
-        walletZcashAddress = intent.getStringExtra("WALLET_ZCASH_ADDRESS")
         walletName = intent.getStringExtra("WALLET_NAME")
 
-        Log.d("RecentTransactions", "Opened for wallet: $walletName, SOL: $walletAddress, ZEC: $walletZcashAddress")
+        Log.d("RecentTransactions", "Opened for wallet: $walletName, SOL: $walletAddress")
 
         setupClickListeners()
         loadTransactions()

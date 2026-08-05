@@ -12,6 +12,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import androidx.work.WorkerParameters
+import androidx.room.withTransaction
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
@@ -46,7 +47,7 @@ class FriendRequestWorker(
         private const val LEGACY_IMMEDIATE_WORK_NAME = "friend_request_retry_immediate"
         private const val UPGRADE_PREFS = "friend_request_dispatcher_v33"
         private const val UPGRADE_COMPLETE = "legacy_work_cancelled"
-        private const val LEASE_DURATION_MS = 90_000L
+        private const val LEASE_DURATION_MS = com.securelegion.services.FRIEND_REQUEST_LEASE_DURATION_MS
 
         private fun request(delayMs: Long) = OneTimeWorkRequestBuilder<FriendRequestWorker>()
             .setInitialDelay(delayMs.coerceAtLeast(0), TimeUnit.MILLISECONDS)
@@ -89,6 +90,16 @@ class FriendRequestWorker(
 
         fun scheduleImmediateSweep(context: Context) {
             scheduleDispatcher(context, "immediate")
+        }
+
+        /** Replace a stale future dispatcher with an immediate convergence pass. */
+        fun nudgeDispatcher(context: Context, reason: String) {
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                DISPATCHER_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                request(0)
+            )
+            Log.i(TAG, "Friend-request dispatcher nudged (reason=$reason)")
         }
 
         /**
@@ -183,7 +194,13 @@ class FriendRequestWorker(
 
         val operationId = "fr:${request.id}:$leaseToken"
         try {
-            if (isAlreadyFriend(database, request)) {
+            // A Phase 3 row exists specifically to deliver/replay the persisted ACK. The contact
+            // is created before that send, so "already friend" must not suppress it.
+            if (com.securelegion.services.shouldShortCircuitFriendRequestSend(
+                    request.phase,
+                    isAlreadyFriend(database, request)
+                )
+            ) {
                 dao.markCompletedIfLeased(request.id, leaseToken, System.currentTimeMillis())
                 Log.i(TAG, "Completed request ${request.id}: contact already exists")
                 return@withContext Result.success()
@@ -221,8 +238,9 @@ class FriendRequestWorker(
     }
 
     private suspend fun scheduleNext(database: SecureLegionDatabase) {
-        val earliest = database.pendingFriendRequestDao().getEarliestRetryAt() ?: return
-        enqueueSuccessor(applicationContext, (earliest - System.currentTimeMillis()).coerceAtLeast(0))
+        val now = System.currentTimeMillis()
+        val earliest = database.pendingFriendRequestDao().getEarliestRetryAt(now) ?: return
+        enqueueSuccessor(applicationContext, (earliest - now).coerceAtLeast(0))
     }
 
     private suspend fun persistResult(
@@ -236,7 +254,31 @@ class FriendRequestWorker(
         when (result) {
             RustBridge.FriendRequestSendResult.SUCCESS -> {
                 if (request.phase == PendingFriendRequest.PHASE_3_SENT) {
-                    dao.markCompletedIfLeased(request.id, leaseToken, now)
+                    if (completePhase3ContactAndTombstone(
+                            database,
+                            request,
+                            leaseToken,
+                            now
+                        )
+                    ) {
+                        dao.deleteExpiredCompletedPhase3(
+                            now - com.securelegion.services.PHASE3_REPLAY_TTL_MS
+                        )
+                        dao.deleteCompletedPhase3BeyondLimit(
+                            com.securelegion.services.PHASE3_REPLAY_MAX_ROWS
+                        )
+                        com.securelegion.services.TorService
+                            .completePendingUiForDatabaseId(applicationContext, request.id)
+                    } else {
+                        val attempt = request.retryCount + 1
+                        dao.updateRetryTrackingIfLeased(
+                            request.id,
+                            leaseToken,
+                            now,
+                            attempt,
+                            FriendRequestBackoff.nextRetryAt(now, attempt)
+                        )
+                    }
                 } else {
                     val attempt = request.retryCount + 1
                     dao.updateRetryTrackingIfLeased(
@@ -272,6 +314,36 @@ class FriendRequestWorker(
                 dao.markFailedIfLeased(request.id, leaseToken)
         }
         Log.i(TAG, "Request ${request.id} attempt result=$result")
+    }
+
+    private suspend fun completePhase3ContactAndTombstone(
+        database: SecureLegionDatabase,
+        request: PendingFriendRequest,
+        leaseToken: String,
+        completedAt: Long
+    ): Boolean = database.withTransaction {
+        val contactId = request.contactId ?: return@withTransaction false
+        val contact = database.contactDao().getContactById(contactId)
+            ?: return@withTransaction false
+        if (contact.friendshipStatus !=
+            com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+        ) {
+            database.contactDao().updateContact(
+                contact.copy(
+                    friendshipStatus =
+                        com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                )
+            )
+        }
+        if (database.pendingFriendRequestDao().markCompletedIfLeased(
+                request.id,
+                leaseToken,
+                completedAt
+            ) != 1
+        ) {
+            throw IllegalStateException("Lost Phase 3 lease before atomic completion")
+        }
+        true
     }
 
     private suspend fun retryPhase1(
@@ -321,33 +393,12 @@ class FriendRequestWorker(
         request: PendingFriendRequest,
         operationId: String
     ): RustBridge.FriendRequestSendResult {
-        val contactCardJson = request.contactCardJson
+        val payload = request.phase2PayloadBase64
             ?: return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
-        val keyManager = KeyManager.getInstance(applicationContext)
-        val ownContactCard = ContactCard(
-            displayName = keyManager.getUsername() ?: "Unknown",
-            solanaPublicKey = keyManager.getSolanaPublicKey(),
-            x25519PublicKey = keyManager.getEncryptionPublicKey(),
-            kyberPublicKey = keyManager.getKyberPublicKey(),
-            solanaAddress = keyManager.getSolanaAddress(),
-            friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
-            messagingOnion = keyManager.getMessagingOnion()
-                ?: RustBridge.getHiddenServiceAddress()
-                ?: "",
-            voiceOnion = keyManager.getVoiceOnion() ?: "",
-            contactPin = keyManager.getContactPin() ?: "",
-            inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
-            timestamp = System.currentTimeMillis() / 1000
-        )
-        val recipientCard = try {
-            ContactCard.fromJson(contactCardJson)
-        } catch (e: Exception) {
-            null
-        } ?: return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
         val encrypted = try {
-            RustBridge.encryptMessage(ownContactCard.toJson(), recipientCard.x25519PublicKey)
+            Base64.decode(payload, Base64.NO_WRAP)
         } catch (e: Exception) {
-            Log.e(TAG, "Unable to encrypt Phase 3 retry", e)
+            Log.e(TAG, "Invalid persisted Phase 3 retry payload", e)
             return RustBridge.FriendRequestSendResult.PERMANENT_INPUT
         }
         return runNativeFriendSend(operationId) {

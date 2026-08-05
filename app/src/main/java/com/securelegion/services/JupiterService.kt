@@ -36,7 +36,6 @@ class JupiterService {
         const val SOL_MINT = "So11111111111111111111111111111111111111112"
         const val USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         const val USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
-        const val ZEC_MINT = "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS"
         const val USD1_MINT = "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB"
         const val SECURE_MINT = "GFJbQ7WDQry73iTaGkJcXKjvi1ViFTFmHSENgz92jFPP"
 
@@ -286,7 +285,6 @@ class JupiterService {
     fun getDecimals(mint: String): Int = when (mint) {
         SOL_MINT, SECURE_MINT -> 9
         USDC_MINT, USDT_MINT, USD1_MINT -> 6
-        ZEC_MINT -> 8
         else -> 9
     }
 
@@ -313,7 +311,6 @@ class JupiterService {
         "SOL" -> SOL_MINT
         "USDC" -> USDC_MINT
         "USDT" -> USDT_MINT
-        "ZEC" -> ZEC_MINT
         "USD1" -> USD1_MINT
         "SECURE" -> SECURE_MINT
         else -> SOL_MINT
@@ -326,7 +323,6 @@ class JupiterService {
         SOL_MINT -> "SOL"
         USDC_MINT -> "USDC"
         USDT_MINT -> "USDT"
-        ZEC_MINT -> "ZEC"
         USD1_MINT -> "USD1"
         SECURE_MINT -> "SECURE"
         else -> "Unknown"

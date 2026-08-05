@@ -15,7 +15,6 @@
   <img src="https://img.shields.io/badge/Tor-Hidden%20Services-7D4698?style=flat-square&logo=torproject&logoColor=white" alt="Tor" />
   <img src="https://img.shields.io/badge/Post--Quantum-ML--KEM--1024-FF6F00?style=flat-square" alt="Post-Quantum" />
   <img src="https://img.shields.io/badge/Solana-Wallet-9945FF?style=flat-square&logo=solana&logoColor=white" alt="Solana" />
-  <img src="https://img.shields.io/badge/Zcash-Shielded-F4B728?style=flat-square&logo=zcash&logoColor=black" alt="Zcash" />
 </p>
 
 > "No servers. Metadata resistance. No compromises."
@@ -43,7 +42,7 @@
 - **Offline-First Design** - Send messages anytime; they queue locally and deliver automatically when recipient comes online
 - **Ping-Pong Wake Protocol** - Recipient must authenticate via biometrics before message delivery
 - **Device-Bound Key Protection** - Root secrets are password-wrapped and app data is encrypted with Android Keystore keys that are hardware-backed when the device supports it
-- **Secure Pay** *(coming soon)* - Built-in multi-chain cryptocurrency wallet (Zcash + Solana) with in-chat payment protocol
+- **Secure Pay** *(coming soon)* - Built-in Solana wallet with in-chat payment protocol
 - **Three-Phase Friend Protocol** - PIN-based initial request, post-quantum hybrid (X25519 + Kyber-1024) encrypted acceptance, and mutual acknowledgment for bidirectional contact addition, all over Tor
 
 ## What Makes Secure Unique
@@ -58,7 +57,7 @@
 
 4. **Layered Local Key Protection** - Password-wrapped recovery secrets, Android Keystore-backed encryption at rest, and hardware-enforced biometric authorization where supported.
 
-5. **Integrated Private Payments** *(coming soon)* - Send Zcash (shielded) and Solana payments directly in conversations via Secure Pay protocol.
+5. **Integrated Payments** *(coming soon)* - Send Solana payments directly in conversations via Secure Pay protocol.
 
 6. **Tor VPN Mode** - If turned on, routes all device traffic through Tor, not just Secure.
 
@@ -78,7 +77,7 @@
 | **Metadata Resistant** | Impossible to collect | Logged | Partial | Yes | Minimal |
 | **Post-Quantum Crypto** | ML-KEM-1024 | PQXDH (X3DH + Kyber) | No | No | Partial |
 | **Offline Messaging** | Full queue system | Requires servers | Requires SNODEs | Limited | No |
-| **Integrated Wallet** | ZEC + SOL | MobileCoin only | No | No | No |
+| **Integrated Wallet** | SOL | MobileCoin only | No | No | No |
 | **In-Chat Payments** | Secure Pay (coming soon) | No | No | No | No |
 | **Tor VPN Mode** | System-wide (if turned on) | No | No | No | No |
 | **Voice Calls** | Over Tor (in development) | VoIP | No | No | WebRTC |
@@ -175,7 +174,6 @@
 > Secure Pay is not yet available in the current release. The following describes the planned functionality.
 
 **Multi-Chain Cryptocurrency Wallet:**
-- **Zcash (ZEC)**: Privacy-focused payments with shielded transactions (z-addresses)
 - **Solana (SOL)**: Fast, low-fee payments
 - **SPL Tokens**: USDC and USDT stablecoin support
 - Password-wrapped recovery seed with Android Keystore defense in depth
@@ -186,8 +184,8 @@
 *Built on NLx402 payment protocol core logic*
 
 - **In-Chat Payment Quotes**: Send payment requests directly in conversations
-  - Specify amount, cryptocurrency (ZEC/SOL/USDC/USDT), expiry time
-  - Real-time SOL and ZEC price fetching for USD conversion
+  - Specify amount, cryptocurrency (SOL/USDC/USDT), expiry time
+  - Real-time SOL price fetching for USD conversion
   - Quote expiry options: 15 min, 1 hour, 6 hours, 24 hours (default), 48 hours, 7 days
 - **One-Tap Payment**: Recipient accepts quote with single tap
 - **Cryptographic Verification**: Transaction signatures prevent double-spend and replay attacks
@@ -368,7 +366,7 @@ DEVICE A                        DEVICE B
 │  ┌──────────┬──────────┬──────────┐│
 │  │  Crypto  │   Tor    │Blockchain││
 │  │XChaCha20 │ Hidden   │ Solana   ││
-│  │ Ed25519  │ Services │  Zcash   ││
+│  │ Ed25519  │ Services │   SPL    ││
 │  │ ML-KEM   │SecurePay │   SPL    ││
 │  └──────────┴──────────┴──────────┘│
 ├─────────────────────────────────────┤
@@ -397,7 +395,6 @@ DEVICE A                        DEVICE B
 **External Infrastructure:**
 - **Tor Network**: Anonymous routing for all communications (no Secure-owned nodes)
 - **Solana Blockchain**: Public blockchain for SOL/USDC/USDT payments
-- **Zcash Blockchain**: Privacy-focused blockchain for shielded ZEC payments
 
 **Security Hardware:**
 - Android StrongBox/TEE is used for Keystore keys when the device and key operation support it
@@ -502,7 +499,6 @@ secure-legion-android/
 │   │   │   │   ├── TorService.kt     # Background Tor daemon
 │   │   │   │   ├── MessageService.kt # Message queue
 │   │   │   │   ├── FriendRequestService.kt # Friend request handling
-│   │   │   │   ├── ZcashService.kt   # Zcash wallet
 │   │   │   │   └── SolanaService.kt  # Solana wallet
 │   │   │   ├── database/
 │   │   │   │   ├── SecureLegionDatabase.kt # Room DB
@@ -585,9 +581,8 @@ secure-legion-android/
 ### In Development
 
 - [ ] Voice calling over Tor (Opus codec, real-time streaming)
-- [ ] Secure Pay payment protocol (Zcash + Solana, based on NLx402 core logic)
+- [ ] Secure Pay payment protocol (Solana, based on NLx402 core logic)
 - [ ] Solana wallet integration (SOL, USDC, USDT)
-- [ ] Zcash wallet integration (shielded transactions)
 - [ ] File attachments (documents, videos, arbitrary files)
 - [ ] Reproducible builds for security audits
 - [ ] F-Droid release (fully open source distribution)
@@ -649,7 +644,7 @@ cargo test --verbose          # Detailed output
 7. **Image Sharing**: Send/receive images, verify EXIF stripping
 8. **Voice Messages**: Record/send/receive voice messages
 9. **Voice Calling**: Initiate voice call over Tor, verify audio quality
-10. **Secure Pay**: Create payment quote, send ZEC/SOL, verify receipt on blockchain
+10. **Secure Pay**: Create payment quote, send SOL, verify receipt on blockchain
 11. **Self-Destruct**: Set timer on message, verify automatic deletion
 12. **Offline Messaging**: Send message while recipient offline, verify queue and delivery
 13. **Background Service**: Kill app, verify Tor service continues and messages queue
@@ -800,7 +795,7 @@ A: Tor background service uses power, but is optimized for battery efficiency. T
 
 **Q: How large is the app?**
 
-A: APK size is approximately 45-50 MB (includes Tor libraries, Rust core, Zcash SDK). Larger than Signal but necessary for serverless P2P architecture and integrated wallet.
+A: APK size varies by release and includes Tor libraries and the Rust core required for serverless P2P messaging.
 
 **Q: What Android devices are supported?**
 
@@ -907,9 +902,7 @@ The U.S. Government Department of Commerce, Bureau of Industry and Security (BIS
 - [Opus Codec](https://opus-codec.org/) - High-quality audio encoding for voice calls
 
 **Blockchain:**
-- [Zcash](https://z.cash/) - Privacy-focused cryptocurrency with shielded transactions
 - [Solana](https://solana.com/) - High-performance blockchain for fast payments
-- [Zcash Android SDK](https://github.com/Electric-Coin-Company/zcash-android-wallet-sdk) - Mobile Zcash wallet implementation
 - [web3j](https://github.com/web3j/web3j) - BIP39/BIP44 implementation for wallet derivation
 
 **Payment Protocol:**

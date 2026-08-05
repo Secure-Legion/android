@@ -120,7 +120,7 @@
                 android:orientation="horizontal"
                 android:background="@drawable/settings_box_bg"
                 android:padding="16dp"
-                android:layout_marginBottom="12dp"
+                android:layout_marginBottom="32dp"
                 android:gravity="center_vertical"
                 android:clickable="true"
                 android:focusable="true">
@@ -166,66 +166,6 @@
 
                 <View
                     android:id="@+id/solanaCheckbox"
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:background="@drawable/custom_checkbox" />
-
-            </LinearLayout>
-
-            <!-- Zcash Option -->
-            <LinearLayout
-                android:id="@+id/zcashOption"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:padding="16dp"
-                android:layout_marginBottom="32dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true">
-
-                <FrameLayout
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginEnd="12dp"
-                    android:background="@drawable/settings_icon_bg">
-
-                    <ImageView
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_zcash"
-                        android:contentDescription="Zcash" />
-
-                </FrameLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Zcash"
-                        android:textSize="16sp"
-                        android:textColor="?attr/colorOnSurface"
-                        android:fontFamily="@font/poppins_semibold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="ZEC blockchain wallet"
-                        android:textSize="12sp"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:fontFamily="@font/poppins_regular" />
-
-                </LinearLayout>
-
-                <View
-                    android:id="@+id/zcashCheckbox"
                     android:layout_width="20dp"
                     android:layout_height="20dp"
                     android:background="@drawable/custom_checkbox" />

@@ -65,7 +65,7 @@ class SwapActivity : AppCompatActivity() {
     private var isFetchingQuote = false
 
     // Supported tokens for Solana swap
-    private val supportedTokens = listOf("SOL", "USDC", "USDT", "ZEC", "USD1", "SECURE")
+    private val supportedTokens = listOf("SOL", "USDC", "USDT", "USD1", "SECURE")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -191,13 +191,12 @@ class SwapActivity : AppCompatActivity() {
 
                 val usdcBalance = tokens.find { it.mint == JupiterService.USDC_MINT }?.balance ?: 0.0
                 val usdtBalance = tokens.find { it.mint == JupiterService.USDT_MINT }?.balance ?: 0.0
-                val zecBalance = tokens.find { it.mint == JupiterService.ZEC_MINT }?.balance ?: 0.0
                 val usd1Balance = tokens.find { it.mint == JupiterService.USD1_MINT }?.balance ?: 0.0
                 val secureBalance = tokens.find { it.mint == JupiterService.SECURE_MINT }?.balance ?: 0.0
 
                 withContext(Dispatchers.Main) {
-                    fromBalance = getTokenBalance(fromToken, solBalance, usdcBalance, usdtBalance, zecBalance, usd1Balance, secureBalance)
-                    toBalance = getTokenBalance(toToken, solBalance, usdcBalance, usdtBalance, zecBalance, usd1Balance, secureBalance)
+                    fromBalance = getTokenBalance(fromToken, solBalance, usdcBalance, usdtBalance, usd1Balance, secureBalance)
+                    toBalance = getTokenBalance(toToken, solBalance, usdcBalance, usdtBalance, usd1Balance, secureBalance)
                     updateDisplay()
                 }
             } catch (e: Exception) {
@@ -211,14 +210,12 @@ class SwapActivity : AppCompatActivity() {
         sol: Double,
         usdc: Double,
         usdt: Double,
-        zec: Double = 0.0,
         usd1: Double = 0.0,
         secure: Double = 0.0
     ): Double = when (token) {
         "SOL" -> sol
         "USDC" -> usdc
         "USDT" -> usdt
-        "ZEC" -> zec
         "USD1" -> usd1
         "SECURE" -> secure
         else -> 0.0
@@ -480,7 +477,6 @@ class SwapActivity : AppCompatActivity() {
 
         // Hide the chain selector buttons (we're using this as a token picker)
         view.findViewById<View>(R.id.solanaChainButton)?.visibility = View.GONE
-        view.findViewById<View>(R.id.zcashChainButton)?.visibility = View.GONE
 
         for (token in supportedTokens) {
             if (token == currentOther) continue
@@ -491,7 +487,6 @@ class SwapActivity : AppCompatActivity() {
                 "SOL" -> "Solana"
                 "USDC" -> "USD Coin"
                 "USDT" -> "Tether"
-                "ZEC" -> "Zcash"
                 "USD1" -> "World Liberty Financial USD"
                 "SECURE" -> "Secure Legion"
                 else -> ""
@@ -557,7 +552,6 @@ class SwapActivity : AppCompatActivity() {
         "SOL" -> R.drawable.ic_solana
         "USDC" -> R.drawable.ic_usdc
         "USDT" -> R.drawable.ic_usdt
-        "ZEC" -> R.drawable.ic_zcash
         "USD1" -> R.drawable.ic_usd1
         "SECURE" -> R.drawable.ic_secure
         else -> R.drawable.ic_solana

@@ -19,7 +19,6 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.services.MessageService
 import com.securelegion.services.SolanaService
-import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,18 +50,15 @@ class RequestMoneyActivity : AppCompatActivity() {
     private lateinit var paymentTypeText: TextView
     private lateinit var paymentTypeDropdown: View
 
-    private var selectedToken = "SOL" // SOL or ZEC
+    private var selectedToken = "SOL"
     private var showingUsd = false // false = native token, true = USD
-    // SOL: "normal" | ZEC: "transparent" or "shielded"
     private var selectedPaymentType = "normal"
     private var currentSolPrice: Double = 0.0
-    private var currentZecPrice: Double = 0.0
 
     // Wallet selection
     private var currentWalletId: String = ""
     private var currentWalletName: String = "Wallet 1"
     private var currentWalletAddress: String = ""
-    private var currentZcashAddress: String? = null
 
     private lateinit var keyManager: KeyManager
     private lateinit var solanaService: SolanaService
@@ -138,11 +134,7 @@ class RequestMoneyActivity : AppCompatActivity() {
     private fun toggleAmountDisplay() {
         val currentText = amountInput.text.toString()
         val currentAmount = currentText.toDoubleOrNull() ?: 0.0
-        val price = when (selectedToken) {
-            "SOL" -> currentSolPrice
-            "ZEC" -> currentZecPrice
-            else -> 0.0
-        }
+        val price = currentSolPrice
 
         showingUsd = !showingUsd
 
@@ -181,10 +173,7 @@ class RequestMoneyActivity : AppCompatActivity() {
 
                 // Filter wallets that have the appropriate address for this chain
                 val wallets = allWallets.filter { wallet ->
-                    wallet.walletId != "main" && when (chain) {
-                        "ZEC" -> !wallet.zcashAddress.isNullOrEmpty() || !wallet.zcashUnifiedAddress.isNullOrEmpty()
-                        else -> wallet.solanaAddress.isNotEmpty()
-                    }
+                    wallet.walletId != "main" && wallet.solanaAddress.isNotEmpty()
                 }
 
                 if (wallets.isNotEmpty()) {
@@ -192,16 +181,10 @@ class RequestMoneyActivity : AppCompatActivity() {
                     currentWalletId = firstWallet.walletId
                     currentWalletName = firstWallet.name
                     currentWalletAddress = firstWallet.solanaAddress
-                    currentZcashAddress = firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress
-
-                    val displayAddress = when (chain) {
-                        "ZEC" -> firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress ?: ""
-                        else -> firstWallet.solanaAddress
-                    }
 
                     withContext(Dispatchers.Main) {
                         fromWalletNameText.text = currentWalletName
-                        fromAddressShort.text = formatAddressShort(displayAddress)
+                        fromAddressShort.text = formatAddressShort(firstWallet.solanaAddress)
                     }
                 } else {
                     withContext(Dispatchers.Main) {
@@ -216,21 +199,10 @@ class RequestMoneyActivity : AppCompatActivity() {
     }
 
     private fun updatePaymentTypeUI() {
-        if (selectedToken == "ZEC") {
-            paymentTypeIcon.setImageResource(R.drawable.ic_shield)
-            paymentTypeIcon.clearColorFilter()
-            if (selectedPaymentType == "normal") {
-                selectedPaymentType = "transparent"
-            }
-            paymentTypeText.text = if (selectedPaymentType == "shielded") "Shielded" else "Transparent"
-        } else {
-            paymentTypeIcon.setImageResource(R.drawable.ic_solana)
-            paymentTypeIcon.clearColorFilter()
-            if (selectedPaymentType == "transparent" || selectedPaymentType == "shielded") {
-                selectedPaymentType = "normal"
-            }
-            paymentTypeText.text = "Normal"
-        }
+        selectedPaymentType = "normal"
+        paymentTypeIcon.setImageResource(R.drawable.ic_solana)
+        paymentTypeIcon.clearColorFilter()
+        paymentTypeText.text = "Normal"
     }
 
     private fun showPaymentTypeSelector() {
@@ -263,38 +235,15 @@ class RequestMoneyActivity : AppCompatActivity() {
         val option3Icon = view.findViewById<ImageView>(R.id.option3Icon)
         val option3View = view.findViewById<View>(R.id.paymentTypeOption3)
 
-        if (selectedToken == "ZEC") {
-            // Zcash: Transparent / Shielded (2 options)
-            option1Icon.setImageResource(R.drawable.ic_shield)
-            option2Icon.setImageResource(R.drawable.ic_shield)
-            option1Title.text = "Transparent"
-            option2Title.text = "Shielded"
-            option1Desc.text = "Standard Zcash transaction"
-            option2Desc.text = "Fully shielded Zcash transaction"
-            option1Check.visibility = if (selectedPaymentType == "transparent") View.VISIBLE else View.GONE
-            option2Check.visibility = if (selectedPaymentType == "shielded") View.VISIBLE else View.GONE
-            option3View.visibility = View.GONE
-        } else {
-            // Solana: Normal only
-            option1Icon.setImageResource(R.drawable.ic_solana)
-            option2Icon.setImageResource(R.drawable.ic_solana)
-            option1Title.text = "Normal"
-            option2Title.text = "Normal"
-            option1Desc.text = "Standard Solana transaction"
-            option2Desc.text = "Standard Solana transaction"
-            option1Check.visibility = if (selectedPaymentType == "normal") View.VISIBLE else View.GONE
-            option2Check.visibility = View.GONE
-            option3View.visibility = View.GONE
-        }
+        option1Icon.setImageResource(R.drawable.ic_solana)
+        option1Title.text = "Normal"
+        option1Desc.text = "Standard Solana transaction"
+        option1Check.visibility = View.VISIBLE
+        view.findViewById<View>(R.id.paymentTypeOption2).visibility = View.GONE
+        option3View.visibility = View.GONE
 
         view.findViewById<View>(R.id.paymentTypeOption1).setOnClickListener {
-            selectedPaymentType = if (selectedToken == "ZEC") "transparent" else "normal"
-            updatePaymentTypeUI()
-            bottomSheet.dismiss()
-        }
-
-        view.findViewById<View>(R.id.paymentTypeOption2).setOnClickListener {
-            selectedPaymentType = if (selectedToken == "ZEC") "shielded" else "normal"
+            selectedPaymentType = "normal"
             updatePaymentTypeUI()
             bottomSheet.dismiss()
         }
@@ -334,7 +283,6 @@ class RequestMoneyActivity : AppCompatActivity() {
 
                     val walletListContainer = view.findViewById<LinearLayout>(R.id.walletListContainer)
                     val solanaChainBtn = view.findViewById<View>(R.id.solanaChainButton)
-                    val zcashChainBtn = view.findViewById<View>(R.id.zcashChainButton)
 
                     // Track showing USD vs native per wallet item
                     val showingUsdMap = mutableMapOf<String, Boolean>()
@@ -344,18 +292,12 @@ class RequestMoneyActivity : AppCompatActivity() {
                         walletListContainer.removeAllViews()
 
                         val wallets = allWallets.filter { wallet ->
-                            wallet.walletId != "main" && when (chain) {
-                                "ZEC" -> !wallet.zcashAddress.isNullOrEmpty() || !wallet.zcashUnifiedAddress.isNullOrEmpty()
-                                else -> wallet.solanaAddress.isNotEmpty()
-                            }
+                            wallet.walletId != "main" && wallet.solanaAddress.isNotEmpty()
                         }
 
                         // Update chain button backgrounds to show selection
                         solanaChainBtn.setBackgroundResource(
                             if (chain == "SOL") R.drawable.swap_button_bg else R.drawable.wallet_dropdown_bg
-                        )
-                        zcashChainBtn.setBackgroundResource(
-                            if (chain == "ZEC") R.drawable.swap_button_bg else R.drawable.wallet_dropdown_bg
                         )
 
                         if (wallets.isEmpty()) {
@@ -378,9 +320,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                             val toggleBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
 
                             // Set chain icon
-                            walletIcon.setImageResource(
-                                if (chain == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana
-                            )
+                            walletIcon.setImageResource(R.drawable.ic_solana)
 
                             walletNameView.text = wallet.name
                             showingUsdMap[wallet.walletId] = true
@@ -389,21 +329,10 @@ class RequestMoneyActivity : AppCompatActivity() {
                             walletBalanceView.text = "Loading..."
                             lifecycleScope.launch {
                                 try {
-                                    val balance: Double
-                                    val price: Double
-                                    val symbol: String
-                                    if (chain == "ZEC") {
-                                        val zcashService = ZcashService.getInstance(this@RequestMoneyActivity)
-                                        val balResult = zcashService.getBalance()
-                                        balance = balResult.getOrDefault(0.0)
-                                        price = currentZecPrice
-                                        symbol = "ZEC"
-                                    } else {
-                                        val balResult = solanaService.getBalance(wallet.solanaAddress)
-                                        balance = balResult.getOrDefault(0.0)
-                                        price = currentSolPrice
-                                        symbol = "SOL"
-                                    }
+                                    val balResult = solanaService.getBalance(wallet.solanaAddress)
+                                    val balance = balResult.getOrDefault(0.0)
+                                    val price = currentSolPrice
+                                    val symbol = "SOL"
                                     walletBalanceView.text = if (price > 0) {
                                         String.format("$%,.2f", balance * price)
                                     } else {
@@ -430,8 +359,8 @@ class RequestMoneyActivity : AppCompatActivity() {
 
                             walletItemView.setOnClickListener {
                                 // Update selected token to match the chain tab
-                                selectedToken = chain
-                                currencyIcon.setImageResource(if (selectedToken == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana)
+                                selectedToken = "SOL"
+                                currencyIcon.setImageResource(R.drawable.ic_solana)
                                 updatePaymentTypeUI()
                                 switchToWallet(wallet)
                                 bottomSheet.dismiss()
@@ -445,12 +374,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                     solanaChainBtn.setOnClickListener {
                         populateWallets("SOL")
                     }
-                    zcashChainBtn.setOnClickListener {
-                        populateWallets("ZEC")
-                    }
-
-                    // Populate with current selected chain
-                    populateWallets(selectedToken)
+                    populateWallets("SOL")
 
                     bottomSheet.show()
                 }
@@ -471,21 +395,15 @@ class RequestMoneyActivity : AppCompatActivity() {
                 currentWalletId = wallet.walletId
                 currentWalletName = wallet.name
                 currentWalletAddress = wallet.solanaAddress
-                currentZcashAddress = wallet.zcashAddress ?: wallet.zcashUnifiedAddress
 
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@RequestMoneyActivity, dbPassphrase)
                 database.walletDao().updateLastUsed(wallet.walletId, System.currentTimeMillis())
 
                 // Display appropriate address based on selected chain
-                val displayAddress = when (selectedToken) {
-                    "ZEC" -> wallet.zcashAddress ?: wallet.zcashUnifiedAddress ?: ""
-                    else -> wallet.solanaAddress
-                }
-
                 withContext(Dispatchers.Main) {
                     fromWalletNameText.text = currentWalletName
-                    fromAddressShort.text = formatAddressShort(displayAddress)
+                    fromAddressShort.text = formatAddressShort(wallet.solanaAddress)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to switch wallet", e)
@@ -527,17 +445,8 @@ class RequestMoneyActivity : AppCompatActivity() {
                     currentWalletId = firstWallet.walletId
                     currentWalletName = firstWallet.name
                     currentWalletAddress = firstWallet.solanaAddress
-                    currentZcashAddress = firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress
-
-                    // Detect wallet type and sync currency selector
-                    val isZcashWallet = (!firstWallet.zcashAddress.isNullOrEmpty() || !firstWallet.zcashUnifiedAddress.isNullOrEmpty()) && firstWallet.solanaAddress.isEmpty()
-                    selectedToken = if (isZcashWallet) "ZEC" else "SOL"
-
-                    val displayAddress = if (isZcashWallet) {
-                        firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress ?: ""
-                    } else {
-                        firstWallet.solanaAddress
-                    }
+                    selectedToken = "SOL"
+                    val displayAddress = firstWallet.solanaAddress
 
                     // Only update if we got a real address
                     val finalAddress = displayAddress.ifEmpty { fallbackAddress }
@@ -546,7 +455,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) {
                         fromWalletNameText.text = finalName
                         fromAddressShort.text = formatAddressShort(finalAddress)
-                        currencyIcon.setImageResource(if (selectedToken == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana)
+                        currencyIcon.setImageResource(R.drawable.ic_solana)
                         updatePaymentTypeUI()
                     }
                 }
@@ -564,14 +473,6 @@ class RequestMoneyActivity : AppCompatActivity() {
                 if (solResult.isSuccess) {
                     currentSolPrice = solResult.getOrNull() ?: 0.0
                     Log.d(TAG, "SOL price: $currentSolPrice")
-                }
-
-                // Fetch ZEC price
-                val zcashService = ZcashService.getInstance(this@RequestMoneyActivity)
-                val zecResult = zcashService.getZecPrice()
-                if (zecResult.isSuccess) {
-                    currentZecPrice = zecResult.getOrNull() ?: 0.0
-                    Log.d(TAG, "ZEC price: $currentZecPrice")
                 }
 
             } catch (e: Exception) {
@@ -599,11 +500,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         if (amount <= 0) return null
 
         return if (showingUsd) {
-            val price = when (selectedToken) {
-                "SOL" -> currentSolPrice
-                "ZEC" -> currentZecPrice
-                else -> 0.0
-            }
+            val price = currentSolPrice
             if (price > 0) amount / price else null
         } else {
             amount
@@ -668,11 +565,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         confirmSendAmount.text = formattedAmount
 
         // USD equivalent
-        val price = when (selectedToken) {
-            "SOL" -> currentSolPrice
-            "ZEC" -> currentZecPrice
-            else -> 0.0
-        }
+        val price = currentSolPrice
         if (price > 0) {
             confirmSendAmountUSD.text = String.format("≈ $%,.2f USD", amount * price)
             confirmSendAmountUSD.visibility = View.VISIBLE
@@ -683,7 +576,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         val recipientAddress = intent.getStringExtra(EXTRA_RECIPIENT_ADDRESS) ?: ""
         confirmSendTo.text = formatAddressShort(recipientAddress)
         confirmSendFromWallet.text = currentWalletName
-        confirmSendCurrency.text = if (selectedToken == "ZEC") "Zcash" else "Solana"
+        confirmSendCurrency.text = "Solana"
 
         // Payment type
         confirmSendPaymentType.text = when (selectedPaymentType) {
@@ -694,11 +587,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         }
 
         // Network fee
-        if (selectedToken == "ZEC") {
-            confirmSendNetworkFee.text = "~0.0001 ZEC"
-        } else {
-            confirmSendNetworkFee.text = "~0.000005 SOL"
-        }
+        confirmSendNetworkFee.text = "~0.000005 SOL"
 
         // Confirm button
         view.findViewById<View>(R.id.confirmSendButton).setOnClickListener {
@@ -729,44 +618,17 @@ class RequestMoneyActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                val myAddress = when (selectedToken) {
-                    "ZEC" -> currentZcashAddress ?: keyManager.getZcashAddress() ?: run {
-                        withContext(Dispatchers.Main) {
-                            sendNowButton.isEnabled = true
-                            ThemedToast.show(this@RequestMoneyActivity, "Zcash wallet not set up")
-                        }
-                        return@launch
-                    }
-                    else -> currentWalletAddress.ifEmpty { keyManager.getSolanaAddress() }
-                }
+                val myAddress = currentWalletAddress.ifEmpty { keyManager.getSolanaAddress() }
 
-                val txSignature: String
-                when {
-                    selectedToken == "ZEC" -> {
-                        val zcashService = ZcashService.getInstance(this@RequestMoneyActivity)
-                        val result = zcashService.sendTransaction(recipientAddress, amount)
-                        if (result.isFailure) {
-                            withContext(Dispatchers.Main) {
-                                sendNowButton.isEnabled = true
-                                ThemedToast.show(this@RequestMoneyActivity, "Failed to send: ${result.exceptionOrNull()?.message}")
-                            }
-                            return@launch
-                        }
-                        txSignature = result.getOrNull() ?: "unknown"
+                val result = solanaService.sendTransaction(myAddress, recipientAddress, amount, keyManager, currentWalletId)
+                if (result.isFailure) {
+                    withContext(Dispatchers.Main) {
+                        sendNowButton.isEnabled = true
+                        ThemedToast.show(this@RequestMoneyActivity, "Failed to send: ${result.exceptionOrNull()?.message}")
                     }
-                    else -> {
-                        // Normal Solana transfer
-                        val result = solanaService.sendTransaction(myAddress, recipientAddress, amount, keyManager, currentWalletId)
-                        if (result.isFailure) {
-                            withContext(Dispatchers.Main) {
-                                sendNowButton.isEnabled = true
-                                ThemedToast.show(this@RequestMoneyActivity, "Failed to send: ${result.exceptionOrNull()?.message}")
-                            }
-                            return@launch
-                        }
-                        txSignature = result.getOrNull() ?: "unknown"
-                    }
+                    return@launch
                 }
+                val txSignature = result.getOrNull() ?: "unknown"
 
                 Log.i(TAG, "Send successful: $txSignature (type: $selectedPaymentType)")
 
@@ -858,25 +720,10 @@ class RequestMoneyActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 // Get appropriate wallet address based on token from selected wallet
-                val myAddress = when (selectedToken) {
-                    "ZEC" -> {
-                        // Use Zcash address from selected wallet, or fallback to KeyManager
-                        currentZcashAddress ?: keyManager.getZcashAddress() ?: run {
-                            withContext(Dispatchers.Main) {
-                                requestNowButton.isEnabled = true
-                                ThemedToast.show(this@RequestMoneyActivity, "Zcash wallet not set up for $currentWalletName")
-                            }
-                            return@launch
-                        }
-                    }
-                    else -> {
-                        // Use Solana address from selected wallet
-                        if (currentWalletAddress.isNotEmpty()) {
-                            currentWalletAddress
-                        } else {
-                            keyManager.getSolanaAddress()
-                        }
-                    }
+                val myAddress = if (currentWalletAddress.isNotEmpty()) {
+                    currentWalletAddress
+                } else {
+                    keyManager.getSolanaAddress()
                 }
 
                 // Create NLx402 quote with selected token and expiry
@@ -979,11 +826,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         detailsCryptoAmount.text = formattedCrypto
 
         // USD value from cached price
-        val price = when (selectedToken) {
-            "SOL" -> currentSolPrice
-            "ZEC" -> currentZecPrice
-            else -> 0.0
-        }
+        val price = currentSolPrice
         if (price > 0) {
             val usdValue = amount * price
             detailsAmount.text = String.format("$%,.2f", usdValue)
@@ -1002,11 +845,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         }
 
         // Network fee
-        if (selectedToken == "ZEC") {
-            detailsNetworkFee.text = "~0.0001 ZEC"
-        } else {
-            detailsNetworkFee.text = "~0.000005 SOL"
-        }
+        detailsNetworkFee.text = "~0.000005 SOL"
 
         detailsRequestId.text = requestId
         detailsTime.text = time

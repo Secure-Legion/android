@@ -63,13 +63,11 @@ class AcceptPaymentActivity : AppCompatActivity() {
     private var currentWalletId: String = ""
     private var currentWalletName: String = "Wallet 1"
     private var currentWalletAddress: String = ""
-    private var currentZcashAddress: String? = null
-
     private var currentSolPrice: Double = 0.0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!BuildConfig.ENABLE_ZCASH_WALLET && !BuildConfig.ENABLE_SOLANA_WALLET) {
+        if (!BuildConfig.ENABLE_SOLANA_WALLET) {
             finish()
             return
         }
@@ -83,6 +81,12 @@ class AcceptPaymentActivity : AppCompatActivity() {
         messageId = intent.getStringExtra(EXTRA_MESSAGE_ID) ?: ""
         paymentAmount = intent.getLongExtra(EXTRA_PAYMENT_AMOUNT, 0)
         paymentToken = intent.getStringExtra(EXTRA_PAYMENT_TOKEN) ?: "SOL"
+
+        if (paymentToken.uppercase() !in setOf("SOL", "USDC", "USDT", "USD1", "SECURE")) {
+            ThemedToast.show(this, "This payment token is no longer supported")
+            finish()
+            return
+        }
 
         val quoteJson = intent.getStringExtra(EXTRA_PAYMENT_QUOTE_JSON)
         if (quoteJson != null) {
@@ -137,7 +141,6 @@ class AcceptPaymentActivity : AppCompatActivity() {
         // Convert amount to human readable
         val decimals = when (paymentToken.uppercase()) {
             "SOL" -> 9
-            "ZEC" -> 8
             "USDC", "USDT" -> 6
             else -> 9
         }
@@ -171,12 +174,8 @@ class AcceptPaymentActivity : AppCompatActivity() {
                 val database = SecureLegionDatabase.getInstance(this@AcceptPaymentActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
 
-                // Filter wallets by token type
                 val wallets = allWallets.filter { wallet ->
-                    wallet.walletId != "main" && when (paymentToken.uppercase()) {
-                        "ZEC" -> !wallet.zcashAddress.isNullOrEmpty()
-                        else -> wallet.solanaAddress.isNotEmpty()
-                    }
+                    wallet.walletId != "main" && wallet.solanaAddress.isNotEmpty()
                 }
 
                 if (wallets.isNotEmpty()) {
@@ -184,16 +183,10 @@ class AcceptPaymentActivity : AppCompatActivity() {
                     currentWalletId = firstWallet.walletId
                     currentWalletName = firstWallet.name
                     currentWalletAddress = firstWallet.solanaAddress
-                    currentZcashAddress = firstWallet.zcashAddress
-
-                    val displayAddress = when (paymentToken.uppercase()) {
-                        "ZEC" -> firstWallet.zcashAddress ?: ""
-                        else -> firstWallet.solanaAddress
-                    }
 
                     withContext(Dispatchers.Main) {
                         walletNameText.text = currentWalletName
-                        walletAddressShort.text = formatAddressShort(displayAddress)
+                        walletAddressShort.text = formatAddressShort(firstWallet.solanaAddress)
                     }
                 } else {
                     withContext(Dispatchers.Main) {
@@ -217,10 +210,7 @@ class AcceptPaymentActivity : AppCompatActivity() {
                 val allWallets = database.walletDao().getAllWallets()
 
                 val wallets = allWallets.filter { wallet ->
-                    wallet.walletId != "main" && when (paymentToken.uppercase()) {
-                        "ZEC" -> !wallet.zcashAddress.isNullOrEmpty()
-                        else -> wallet.solanaAddress.isNotEmpty()
-                    }
+                    wallet.walletId != "main" && wallet.solanaAddress.isNotEmpty()
                 }
 
                 withContext(Dispatchers.Main) {
@@ -258,13 +248,8 @@ class AcceptPaymentActivity : AppCompatActivity() {
                         val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
                         val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
 
-                        val displayAddress = when (paymentToken.uppercase()) {
-                            "ZEC" -> wallet.zcashAddress ?: ""
-                            else -> wallet.solanaAddress
-                        }
-
                         walletName.text = wallet.name
-                        walletBalance.text = formatAddressShort(displayAddress)
+                        walletBalance.text = formatAddressShort(wallet.solanaAddress)
 
                         walletItemView.setOnClickListener {
                             switchToWallet(wallet)
@@ -288,15 +273,9 @@ class AcceptPaymentActivity : AppCompatActivity() {
         currentWalletId = wallet.walletId
         currentWalletName = wallet.name
         currentWalletAddress = wallet.solanaAddress
-        currentZcashAddress = wallet.zcashAddress
-
-        val displayAddress = when (paymentToken.uppercase()) {
-            "ZEC" -> wallet.zcashAddress ?: ""
-            else -> wallet.solanaAddress
-        }
 
         walletNameText.text = currentWalletName
-        walletAddressShort.text = formatAddressShort(displayAddress)
+        walletAddressShort.text = formatAddressShort(wallet.solanaAddress)
     }
 
     private fun fetchPrice() {
@@ -335,10 +314,7 @@ class AcceptPaymentActivity : AppCompatActivity() {
     }
 
     private fun acceptPayment() {
-        val receiveAddress = when (paymentToken.uppercase()) {
-            "ZEC" -> currentZcashAddress
-            else -> currentWalletAddress
-        }
+        val receiveAddress = currentWalletAddress
 
         if (receiveAddress.isNullOrEmpty()) {
             ThemedToast.show(this, "Please select a wallet to receive payment")

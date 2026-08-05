@@ -112,7 +112,7 @@ class ContactListManager private constructor(private val context: Context) {
 
             // Derive PIN from seed for contact list encryption (v5 architecture)
             // This is different from the contact card PIN
-            val seedPhrase = keyManager.getMainWalletSeedForZcash()
+            val seedPhrase = keyManager.getMainAccountMnemonic()
                 ?: throw IllegalStateException("Seed phrase not found")
             val pin = keyManager.deriveContactPinFromSeed(seedPhrase)
             val encryptedData = encryptContactList(json.toString(), pin)

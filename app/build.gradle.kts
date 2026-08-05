@@ -33,7 +33,7 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 33
+        versionCode = 34
         versionName = "1.0.0"
 
         // Keep the package aligned with the native build matrix. The removed legacy x86 binary
@@ -82,7 +82,6 @@ android {
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "true")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "true")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "true")
@@ -111,7 +110,6 @@ android {
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "false")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "false")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
@@ -139,7 +137,6 @@ android {
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
@@ -166,7 +163,6 @@ android {
             // this flag documents intent for a future flavor-gated enablement.
             buildConfigField("boolean", "ENABLE_VOICE", "false")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "false")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
@@ -193,7 +189,6 @@ android {
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
@@ -220,7 +215,6 @@ android {
             // Voice CALLING only — voice messages (AAC via MediaRecorder) still work.
             buildConfigField("boolean", "ENABLE_VOICE", "false")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "false")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
@@ -282,7 +276,7 @@ android {
 }
 
 dependencies {
-    // Core library desugaring (required by Zcash SDK for Java 8+ APIs on older Android)
+    // Core library desugaring for Java 8+ APIs on older Android versions.
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     implementation(libs.androidx.core.ktx)
@@ -343,11 +337,6 @@ dependencies {
     // Base58 encoding for Solana addresses
     implementation("org.bitcoinj:bitcoinj-core:0.16.2")
 
-    // Zcash Android SDK for wallet functionality (latest 2025 version)
-    implementation("cash.z.ecc.android:zcash-android-sdk:2.4.0")
-
-    // Zcash BIP39 library (required for seed phrase handling)
-    implementation("cash.z.ecc.android:kotlin-bip39:1.0.9")
 
     // Room Database with SQLCipher encryption
     val roomVersion = "2.7.0-alpha11"

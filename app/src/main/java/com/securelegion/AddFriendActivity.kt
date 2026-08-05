@@ -52,6 +52,8 @@ class AddFriendActivity : BaseActivity() {
     private var scannedUsername: String? = null // Username from QR code scan
     private var scannedInviteToken: String? = null // Recipient's invite_token from QR (32 hex chars)
     @Volatile private var qrAutoSent = false   // Prevents double-fire from barcode scanner
+    // Accessed only from Dispatchers.Main. The exact request UUID is the single-flight key.
+    private val acceptingIncomingRequestIds = mutableSetOf<String>()
     private var isAutoMode = false // When true, activity is invisible (launched from bottom sheet QR/gallery)
 
     // Gallery QR picker launcher
@@ -811,7 +813,7 @@ class AddFriendActivity : BaseActivity() {
                         // Normal mode: accept immediately, no PIN needed
                         requestStatus.isEnabled = false
                         requestStatus.alpha = 0.5f
-                        acceptPhase2FriendRequest(friendRequest.ipfsCid, "")
+                        acceptPhase2FriendRequest(friendRequest.ipfsCid, "", friendRequest.id)
                     }
                 }
             }
@@ -826,7 +828,7 @@ class AddFriendActivity : BaseActivity() {
                 if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING && !isLegacy) {
                     requestStatus.isEnabled = false
                     requestStatus.alpha = 0.5f
-                    acceptPhase2FriendRequest(friendRequest.ipfsCid, "")
+                    acceptPhase2FriendRequest(friendRequest.ipfsCid, "", friendRequest.id)
                     return@setOnClickListener
                 }
 
@@ -1031,294 +1033,17 @@ class AddFriendActivity : BaseActivity() {
         loadingOverlay.visibility = View.GONE
     }
 
-    private fun downloadContactCard(cid: String, pin: String, isAccepting: Boolean = false) {
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                Log.d(TAG, "Downloading contact card from IPFS...")
-
-                val loadingText = if (isAccepting) "Accepting friend request..." else "Downloading contact card..."
-                showLoading(loadingText, "Downloading from IPFS...")
-
-                val cardManager = ContactCardManager(this@AddFriendActivity)
-                val result = withContext(Dispatchers.IO) {
-                    cardManager.downloadContactCard(cid, pin)
-                }
-
-                if (result.isSuccess) {
-                    val contactCard = result.getOrThrow()
-                    handleContactCardDownloaded(contactCard, cid, pin)
-                } else {
-                    throw result.exceptionOrNull()!!
-                }
-            } catch (e: Exception) {
-                hideLoading()
-                Log.e(TAG, "Failed to download contact card", e)
-                val errorMessage = when {
-                    e.message?.contains("invalid PIN", ignoreCase = true) == true ||
-                    e.message?.contains("decryption failed", ignoreCase = true) == true ->
-                        "Invalid PIN. Please check and try again."
-                    e.message?.contains("download failed", ignoreCase = true) == true ||
-                    e.message?.contains("404", ignoreCase = true) == true ||
-                    e.message?.contains("no response", ignoreCase = true) == true ->
-                        "Could not reach contact. They may be offline."
-                    e.message?.contains("SOCKS5", ignoreCase = true) == true ||
-                    e.message?.contains("Tor", ignoreCase = true) == true ->
-                        "Tor connection failed. Check network settings."
-                    else ->
-                        "Failed to download contact: ${e.message}"
-                }
-                ThemedToast.showLong(this@AddFriendActivity, errorMessage)
-            }
-        }
-    }
-
-    private fun handleContactCardDownloaded(contactCard: ContactCard, cid: String, pin: String) {
-        Log.i(TAG, "Successfully downloaded contact card for: ${contactCard.displayName}")
-
-        // Save contact to encrypted database
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                Log.d(TAG, "Step 1: Getting KeyManager instance...")
-                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
-
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-
-                Log.d(TAG, "Step 3: Getting database instance...")
-                val database = SecureLegionDatabase.getInstance(this@AddFriendActivity, dbPassphrase)
-                Log.d(TAG, "Database instance obtained")
-
-                Log.d(TAG, "Step 4: Checking if contact already exists...")
-                val existingContact = withContext(Dispatchers.IO) {
-                    database.contactDao().getContactBySolanaAddress(contactCard.solanaAddress)
-                }
-
-                if (existingContact != null) {
-                    hideLoading()
-                    Log.w(TAG, "Contact already exists in database")
-                    ThemedToast.show(this@AddFriendActivity, "Contact already exists: ${contactCard.displayName}")
-                    finish()
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        overridePendingTransition(0, 0)
-                    }
-                    return@launch
-                }
-
-                // Step 4.5: Contact List Backup Mesh (wire types 0x80/0x81/0x82)
-                // See CONTACT_LIST_SYNC_PROTOCOL.md for wire details.
-                Log.d(TAG, "Step 4.5: Running contact-list backup mesh sync...")
-                try {
-                    val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@AddFriendActivity)
-
-                    // (1) Re-export + store OUR list locally (now includes this new friend)
-                    val backupResult = contactListManager.backupToIPFS()
-                    if (backupResult.isFailure) {
-                        Log.e(TAG, "Local backup failed: ${backupResult.exceptionOrNull()?.message}")
-                    }
-
-                    // (2) PUSH our updated list to the new friend over their messaging .onion (0x82)
-                    val syncService = com.securelegion.services.ContactListSyncService.getInstance(this@AddFriendActivity)
-                    val friendMsgOnion = contactCard.messagingOnion
-                    if (friendMsgOnion.isNotEmpty()) {
-                        val pushOk = syncService.pushToFriend(friendMsgOnion)
-                        Log.i(TAG, "CL_SYNC push to new friend ${contactCard.displayName} rc=$pushOk")
-
-                        // (3) REQUEST the friend's list so we back them up too (0x80)
-                        // Response (0x81 or empty NACK) arrives via sync poller.
-                        if (contactCard.ipfsCid != null) {
-                            val reqOk = com.securelegion.crypto.RustBridge.sendContactListRequest(
-                                friendMsgOnion, contactCard.ipfsCid
-                            )
-                            Log.i(TAG, "CL_SYNC request friend's list ${contactCard.displayName} rc=$reqOk")
-                        }
-                    } else {
-                        Log.w(TAG, "Friend has no messaging onion — cannot push/request list")
-                    }
-
-                } catch (e: Exception) {
-                    Log.w(TAG, "Non-critical error during contact list backup", e)
-                    // Don't fail the entire friend add process if backup fails
-                }
-
-                Log.d(TAG, "Step 5: Check if this is accepting a friend request...")
-                // Check if we have a pending INCOMING friend request from this person
-                val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
-
-                // Check new format
-                val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-                val incomingRequest = pendingRequestsV2.mapNotNull { requestJson ->
-                    try {
-                        com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                    } catch (e: Exception) {
-                        null
-                    }
-                }.find {
-                    it.ipfsCid == cid &&
-                    it.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING
-                }
-
-                // Also check old format for backwards compatibility
-                val oldRequests = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
-                val hasOldIncomingRequest = oldRequests.any { requestJson ->
-                    try {
-                        val request = com.securelegion.models.FriendRequest.fromJson(requestJson)
-                        request.ipfsCid == cid
-                    } catch (e: Exception) {
-                        false
-                    }
-                }
-
-                val isAcceptingFriendRequest = (incomingRequest != null) || hasOldIncomingRequest
-                Log.d(TAG, "Is accepting friend request: $isAcceptingFriendRequest")
-
-                if (isAcceptingFriendRequest) {
-                    // Accepting an incoming request - add to Contacts immediately
-                    Log.d(TAG, "Step 6: Adding to Contacts (mutual friends)...")
-                    val contact = Contact(
-                        displayName = contactCard.displayName,
-                        solanaAddress = contactCard.solanaAddress,
-                        publicKeyBase64 = Base64.encodeToString(
-                            contactCard.solanaPublicKey,
-                            Base64.NO_WRAP
-                        ),
-                        x25519PublicKeyBase64 = Base64.encodeToString(
-                            contactCard.x25519PublicKey,
-                            Base64.NO_WRAP
-                        ),
-                        kyberPublicKeyBase64 = Base64.encodeToString(
-                            contactCard.kyberPublicKey,
-                            Base64.NO_WRAP
-                        ),
-                        voiceOnion = contactCard.voiceOnion,
-                        addedTimestamp = System.currentTimeMillis(),
-                        lastContactTimestamp = System.currentTimeMillis(),
-                        trustLevel = Contact.TRUST_UNTRUSTED,
-                        friendshipStatus = Contact.FRIENDSHIP_CONFIRMED
-                    )
-
-                    val contactId = withContext(Dispatchers.IO) {
-                        database.contactDao().insertContact(contact)
-                    }
-
-                    Log.i(TAG, "SUCCESS! Contact added with ID: $contactId")
-
-                    // Seed-restore recovery hook: if this device was just restored
-                    // from seed, this newly-added friend is the first peer we can
-                    // ask to send our contact list back. No-op otherwise.
-                    com.securelegion.services.ContactListSyncService
-                        .getInstance(this@AddFriendActivity)
-                        .maybeRequestRecovery(contact.messagingOnion)
-
-                    // Initialize key chain for progressive ephemeral key evolution
-                    try {
-                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@AddFriendActivity)
-                        val ourMessagingOnion = keyManager.getMessagingOnion()
-                        val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
-
-                        if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
-                            Log.e(TAG, "Cannot initialize key chain: missing onion address for ${contact.displayName}")
-                        } else {
-                            com.securelegion.crypto.KeyChainManager.initializeKeyChain(
-                                context = this@AddFriendActivity,
-                                contactId = contactId,
-                                theirX25519PublicKey = contactCard.x25519PublicKey,
-                                theirKyberPublicKey = contactCard.kyberPublicKey,
-                                ourMessagingOnion = ourMessagingOnion,
-                                theirMessagingOnion = theirMessagingOnion
-                            )
-                            Log.i(TAG, "Key chain initialized for ${contact.displayName}")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
-                    }
-
-                    // Remove the incoming request from pending
-                    removeFriendRequestByCid(cid)
-
-                    // NOTE: OLD v1.0 friend request notification removed - use NEW Phase 1/2/2b flow instead
-                    Log.i(TAG, "Contact added successfully (manual download flow)")
-                    // TODO: Consider removing this entire manual download flow in favor of Phase 1/2/2b
-
-                    ThemedToast.showLong(this@AddFriendActivity, "Contact added: ${contactCard.displayName}")
-                } else {
-                    // Initiating a friend request - save to pending (NOT Contacts yet)
-                    Log.d(TAG, "Step 6: Saving to pending outgoing requests (NOT adding to Contacts)...")
-
-                    val pendingRequest = com.securelegion.models.PendingFriendRequest(
-                        displayName = contactCard.displayName,
-                        ipfsCid = cid,
-                        direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
-                        status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
-                        timestamp = System.currentTimeMillis(),
-                        contactCardJson = contactCard.toJson() // Save contact card for later
-                    )
-
-                    // Save to pending requests
-                    savePendingFriendRequest(pendingRequest)
-
-                    // NOTE: OLD v1.0 friend request notification removed - use NEW Phase 1/2/2b flow instead
-                    Log.i(TAG, "Contact card saved to pending (manual download flow)")
-                    // TODO: Consider removing this entire manual download flow in favor of Phase 1/2/2b
-
-                    ThemedToast.showLong(this@AddFriendActivity, "Contact card saved. Use Phase 1 flow to send friend request.")
-                }
-
-                hideLoading()
-
-                // Navigate back to main screen (Messages view)
-                val intent = Intent(this@AddFriendActivity, MainActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                startActivity(intent)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
-                } else {
-                    @Suppress("DEPRECATION")
-                    overridePendingTransition(0, 0)
-                }
-                finish()
-            } catch (e: Exception) {
-                Log.e(TAG, "DETAILED ERROR - Failed to save contact to database", e)
-                Log.e(TAG, "Error type: ${e.javaClass.simpleName}")
-                Log.e(TAG, "Error message: ${e.message}")
-                Log.e(TAG, "Stack trace:", e)
-
-                val errorMsg = when {
-                    e.message?.contains("no such table") == true ->
-                        "Database error: Table not created"
-                    e.message?.contains("UNIQUE constraint") == true ->
-                        "Contact already exists"
-                    e.message != null ->
-                        "Database error: ${e.message}"
-                    else ->
-                        "Database error: ${e.javaClass.simpleName}"
-                }
-
-                hideLoading()
-                ThemedToast.showLong(this@AddFriendActivity, errorMsg)
-
-                // Navigate back to main screen even on error
-                val intent = Intent(this@AddFriendActivity, MainActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                startActivity(intent)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
-                } else {
-                    @Suppress("DEPRECATION")
-                    overridePendingTransition(0, 0)
-                }
-                finish()
-            }
-        }
-    }
-
     /**
      * PHASE 2: Accept incoming friend request
      * Decrypts Phase 1 payload, sends full contact card encrypted with sender's X25519 key
      */
-    private fun acceptPhase2FriendRequest(senderOnion: String, senderPin: String) {
+    private fun acceptPhase2FriendRequest(
+        senderOnion: String,
+        senderPin: String,
+        requestedIncomingRequestId: String? = null
+    ) {
         CoroutineScope(Dispatchers.Main).launch {
+            var acceptanceRequestId: String? = null
             try {
                 // Sanitize .onion address - remove https://, http://, and trailing slashes
                 val sanitizedOnion = senderOnion
@@ -1331,83 +1056,75 @@ class AddFriendActivity : BaseActivity() {
 
                 // Find the pending incoming request by onion address (stored in ipfsCid field for v2.0)
                 val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
-                val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                val pendingRequestsSet = synchronized(
+                    com.securelegion.services.TorService.pendingRequestPrefsLock
+                ) {
+                    prefs.getStringSet("pending_requests_v2", emptySet())?.toSet() ?: emptySet()
+                }
 
                 val incomingRequest = pendingRequestsSet.mapNotNull { requestJson ->
                     try {
                         com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         null
                     }
-                }.find {
-                    it.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING &&
-                    it.contactCardJson != null // Must have Phase 1 encrypted data
+                }.find { request ->
+                    val requestOnion = request.ipfsCid
+                        .replace("https://", "", ignoreCase = true)
+                        .replace("http://", "", ignoreCase = true)
+                        .removeSuffix("/")
+                        .trim()
+                    request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING &&
+                        request.contactCardJson != null &&
+                        (requestedIncomingRequestId == null || request.id == requestedIncomingRequestId) &&
+                        requestOnion.equals(sanitizedOnion, ignoreCase = true)
                 }
 
-                if (incomingRequest == null || incomingRequest.contactCardJson == null) {
+                if (incomingRequest?.contactCardJson == null) {
                     hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "No pending friend request found")
+                    ThemedToast.show(this@AddFriendActivity, "No matching pending friend request found")
                     return@launch
                 }
 
-                Log.d(TAG, "Found incoming request, loading Phase 1 payload...")
+                val incomingRequestId = incomingRequest.id
+                require(incomingRequestId.isNotBlank()) {
+                    "Pending friend request has no stable request ID"
+                }
+                if (!acceptingIncomingRequestIds.add(incomingRequestId)) {
+                    Log.i(TAG, "Phase 2 acceptance already running for request $incomingRequestId")
+                    ThemedToast.show(this@AddFriendActivity, "Already accepting this friend request")
+                    return@launch
+                }
+                acceptanceRequestId = incomingRequestId
 
-                // Phase 1 is already decrypted by TorService - just use the JSON directly
-                val phase1Json = incomingRequest.contactCardJson ?: throw Exception("No Phase 1 data")
-
-                Log.d(TAG, "Loaded Phase 1: $phase1Json")
-
-                // Parse Phase 1 payload
-                val phase1Obj = org.json.JSONObject(phase1Json)
-                val senderUsername = phase1Obj.getString("username")
-                val senderFriendRequestOnion = phase1Obj.getString("friend_request_onion")
-                val senderX25519PublicKeyBase64 = phase1Obj.getString("x25519_public_key")
-                val senderX25519PublicKey = Base64.decode(senderX25519PublicKeyBase64, Base64.NO_WRAP)
-
-                // Extract Kyber public key (for quantum resistance)
-                val senderKyberPublicKey = if (phase1Obj.has("kyber_public_key")) {
-                    Base64.decode(phase1Obj.getString("kyber_public_key"), Base64.NO_WRAP)
-                } else {
-                    null
+                // TorService already decrypted and validated the v2 envelope (PIN, invite token,
+                // nonce and timestamp). It stores the sender's ContactCard v4 JSON directly.
+                val senderCard = ContactCard.fromJson(incomingRequest.contactCardJson)
+                if (senderCard == null) {
+                    hideLoading()
+                    ThemedToast.show(this@AddFriendActivity, "Sender card malformed - cannot accept")
+                    return@launch
                 }
 
-                // Verify Ed25519 signature (defense-in-depth against .onion MitM)
-                if (phase1Obj.has("signature") && phase1Obj.has("ed25519_public_key")) {
-                    val signature = Base64.decode(phase1Obj.getString("signature"), Base64.NO_WRAP)
-                    val senderEd25519PublicKey = Base64.decode(phase1Obj.getString("ed25519_public_key"), Base64.NO_WRAP)
-
-                    // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
-                    val unsignedBytes = if (phase1Obj.has("signed_payload")) {
-                        Base64.decode(phase1Obj.getString("signed_payload"), Base64.NO_WRAP)
-                    } else {
-                        // Legacy fallback: reconstruct with known key order
-                        org.json.JSONObject().apply {
-                            put("username", phase1Obj.getString("username"))
-                            put("friend_request_onion", phase1Obj.getString("friend_request_onion"))
-                            put("x25519_public_key", phase1Obj.getString("x25519_public_key"))
-                            put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
-                            put("phase", phase1Obj.getInt("phase"))
-                        }.toString().toByteArray(Charsets.UTF_8)
-                    }
-
-                    val signatureValid = com.securelegion.crypto.RustBridge.verifySignature(
-                        unsignedBytes,
-                        signature,
-                        senderEd25519PublicKey
-                    )
-
-                    if (!signatureValid) {
-                        hideLoading()
-                        ThemedToast.show(this@AddFriendActivity, "Invalid signature - friend request rejected (possible MitM attack)")
-                        Log.e(TAG, "Phase 1 signature verification FAILED - rejecting friend request")
-                        return@launch
-                    }
-                    Log.i(TAG, "Phase 1 signature verified (Ed25519)")
-                } else {
-                    Log.w(TAG, "Phase 1 has no signature (legacy friend request)")
+                val senderUsername = senderCard.displayName
+                val senderFriendRequestOnion = senderCard.friendRequestOnion
+                    .replace("https://", "", ignoreCase = true)
+                    .replace("http://", "", ignoreCase = true)
+                    .removeSuffix("/")
+                    .trim()
+                if (!senderFriendRequestOnion.equals(sanitizedOnion, ignoreCase = true)) {
+                    throw SecurityException("Pending request onion does not match authenticated sender card")
                 }
 
-                Log.i(TAG, "Phase 1 decrypted successfully for sender: $senderUsername")
+                val senderX25519PublicKey = senderCard.x25519PublicKey
+                require(senderX25519PublicKey.size == 32) { "Sender X25519 public key is invalid" }
+                val senderX25519PublicKeyBase64 =
+                    Base64.encodeToString(senderX25519PublicKey, Base64.NO_WRAP)
+                val senderKyberPublicKey = senderCard.kyberPublicKey.takeIf { key ->
+                    key.isNotEmpty() && key.any { it != 0.toByte() }
+                }
+
+                Log.i(TAG, "Authenticated Phase 1 card loaded for sender: $senderUsername")
 
                 // Build YOUR full contact card
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
@@ -1486,9 +1203,6 @@ class AddFriendActivity : BaseActivity() {
 
                 Log.d(TAG, "Encrypted Phase 2 payload: ${encryptedPhase2.size} bytes (quantum=${kyberCiphertextBase64 != null})")
 
-                // Remove the old incoming request immediately
-                removeFriendRequestByCid(incomingRequest.ipfsCid)
-
                 // Build partial contact JSON with shared secret for later key chain init
                 val partialContactJson = org.json.JSONObject().apply {
                     put("username", senderUsername)
@@ -1513,12 +1227,32 @@ class AddFriendActivity : BaseActivity() {
                     contactCardJson = partialContactJson,
                     id = requestId
                 )
-                savePendingFriendRequest(pendingContact)
-                persistPhase2RetryRecord(
+                val retryDbId = persistPhase2RetryRecord(
                     uiRequestId = requestId,
                     recipientOnion = senderFriendRequestOnion,
                     encryptedPhase2 = encryptedPhase2,
                     partialContactJson = partialContactJson
+                )
+
+                try {
+                    // One protocol-critical commit: add the durable outgoing snapshot and remove
+                    // only the exact incoming UUID. All unrelated requests are preserved.
+                    replaceIncomingWithOutgoingExact(incomingRequestId, pendingContact)
+                } catch (e: Exception) {
+                    // Room was written first so a failed preferences commit never consumes the
+                    // incoming request. Roll back the new outbox row before allowing another tap.
+                    try {
+                        rollbackRetryRecord(requestId, retryDbId)
+                    } catch (rollbackError: Exception) {
+                        e.addSuppressed(rollbackError)
+                    }
+                    throw e
+                }
+
+                // Start the direct attempt only after both durable stores are committed. The Room
+                // row is already retryable/due if the process dies before this call can update it.
+                com.securelegion.services.TorService.acceptFriendRequestInBackground(
+                    requestId, senderFriendRequestOnion, encryptedPhase2, applicationContext
                 )
 
                 // Immediate feedback — no blocking overlay
@@ -1547,11 +1281,6 @@ class AddFriendActivity : BaseActivity() {
                 // Notify MainActivity so its badge + contact list update immediately
                 sendBroadcast(Intent("com.securelegion.FRIEND_REQUEST_RECEIVED"))
 
-                // Kick off background send via TorService (survives Activity navigation)
-                com.securelegion.services.TorService.acceptFriendRequestInBackground(
-                    requestId, senderFriendRequestOnion, encryptedPhase2, applicationContext
-                )
-
             } catch (e: Exception) {
                 Log.e(TAG, "Phase 2 acceptance failed", e)
                 val errorMsg = when {
@@ -1562,6 +1291,8 @@ class AddFriendActivity : BaseActivity() {
                         "Failed to accept: ${e.message}"
                 }
                 ThemedToast.show(this@AddFriendActivity, errorMsg)
+            } finally {
+                acceptanceRequestId?.let(acceptingIncomingRequestIds::remove)
             }
         }
     }
@@ -1676,13 +1407,22 @@ class AddFriendActivity : BaseActivity() {
                     contactCardJson = phase1Payload,
                     id = requestId
                 )
-                savePendingFriendRequest(pendingRequest)
-                persistPhase1RetryRecord(
+                val retryDbId = persistPhase1RetryRecord(
                     uiRequestId = requestId,
                     recipientOnion = sanitizedOnion,
                     recipientPin = friendPin,
                     phase1Payload = envelopeJson
                 )
+                try {
+                    savePendingFriendRequest(pendingRequest)
+                } catch (e: Exception) {
+                    try {
+                        rollbackRetryRecord(requestId, retryDbId)
+                    } catch (rollbackError: Exception) {
+                        e.addSuppressed(rollbackError)
+                    }
+                    throw e
+                }
 
                 // Immediate feedback — no blocking overlay
                 ThemedToast.show(this@AddFriendActivity, "Sending friend request...")
@@ -1821,12 +1561,77 @@ class AddFriendActivity : BaseActivity() {
     // Use NEW Phase 1/2/2b flow (acceptPhase2FriendRequest sends full contact card) instead
 
     /**
+     * Protocol-critical SharedPreferences transition for Phase 2 acceptance.
+     *
+     * The Room outbox row is committed before this is called. This single commit then adds the
+     * outgoing correlation snapshot and removes only the accepted incoming UUID, so another
+     * request from the same onion cannot be consumed accidentally.
+     */
+    private fun replaceIncomingWithOutgoingExact(
+        incomingRequestId: String,
+        outgoingRequest: com.securelegion.models.PendingFriendRequest
+    ) {
+        require(incomingRequestId.isNotBlank()) { "Incoming request ID is blank" }
+        require(outgoingRequest.id.isNotBlank()) { "Outgoing request ID is blank" }
+
+        synchronized(com.securelegion.services.TorService.pendingRequestPrefsLock) {
+            val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+            val pendingRequests = prefs
+                .getStringSet("pending_requests_v2", emptySet())
+                ?.toSet()
+                ?: emptySet()
+            val updatedRequests = mutableSetOf<String>()
+            var foundExactIncoming = false
+
+            pendingRequests.forEach { requestJson ->
+                val request = try {
+                    com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                } catch (_: Exception) {
+                    null
+                }
+
+                if (request != null &&
+                    request.id == incomingRequestId &&
+                    request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING
+                ) {
+                    foundExactIncoming = true
+                } else {
+                    // Preserve every other entry, including requests sharing the same onion.
+                    updatedRequests.add(requestJson)
+                }
+            }
+
+            check(foundExactIncoming) {
+                "Incoming friend request changed before acceptance could be committed"
+            }
+            updatedRequests.add(outgoingRequest.toJson())
+            check(
+                prefs.edit()
+                    .putStringSet("pending_requests_v2", updatedRequests)
+                    .commit()
+            ) { "Failed to commit accepted friend-request state" }
+        }
+
+        Log.d(
+            TAG,
+            "Committed exact Phase 2 transition " +
+                "(incoming=$incomingRequestId, outgoing=${outgoingRequest.id})"
+        )
+        sendBroadcast(
+            Intent("com.securelegion.FRIEND_REQUEST_STATUS_CHANGED").setPackage(packageName)
+        )
+    }
+
+    /**
      * Save pending friend request to SharedPreferences
      */
     private fun savePendingFriendRequest(request: com.securelegion.models.PendingFriendRequest) {
-        try {
+        synchronized(com.securelegion.services.TorService.pendingRequestPrefsLock) {
             val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
-            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+            val pendingRequestsSet = prefs
+                .getStringSet("pending_requests_v2", emptySet())
+                ?.toSet()
+                ?: emptySet()
 
             // Remove any existing request to the same recipient+direction (prevents duplicates on resend)
             val newSet = mutableSetOf<String>()
@@ -1842,18 +1647,17 @@ class AddFriendActivity : BaseActivity() {
             }
             newSet.add(request.toJson())
 
-            prefs.edit()
-                .putStringSet("pending_requests_v2", newSet)
-                .apply()
-
-            Log.d(TAG, "Saved pending friend request for ${request.displayName}")
-
-            // Broadcast so MainActivity's requests list refreshes
-            sendBroadcast(Intent("com.securelegion.FRIEND_REQUEST_STATUS_CHANGED").setPackage(packageName))
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save pending friend request", e)
+            check(
+                prefs.edit()
+                    .putStringSet("pending_requests_v2", newSet)
+                    .commit()
+            ) { "Failed to commit pending friend request ${request.id}" }
         }
+
+        Log.d(TAG, "Saved pending friend request for ${request.displayName}")
+
+        // Broadcast so MainActivity's requests list refreshes
+        sendBroadcast(Intent("com.securelegion.FRIEND_REQUEST_STATUS_CHANGED").setPackage(packageName))
     }
 
     /**
@@ -1902,29 +1706,39 @@ class AddFriendActivity : BaseActivity() {
         recipientOnion: String,
         recipientPin: String,
         phase1Payload: String
-    ) {
-        withContext(Dispatchers.IO) {
-            try {
+    ): Long = withContext(Dispatchers.IO) {
+        try {
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@AddFriendActivity, dbPassphrase)
+                val now = System.currentTimeMillis()
 
                 val entity = PendingFriendRequestEntity(
                     recipientOnion = recipientOnion,
                     recipientPin = recipientPin,
                     phase = PendingFriendRequestEntity.PHASE_1_SENT,
                     direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
-                    needsRetry = false,
+                    // Persist as due before the direct sender starts. If the process dies between
+                    // these operations, the dispatcher can recover this row on the next run.
+                    needsRetry = true,
+                    nextRetryAt = now,
                     phase1PayloadJson = phase1Payload,
                     leaseToken = null,
                     leaseExpiresAt = 0L
                 )
                 val dbId = database.pendingFriendRequestDao().insertRequest(entity)
-                rememberRetryDbId(uiRequestId, dbId)
+                check(dbId > 0L) { "Room returned an invalid Phase 1 outbox ID" }
+                try {
+                    rememberRetryDbId(uiRequestId, dbId)
+                } catch (e: Exception) {
+                    database.pendingFriendRequestDao().deleteById(dbId)
+                    throw e
+                }
                 Log.d(TAG, "Persisted Phase 1 retry record (ui=$uiRequestId, db=$dbId)")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to persist Phase 1 retry record", e)
-            }
+                dbId
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist Phase 1 retry record", e)
+            throw e
         }
     }
 
@@ -1933,40 +1747,65 @@ class AddFriendActivity : BaseActivity() {
         recipientOnion: String,
         encryptedPhase2: ByteArray,
         partialContactJson: String
-    ) {
-        withContext(Dispatchers.IO) {
-            try {
+    ): Long = withContext(Dispatchers.IO) {
+        try {
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@AddFriendActivity, dbPassphrase)
+                val now = System.currentTimeMillis()
 
                 val entity = PendingFriendRequestEntity(
                     recipientOnion = recipientOnion,
                     phase = PendingFriendRequestEntity.PHASE_2_SENT,
                     direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
-                    needsRetry = false,
+                    // The direct attempt is an optimization; Room is authoritative from insert.
+                    needsRetry = true,
+                    nextRetryAt = now,
                     phase2PayloadBase64 = Base64.encodeToString(encryptedPhase2, Base64.NO_WRAP),
                     contactCardJson = partialContactJson,
                     leaseToken = null,
                     leaseExpiresAt = 0L
                 )
                 val dbId = database.pendingFriendRequestDao().insertRequest(entity)
-                rememberRetryDbId(uiRequestId, dbId)
+                check(dbId > 0L) { "Room returned an invalid Phase 2 outbox ID" }
+                try {
+                    rememberRetryDbId(uiRequestId, dbId)
+                } catch (e: Exception) {
+                    database.pendingFriendRequestDao().deleteById(dbId)
+                    throw e
+                }
                 Log.d(TAG, "Persisted Phase 2 retry record (ui=$uiRequestId, db=$dbId)")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to persist Phase 2 retry record", e)
-            }
+                dbId
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist Phase 2 retry record", e)
+            throw e
         }
     }
 
     private fun rememberRetryDbId(uiRequestId: String, dbId: Long) {
-        try {
+        check(
             getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putLong(uiRequestId, dbId)
-                .apply()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to map retry dbId for request $uiRequestId", e)
+                .commit()
+        ) { "Failed to commit retry mapping for request $uiRequestId" }
+    }
+
+    private suspend fun rollbackRetryRecord(uiRequestId: String, dbId: Long) {
+        withContext(Dispatchers.IO) {
+            val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+            val database = SecureLegionDatabase.getInstance(
+                this@AddFriendActivity,
+                keyManager.getDatabasePassphrase()
+            )
+            database.pendingFriendRequestDao().deleteById(dbId)
+            check(
+                getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .remove(uiRequestId)
+                    .commit()
+            ) { "Failed to remove retry mapping during Phase 2 rollback" }
+            Log.w(TAG, "Rolled back uncommitted friend-request outbox (ui=$uiRequestId, db=$dbId)")
         }
     }
 

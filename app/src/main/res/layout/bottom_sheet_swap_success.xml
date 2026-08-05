@@ -83,7 +83,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="@font/poppins_medium"
-                    android:text="$56.08 ZEC"
+                    android:text="$56.08 USDC"
                     android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp" />
             </LinearLayout>
@@ -109,7 +109,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="@font/poppins_medium"
-                    android:text="1 SOL = 0.9347 ZEC"
+                    android:text="1 SOL = 150.00 USDC"
                     android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp" />
             </LinearLayout>

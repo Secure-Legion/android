@@ -47,7 +47,6 @@ import com.securelegion.models.Chat
 import com.securelegion.models.Contact
 import com.securelegion.services.SolanaService
 import com.securelegion.services.TorService
-import com.securelegion.services.ZcashService
 import com.securelegion.utils.startActivityWithSlideAnimation
 import com.securelegion.utils.applySlideInTransition
 import com.securelegion.utils.BadgeUtils
@@ -1985,8 +1984,8 @@ class MainActivity : BaseActivity() {
                     com.securelegion.crypto.RustBridge.encryptMessage(phase2Payload, senderX25519PublicKey)
                 }
 
-                // Remove old incoming request, save new outgoing "sending" request
-                removePendingRequest(request)
+                // Persist the exact Phase 2 outbox row before consuming the incoming UI item.
+                // If the process dies after this point, WorkManager can still deliver it.
                 val requestId = java.util.UUID.randomUUID().toString()
                 val partialContactJson = org.json.JSONObject().apply {
                     put("username", senderUsername)
@@ -1997,7 +1996,7 @@ class MainActivity : BaseActivity() {
                     if (hybridSharedSecret != null)
                         put("hybrid_shared_secret", android.util.Base64.encodeToString(hybridSharedSecret, android.util.Base64.NO_WRAP))
                 }.toString()
-                savePendingFriendRequest(com.securelegion.models.PendingFriendRequest(
+                val outgoingRequest = com.securelegion.models.PendingFriendRequest(
                     displayName = senderUsername,
                     ipfsCid = senderFriendRequestOnion,
                     direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
@@ -2005,13 +2004,15 @@ class MainActivity : BaseActivity() {
                     timestamp = System.currentTimeMillis(),
                     contactCardJson = partialContactJson,
                     id = requestId
-                ))
+                )
                 persistPhase2RetryRecord(
                     uiRequestId = requestId,
                     recipientOnion = senderFriendRequestOnion,
                     encryptedPhase2 = encryptedPhase2,
-                    partialContactJson = partialContactJson
+                    partialContactJson = partialContactJson,
+                    outgoingRequest = outgoingRequest
                 )
+                removePendingRequest(request)
 
                 com.securelegion.utils.ThemedToast.show(this@MainActivity, "Accepting request from $senderUsername...")
                 setupRequestsList()
@@ -2048,7 +2049,9 @@ class MainActivity : BaseActivity() {
         updateRequestsPillBadge()
     }
 
-    private fun savePendingFriendRequest(request: com.securelegion.models.PendingFriendRequest) {
+    private fun savePendingFriendRequest(
+        request: com.securelegion.models.PendingFriendRequest
+    ): Boolean {
         val prefs = getSharedPreferences("friend_requests", android.content.Context.MODE_PRIVATE)
         val existing = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
         // Dedup by (direction, ipfsCid) so re-adds replace rather than accumulate.
@@ -2064,7 +2067,7 @@ class MainActivity : BaseActivity() {
             }
         }
         newSet.add(request.toJson())
-        prefs.edit().putStringSet("pending_requests_v2", newSet).apply()
+        return prefs.edit().putStringSet("pending_requests_v2", newSet).commit()
     }
 
     private fun removePendingRequest(request: com.securelegion.models.PendingFriendRequest) {
@@ -2082,42 +2085,51 @@ class MainActivity : BaseActivity() {
         uiRequestId: String,
         recipientOnion: String,
         encryptedPhase2: ByteArray,
-        partialContactJson: String
+        partialContactJson: String,
+        outgoingRequest: com.securelegion.models.PendingFriendRequest
     ) {
         withContext(Dispatchers.IO) {
-            try {
-                val keyManager = KeyManager.getInstance(this@MainActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+            val keyManager = KeyManager.getInstance(this@MainActivity)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+            val now = System.currentTimeMillis()
 
-                val entity = PendingFriendRequestEntity(
-                    recipientOnion = recipientOnion,
-                    phase = PendingFriendRequestEntity.PHASE_2_SENT,
-                    direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
-                    needsRetry = false,
-                    phase2PayloadBase64 = Base64.encodeToString(encryptedPhase2, Base64.NO_WRAP),
-                    contactCardJson = partialContactJson,
-                    leaseToken = null,
-                    leaseExpiresAt = 0L
-                )
-                val dbId = database.pendingFriendRequestDao().insertRequest(entity)
-                rememberRetryDbId(uiRequestId, dbId)
-                Log.d(TAG, "Persisted Phase 2 retry record (ui=$uiRequestId, db=$dbId)")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to persist Phase 2 retry record", e)
+            val entity = PendingFriendRequestEntity(
+                recipientOnion = recipientOnion,
+                phase = PendingFriendRequestEntity.PHASE_2_SENT,
+                direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
+                needsRetry = true,
+                nextRetryAt = now,
+                phase2PayloadBase64 = Base64.encodeToString(encryptedPhase2, Base64.NO_WRAP),
+                contactCardJson = partialContactJson,
+                leaseToken = null,
+                leaseExpiresAt = 0L
+            )
+            val dbId = database.pendingFriendRequestDao().insertRequest(entity)
+            if (dbId <= 0L) {
+                throw IllegalStateException("Room did not persist the Phase 2 retry row")
             }
+            if (!rememberRetryDbId(uiRequestId, dbId)) {
+                database.pendingFriendRequestDao().deleteById(dbId)
+                throw IllegalStateException("Could not persist the Phase 2 retry mapping")
+            }
+            if (!savePendingFriendRequest(outgoingRequest)) {
+                getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .remove(uiRequestId)
+                    .commit()
+                database.pendingFriendRequestDao().deleteById(dbId)
+                throw IllegalStateException("Could not persist the outgoing Phase 2 UI state")
+            }
+            Log.d(TAG, "Persisted Phase 2 retry record (ui=$uiRequestId, db=$dbId)")
         }
     }
 
-    private fun rememberRetryDbId(uiRequestId: String, dbId: Long) {
-        try {
-            getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putLong(uiRequestId, dbId)
-                .apply()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to map retry dbId for request $uiRequestId", e)
-        }
+    private fun rememberRetryDbId(uiRequestId: String, dbId: Long): Boolean {
+        return getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(uiRequestId, dbId)
+            .commit()
     }
 
     private fun updateRequestsPillBadge() {

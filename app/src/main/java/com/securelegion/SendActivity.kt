@@ -19,7 +19,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.services.SolanaService
-import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -51,14 +50,7 @@ class SendActivity : BaseActivity() {
         val tokenSymbol = intent.getStringExtra("TOKEN_SYMBOL")
         val tokenName = intent.getStringExtra("TOKEN_NAME")
 
-        // Use token symbol from intent, or detect from address as fallback
-        selectedCurrency = tokenSymbol ?: if (currentWalletAddress.startsWith("t1") ||
-                               currentWalletAddress.startsWith("u1") ||
-                               currentWalletAddress.startsWith("utest")) {
-            "ZEC"
-        } else {
-            "SOL"
-        }
+        selectedCurrency = "SOL"
 
         Log.d("SendActivity", "Sending from wallet: $currentWalletName ($currentWalletAddress), Token: $selectedCurrency (${tokenName ?: "auto-detected"})")
 
@@ -175,11 +167,8 @@ class SendActivity : BaseActivity() {
         // Max button - fills in maximum available balance minus network fee and rent
         findViewById<View>(R.id.maxButton)?.setOnClickListener {
             // Subtract estimated network fee and rent-exempt reserve from available balance
-            val (estimatedFee, rentReserve) = when (selectedCurrency) {
-                "SOL" -> Pair(0.000005, 0.00089088) // Solana: network fee + rent-exempt minimum
-                "ZEC" -> Pair(0.0001, 0.0) // Zcash: network fee only
-                else -> Pair(0.0, 0.0)
-            }
+            val estimatedFee = 0.000005
+            val rentReserve = 0.00089088
 
             val maxSendable = (availableBalance - estimatedFee - rentReserve).coerceAtLeast(0.0)
 
@@ -339,14 +328,8 @@ class SendActivity : BaseActivity() {
                             currentWalletId = currentWallet.walletId
                             currentWalletName = currentWallet.name
 
-                            // Get address based on wallet type
-                            currentWalletAddress = if (currentWallet.zcashAddress != null) {
-                                selectedCurrency = "ZEC"
-                                currentWallet.zcashAddress ?: ""
-                            } else {
-                                selectedCurrency = "SOL"
-                                currentWallet.solanaAddress
-                            }
+                            selectedCurrency = "SOL"
+                            currentWalletAddress = currentWallet.solanaAddress
 
                             loadWalletInfo()
                             selectCurrency(selectedCurrency)
@@ -428,32 +411,14 @@ class SendActivity : BaseActivity() {
                         // Load balance for this wallet
                         lifecycleScope.launch(Dispatchers.IO) {
                             try {
-                                // Determine wallet type and load appropriate balance
-                                val isZcashWallet = !wallet.zcashAddress.isNullOrEmpty() || !wallet.zcashUnifiedAddress.isNullOrEmpty()
-
-                                if (isZcashWallet) {
-                                    val zcashService = ZcashService.getInstance(this@SendActivity)
-                                    val balanceResult = zcashService.getBalance()
-
-                                    withContext(Dispatchers.Main) {
-                                        if (balanceResult.isSuccess) {
-                                            val balance = balanceResult.getOrNull() ?: 0.0
-                                            walletBalance.text = "${formatBalance(balance)} ZEC"
-                                        } else {
-                                            walletBalance.text = "0 ZEC"
-                                        }
-                                    }
-                                } else {
-                                    val solanaService = SolanaService(this@SendActivity)
-                                    val balanceResult = solanaService.getBalance(wallet.solanaAddress)
-
-                                    withContext(Dispatchers.Main) {
-                                        if (balanceResult.isSuccess) {
-                                            val balance = balanceResult.getOrNull() ?: 0.0
-                                            walletBalance.text = "${formatBalance(balance)} SOL"
-                                        } else {
-                                            walletBalance.text = "0 SOL"
-                                        }
+                                val solanaService = SolanaService(this@SendActivity)
+                                val balanceResult = solanaService.getBalance(wallet.solanaAddress)
+                                withContext(Dispatchers.Main) {
+                                    if (balanceResult.isSuccess) {
+                                        val balance = balanceResult.getOrNull() ?: 0.0
+                                        walletBalance.text = "${formatBalance(balance)} SOL"
+                                    } else {
+                                        walletBalance.text = "0 SOL"
                                     }
                                 }
                             } catch (e: Exception) {
@@ -502,14 +467,8 @@ class SendActivity : BaseActivity() {
                 currentWalletId = wallet.walletId
                 currentWalletName = wallet.name
 
-                // Get wallet address based on type
-                currentWalletAddress = if (wallet.zcashAddress != null) {
-                    selectedCurrency = "ZEC"
-                    wallet.zcashAddress ?: ""
-                } else {
-                    selectedCurrency = "SOL"
-                    wallet.solanaAddress
-                }
+                selectedCurrency = "SOL"
+                currentWalletAddress = wallet.solanaAddress
 
                 // Update last used timestamp
                 val keyManager = KeyManager.getInstance(this@SendActivity)
@@ -586,11 +545,7 @@ class SendActivity : BaseActivity() {
         confirmToAddress?.text = "${recipientAddress.take(6)}...${recipientAddress.takeLast(6)}"
 
         // Show network name instead of just currency symbol
-        val networkName = when (selectedCurrency) {
-            "SOL" -> "Solana"
-            "ZEC" -> "Zcash"
-            else -> selectedCurrency
-        }
+        val networkName = "Solana"
         confirmCurrency?.text = networkName
 
         // Confirm button
@@ -598,11 +553,7 @@ class SendActivity : BaseActivity() {
         confirmButton.setOnClickListener {
             bottomSheet.dismiss()
 
-            // Send transaction based on selected currency
-            when (selectedCurrency) {
-                "SOL" -> sendSolanaTransaction(recipientAddress, amount)
-                "ZEC" -> sendZcashTransaction(recipientAddress, amount)
-            }
+            sendSolanaTransaction(recipientAddress, amount)
         }
 
         // Cancel button
@@ -615,29 +566,9 @@ class SendActivity : BaseActivity() {
     }
 
     private fun selectCurrency(currency: String) {
-        selectedCurrency = currency
-
-        val balanceChainIcon = findViewById<ImageView>(R.id.balanceChainIcon)
-        val currencySymbol = findViewById<TextView>(R.id.currencySymbol)
-
-        when (currency) {
-            "SOL" -> {
-                // Update currency display
-                balanceChainIcon?.setImageResource(R.drawable.ic_solana)
-                currencySymbol?.text = "SOL"
-
-                Log.d("SendActivity", "Selected currency: Solana")
-            }
-            "ZEC" -> {
-                // Update currency display
-                balanceChainIcon?.setImageResource(R.drawable.ic_zcash)
-                currencySymbol?.text = "ZEC"
-
-                Log.d("SendActivity", "Selected currency: Zcash")
-            }
-        }
-
-        // Reload balance for selected currency
+        selectedCurrency = "SOL"
+        findViewById<ImageView>(R.id.balanceChainIcon)?.setImageResource(R.drawable.ic_solana)
+        findViewById<TextView>(R.id.currencySymbol)?.text = "SOL"
         loadWalletBalance()
     }
 
@@ -803,165 +734,6 @@ class SendActivity : BaseActivity() {
         }
     }
 
-    private fun sendZcashTransaction(recipientAddress: String, amount: Double) {
-        // Create transaction status bottom sheet
-        val bottomSheet = GlassBottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.bottom_sheet_transaction_status, null)
-
-        // Set minimum height
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val desiredHeight = (screenHeight * 0.7).toInt()
-        view.minimumHeight = desiredHeight
-
-        bottomSheet.setContentView(view)
-
-        // Configure bottom sheet behavior
-        bottomSheet.behavior.isDraggable = false // Prevent dismissing during transaction
-        bottomSheet.behavior.isFitToContents = true
-        bottomSheet.behavior.skipCollapsed = true
-        bottomSheet.setCancelable(false) // Prevent back button dismiss during transaction
-
-        // Make backgrounds transparent
-        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
-
-        view.post {
-            val parentView = view.parent as? View
-            parentView?.setBackgroundResource(android.R.color.transparent)
-        }
-
-        // Get views
-        val spinner = view.findViewById<ProgressBar>(R.id.txStatusSpinner)
-        val successIcon = view.findViewById<ImageView>(R.id.txStatusSuccessIcon)
-        val errorIcon = view.findViewById<ImageView>(R.id.txStatusErrorIcon)
-        val titleText = view.findViewById<TextView>(R.id.txStatusTitle)
-        val statusMessage = view.findViewById<TextView>(R.id.txStatusMessage)
-        val amountText = view.findViewById<TextView>(R.id.txStatusAmount)
-        val usdValueText = view.findViewById<TextView>(R.id.txStatusUsdValue)
-        val fromWalletText = view.findViewById<TextView>(R.id.txStatusFromWallet)
-        val toAddressText = view.findViewById<TextView>(R.id.txStatusToAddress)
-        val networkText = view.findViewById<TextView>(R.id.txStatusNetwork)
-        val networkFeeText = view.findViewById<TextView>(R.id.txStatusNetworkFee)
-        val txHashContainer = view.findViewById<LinearLayout>(R.id.txHashContainer)
-        val txHashText = view.findViewById<TextView>(R.id.txHashText)
-        val copyTxHashIcon = view.findViewById<ImageView>(R.id.copyTxHashIcon)
-        val errorMessage = view.findViewById<TextView>(R.id.txErrorMessage)
-        val closeButton = view.findViewById<Button>(R.id.txStatusCloseButton)
-
-        // Set transaction details
-        amountText?.text = "$amount ZEC"
-        val usdValue = amount * currentTokenPrice
-        usdValueText?.text = "≈ $${String.format("%.2f", usdValue)} USD"
-        fromWalletText?.text = currentWalletName
-        toAddressText?.text = "${recipientAddress.take(6)}...${recipientAddress.takeLast(6)}"
-        networkText?.text = "Zcash"
-        networkFeeText?.text = "~0.0001 ZEC"
-
-        bottomSheet.show()
-
-        lifecycleScope.launch {
-            try {
-                Log.i("SendActivity", "Initiating ZEC transfer: $amount ZEC from $currentWalletName to $recipientAddress")
-
-                // Update status: Preparing
-                statusMessage?.text = "Preparing transaction..."
-
-                val zcashService = ZcashService.getInstance(this@SendActivity)
-
-                // Update status: Sending
-                statusMessage?.text = "Sending transaction to network..."
-
-                val result = zcashService.sendTransaction(
-                    toAddress = recipientAddress,
-                    amountZEC = amount,
-                    memo = "Sent from SecureLegion"
-                )
-
-                if (result.isSuccess) {
-                    val txId = result.getOrNull()!!
-                    Log.i("SendActivity", "ZEC transaction successful: $txId")
-
-                    // Update status: Success
-                    spinner?.visibility = View.GONE
-                    successIcon?.visibility = View.VISIBLE
-                    titleText?.text = "Transaction Sent!"
-                    statusMessage?.text = "Your transaction has been broadcast to the network"
-
-                    // Show transaction hash
-                    txHashContainer?.visibility = View.VISIBLE
-                    txHashText?.text = txId
-
-                    // Copy hash button
-                    copyTxHashIcon?.setOnClickListener {
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        val clip = android.content.ClipData.newPlainText("Transaction ID", txId)
-                        clipboard.setPrimaryClip(clip)
-                        ThemedToast.show(this@SendActivity, "Transaction ID copied")
-                    }
-
-                    // Enable close button
-                    closeButton?.isEnabled = true
-                    closeButton?.alpha = 1.0f
-                    closeButton?.setOnClickListener {
-                        bottomSheet.dismiss()
-                        // Clear inputs and go back
-                        findViewById<EditText>(R.id.recipientAddressInput).setText("")
-                        findViewById<EditText>(R.id.balanceAmount).setText("")
-                        finish()
-                    }
-
-                    // Auto-dismiss after 5 seconds
-                    view.postDelayed({
-                        if (bottomSheet.isShowing) {
-                            bottomSheet.dismiss()
-                            findViewById<EditText>(R.id.recipientAddressInput).setText("")
-                            findViewById<EditText>(R.id.balanceAmount).setText("")
-                            finish()
-                        }
-                    }, 5000)
-
-                } else {
-                    val error = result.exceptionOrNull()
-                    Log.e("SendActivity", "ZEC transaction failed", error)
-
-                    // Update status: Error
-                    spinner?.visibility = View.GONE
-                    errorIcon?.visibility = View.VISIBLE
-                    titleText?.text = "Transaction Failed"
-                    statusMessage?.visibility = View.GONE
-                    errorMessage?.visibility = View.VISIBLE
-                    errorMessage?.text = error?.message ?: "Unknown error occurred"
-
-                    // Enable close button
-                    closeButton?.isEnabled = true
-                    closeButton?.alpha = 1.0f
-                    closeButton?.setOnClickListener {
-                        bottomSheet.dismiss()
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e("SendActivity", "Failed to send ZEC transaction", e)
-
-                // Update status: Error
-                spinner?.visibility = View.GONE
-                errorIcon?.visibility = View.VISIBLE
-                titleText?.text = "Transaction Failed"
-                statusMessage?.visibility = View.GONE
-                errorMessage?.visibility = View.VISIBLE
-                errorMessage?.text = e.message ?: "Unknown error occurred"
-
-                // Enable close button
-                closeButton?.isEnabled = true
-                closeButton?.alpha = 1.0f
-                closeButton?.setOnClickListener {
-                    bottomSheet.dismiss()
-                }
-            }
-        }
-    }
-
     private fun loadCachedPrice() {
         val prefs = getSharedPreferences("wallet_prices", MODE_PRIVATE)
         val priceKey = "${selectedCurrency}_price"
@@ -1003,12 +775,7 @@ class SendActivity : BaseActivity() {
         Log.d("SendActivity", "Saved balance to cache for $selectedCurrency: $balance")
     }
 
-    private fun loadWalletBalance() {
-        when (selectedCurrency) {
-            "SOL" -> loadSolanaBalance()
-            "ZEC" -> loadZcashBalance()
-        }
-    }
+    private fun loadWalletBalance() = loadSolanaBalance()
 
     private fun loadSolanaBalance() {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -1054,55 +821,6 @@ class SendActivity : BaseActivity() {
                 Log.e("SendActivity", "Error loading wallet balance", e)
                 withContext(Dispatchers.Main) {
                     findViewById<TextView>(R.id.availableBalance).text = "0 SOL"
-                }
-            }
-        }
-    }
-
-    private fun loadZcashBalance() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val zcashService = ZcashService.getInstance(this@SendActivity)
-
-                // Fetch ZEC balance and price together
-                val balanceResult = zcashService.getBalance()
-                val priceResult = zcashService.getZecPrice()
-
-                withContext(Dispatchers.Main) {
-                    if (balanceResult.isSuccess) {
-                        val balanceZEC = balanceResult.getOrNull() ?: 0.0
-
-                        // Update available balance for validation
-                        availableBalance = balanceZEC
-                        saveBalanceToCache(balanceZEC)
-
-                        // Update ZEC balance with smart formatting
-                        findViewById<TextView>(R.id.availableBalance).text = "${formatBalance(balanceZEC)} ZEC"
-
-                        // Set price for USD conversion
-                        if (priceResult.isSuccess) {
-                            val priceUSD = priceResult.getOrNull() ?: 0.0
-                            currentTokenPrice = priceUSD
-                            savePriceToCache(priceUSD)
-                            Log.i("SendActivity", "Balance loaded: $balanceZEC ZEC (Price: $$priceUSD)")
-                        } else {
-                            Log.e("SendActivity", "Failed to load ZEC price: ${priceResult.exceptionOrNull()?.message}")
-                            // Keep cached price if fresh load fails
-                        }
-
-                        Log.i("SendActivity", "Balance loaded: $balanceZEC ZEC, currentTokenPrice: $currentTokenPrice")
-                    } else {
-                        val errorMsg = balanceResult.exceptionOrNull()?.message ?: "Unknown error"
-                        Log.e("SendActivity", "Failed to load ZEC balance: $errorMsg")
-                        findViewById<TextView>(R.id.availableBalance).text = "0 ZEC"
-                        ThemedToast.show(this@SendActivity, "ZEC wallet syncing... Balance may be unavailable")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("SendActivity", "Error loading ZEC balance", e)
-                withContext(Dispatchers.Main) {
-                    findViewById<TextView>(R.id.availableBalance).text = "0 ZEC"
-                    ThemedToast.show(this@SendActivity, "Unable to load ZEC balance: ${e.message}")
                 }
             }
         }

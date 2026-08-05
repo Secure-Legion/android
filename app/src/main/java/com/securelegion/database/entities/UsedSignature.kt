@@ -23,7 +23,7 @@ data class UsedSignature(
     /** The quote ID this signature was used for */
     val quoteId: String,
 
-    /** Token type (SOL, ZEC, etc.) */
+    /** Token type (SOL, USDC, etc.) */
     val token: String,
 
     /** Amount in smallest unit */

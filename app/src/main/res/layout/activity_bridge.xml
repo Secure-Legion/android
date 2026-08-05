@@ -301,7 +301,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Use testnet for Zcash (testnet.zec.rocks) and Solana devnet. Allows testing with fake funds."
+                        android:text="Use Solana devnet for testing with fake funds."
                         android:textSize="13sp"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular"

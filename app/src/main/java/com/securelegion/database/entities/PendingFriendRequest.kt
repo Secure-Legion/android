@@ -92,14 +92,14 @@ data class PendingFriendRequest(
     val retryCount: Int = 0,
 
     /**
-     * Phase 1 payload JSON (for retry)
-     * Contains: username, friend_request_onion, x25519_public_key, kyber_public_key
+     * Phase 1 retry JSON, or a local authenticated-Phase-2 fingerprint once transitioned to
+     * Phase 3. The fingerprint is never serialized onto the wire.
      */
     val phase1PayloadJson: String? = null,
 
     /**
-     * Phase 2 payload (encrypted bytes as Base64)
-     * Stored for retry if Phase 2 send fails
+     * Exact encrypted Phase 2 or Phase 3 wire payload as Base64.
+     * Phase 3 must be replayed byte-for-byte; it must never be re-encrypted on retry.
      */
     val phase2PayloadBase64: String? = null,
 

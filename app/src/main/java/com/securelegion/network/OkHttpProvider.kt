@@ -7,7 +7,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Centralized OkHttpClient provider for HTTP requests
  *
- * Most services (Solana, Zcash) now route through Arti (Rust Tor) via JNI.
+ * Solana routes through Arti (Rust Tor) via JNI.
  * Remaining OkHttp clients (Crust, Jupiter) connect directly to clearnet APIs.
  * Call reset() when network changes to clear stale connections.
  */
@@ -19,9 +19,6 @@ object OkHttpProvider {
 
     @Volatile
     private var _crustClient: OkHttpClient? = null
-
-    @Volatile
-    private var _zcashClient: OkHttpClient? = null
 
     @Volatile
     private var _genericClient: OkHttpClient? = null
@@ -57,20 +54,6 @@ object OkHttpProvider {
                 readTimeout = 30,
                 writeTimeout = 30
             ).also { _crustClient = it }
-        }
-    }
-
-    /**
-     * Get OkHttpClient for Zcash price fetching
-     * Standard timeouts
-     */
-    fun getZcashClient(): OkHttpClient {
-        return _zcashClient ?: synchronized(this) {
-            _zcashClient ?: buildClient(
-                connectTimeout = 30,
-                readTimeout = 30,
-                writeTimeout = 30
-            ).also { _zcashClient = it }
         }
     }
 
@@ -132,10 +115,6 @@ object OkHttpProvider {
                 connectionPool.evictAll()
                 dispatcher.cancelAll()
             }
-            _zcashClient?.run {
-                connectionPool.evictAll()
-                dispatcher.cancelAll()
-            }
             _genericClient?.run {
                 connectionPool.evictAll()
                 dispatcher.cancelAll()
@@ -148,7 +127,6 @@ object OkHttpProvider {
             // Force rebuild on next access
             _solanaClient = null
             _crustClient = null
-            _zcashClient = null
             _genericClient = null
             _jupiterClient = null
 
@@ -178,7 +156,7 @@ object OkHttpProvider {
     /**
      * Build OkHttpClient (direct connection)
      *
-     * Solana/Zcash now route through Arti Tor via RustBridge JNI.
+     * Solana routes through Arti Tor via RustBridge JNI.
      * Remaining OkHttp consumers (Crust, Jupiter) hit clearnet APIs directly.
      */
     private fun buildClient(

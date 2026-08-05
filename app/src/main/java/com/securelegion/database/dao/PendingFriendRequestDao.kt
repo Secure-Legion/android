@@ -96,11 +96,33 @@ interface PendingFriendRequestDao {
         }
     }
 
+    /** Atomically claim one known row for an immediate/UI send. */
+    @Transaction
+    suspend fun claimById(
+        requestId: Long,
+        now: Long,
+        token: String,
+        expiresAt: Long
+    ): PendingFriendRequest? {
+        val candidate = getById(requestId) ?: return null
+        return if (tryClaim(requestId, token, now, expiresAt) == 1) {
+            candidate.copy(leaseToken = token, leaseExpiresAt = expiresAt)
+        } else {
+            null
+        }
+    }
+
     @Query("""
-        SELECT MIN(nextRetryAt) FROM pending_friend_requests
+        SELECT MIN(
+            CASE
+                WHEN leaseToken IS NOT NULL AND leaseExpiresAt > :now
+                    THEN MAX(nextRetryAt, leaseExpiresAt)
+                ELSE nextRetryAt
+            END
+        ) FROM pending_friend_requests
         WHERE needsRetry = 1 AND isCompleted = 0 AND isFailed = 0
     """)
-    suspend fun getEarliestRetryAt(): Long?
+    suspend fun getEarliestRetryAt(now: Long): Long?
 
     @Query("""
         UPDATE pending_friend_requests
@@ -225,6 +247,63 @@ interface PendingFriendRequestDao {
     suspend fun getByRecipientOnion(onionAddress: String): PendingFriendRequest?
 
     /**
+     * Completed Phase 3 rows are retained briefly as replay tombstones. If the peer retries its
+     * authenticated Phase 2 because our ACK was lost, TorService can resend the exact ciphertext
+     * without rebuilding protocol state or changing the wire format.
+     */
+    @Query("""
+        SELECT * FROM pending_friend_requests
+        WHERE phase = 3
+          AND isCompleted = 1
+          AND isFailed = 0
+          AND completedAt IS NOT NULL
+          AND completedAt >= :completedAfter
+          AND phase2PayloadBase64 IS NOT NULL
+          AND contactCardJson IS NOT NULL
+        ORDER BY completedAt DESC, id DESC
+        LIMIT :limit
+    """)
+    suspend fun getRecentCompletedPhase3(
+        completedAfter: Long,
+        limit: Int = 256
+    ): List<PendingFriendRequest>
+
+    /** Recover a Phase 3 row when the legacy UUID mapping commit was interrupted. */
+    @Query("""
+        SELECT * FROM pending_friend_requests
+        WHERE phase = 3 AND phase1PayloadJson = :requestFingerprint
+        ORDER BY createdAt DESC, id DESC
+        LIMIT 2
+    """)
+    suspend fun getPhase3ByRequestFingerprint(
+        requestFingerprint: String
+    ): List<PendingFriendRequest>
+
+    /** Delete only expired replay tombstones; active request state is never touched. */
+    @Query("""
+        DELETE FROM pending_friend_requests
+        WHERE phase = 3
+          AND isCompleted = 1
+          AND completedAt IS NOT NULL
+          AND completedAt < :completedBefore
+    """)
+    suspend fun deleteExpiredCompletedPhase3(completedBefore: Long): Int
+
+    /** Keep replay storage bounded even during a high volume period inside the TTL window. */
+    @Query("""
+        DELETE FROM pending_friend_requests
+        WHERE id IN (
+            SELECT id FROM pending_friend_requests
+            WHERE phase = 3
+              AND isCompleted = 1
+              AND completedAt IS NOT NULL
+            ORDER BY completedAt DESC, id DESC
+            LIMIT -1 OFFSET :keep
+        )
+    """)
+    suspend fun deleteCompletedPhase3BeyondLimit(keep: Int): Int
+
+    /**
      * Delete a single friend request by primary key. Used by UI cancel/delete
      * handlers that look up the dbId via the requestId→dbId SharedPreferences map.
      */
@@ -244,6 +323,15 @@ interface PendingFriendRequestDao {
      */
     @Query("DELETE FROM pending_friend_requests WHERE recipientOnion = :onion")
     suspend fun deleteByRecipientOnion(onion: String)
+
+    /** Startup removes obsolete pre-ACK rows but preserves active and completed Phase 3 bytes. */
+    @Query("""
+        DELETE FROM pending_friend_requests
+        WHERE recipientOnion = :onion
+          AND isCompleted = 0
+          AND phase != 3
+    """)
+    suspend fun deleteUnfinishedByRecipientOnion(onion: String): Int
 
     /**
      * Get count of pending friend requests

@@ -212,6 +212,9 @@ class TorService : Service() {
     private val startTorRequested = AtomicBoolean(false) // Guard: prevent concurrent startTor() calls
     private val torLifecycleMutex = Mutex()
     private val listenerLifecycleMutex = Mutex()
+    // FR frames share mutable pending-request and contact/keychain state. Keep the complete
+    // authenticated handler single-flight so duplicate 0x08 deliveries cannot race finalization.
+    private val friendRequestProcessingMutex = Mutex()
     @Volatile private var lastGlobalResetAt: Long = 0L // Rate limiter: prevent reset spam
 
     // Offline bootstrap recovery: prevents repeated NEWNYM spam on flaky first-network
@@ -309,8 +312,10 @@ class TorService : Service() {
         }
     }
 
-    private fun isMessagingHsReady(): Boolean {
-        return isHsPublisherReachable(getMessagingHsPublisherStatus())
+    private fun isMessagingHsReady(
+        status: String? = getMessagingHsPublisherStatus()
+    ): Boolean {
+        return isHsPublisherReachable(status)
     }
 
     private fun isHsPublisherReachable(status: String?): Boolean {
@@ -321,8 +326,7 @@ class TorService : Service() {
         val outboundReady = try { RustBridge.isSocksProxyRunning() } catch (_: Exception) { false }
         return torState == TorState.RUNNING &&
             bootstrapPercent >= 100 &&
-            outboundReady &&
-            isMessagingHsReady()
+            outboundReady
     }
 
     private fun kickPendingMessagesFlush(reason: String) {
@@ -831,13 +835,15 @@ class TorService : Service() {
         // listenerAlive is always true when Arti is ready (isSocksProxyRunning checks arti::is_arti_ready).
         val outboundReady = RustBridge.isSocksProxyRunning()
         val hsPublisherStatus = getMessagingHsPublisherStatus()
-        val hsReady = isHsPublisherReachable(hsPublisherStatus)
+        val hsReady = isMessagingHsReady(hsPublisherStatus)
 
-        val isHealthy = bootstrapComplete && circuitsEstablished && torRunning && outboundReady && hsReady
+        // Outbound operations and inbound onion publication are independent capabilities.
+        // A publisher that is still Bootstrapping must not block a healthy Arti client from sending.
+        val isOutboundHealthy = bootstrapComplete && circuitsEstablished && torRunning && outboundReady
 
-        if (isHealthy) {
+        if (isOutboundHealthy) {
             val wasListenersReady = listenersReady
-            listenersReady = true
+            listenersReady = hsReady
             lastHealthyMs = SystemClock.elapsedRealtime()
             consecutiveHealthyPolls++
 
@@ -854,7 +860,7 @@ class TorService : Service() {
                     clearTransportQuarantine("gate_open_health")
                     gate.open()
                     kickPendingMessagesFlush("gate_open_health")
-                } else if (!wasListenersReady) {
+                } else if (hsReady && !wasListenersReady) {
                     Log.i(TAG, "Tor health confirmed while gate already open → flushing pending messages")
                     clearTransportQuarantine("hs_ready_health")
                     kickPendingMessagesFlush("hs_ready_health")
@@ -891,12 +897,6 @@ class TorService : Service() {
                 // During bootstrap (< 100%), SOCKS probe failures are expected (CPU contention,
                 // proxy thread busy) and should NOT close the gate
                 if (bootstrapPercent >= 100) {
-                    if (!hsReady) {
-                        Log.e(TAG, "Messaging HS not reachable yet (status=$hsPublisherStatus) - closing gate")
-                        gate.close("HS_NOT_READY")
-                        lastTorUnstableAt = System.currentTimeMillis()
-                        return
-                    }
                     // Verify SOCKS proxy is actually dead before closing gate
                     val socksReachable = RustBridge.isSocksProxyRunning()
 
@@ -969,7 +969,7 @@ class TorService : Service() {
         // Cooldown escalates exponentially to prevent restart spam when the restart itself is
         // failing (e.g., Arti keystore leak) — the previous flat 120s cooldown livelocked at
         // one restart every 2 minutes forever when create_onion_service couldn't reacquire.
-        if (isHealthy && isListenerRunning) {
+        if (isOutboundHealthy && isListenerRunning) {
             val hsLoopHb = RustBridge.getLastHsLoopHeartbeat()
             if (hsLoopHb > 0) {
                 val hsLoopAgeMs = System.currentTimeMillis() - hsLoopHb
@@ -1866,8 +1866,10 @@ class TorService : Service() {
             context.startService(intent)
         }
 
-        // Lock for atomic SharedPreferences writes (prevents concurrent clobbering)
-        private val prefsLock = Any()
+        // One process-wide lock for every pending_requests_v2 read/modify/write. Activities and
+        // the service must share this exact monitor or whole-StringSet updates can clobber one
+        // another even though each individual SharedPreferences call is thread-safe.
+        internal val pendingRequestPrefsLock = Any()
         private const val FRIEND_RETRY_PREFS = "friend_request_retry_map"
 
         const val ACTION_FRIEND_REQUEST_STATUS_CHANGED = "com.securelegion.FRIEND_REQUEST_STATUS_CHANGED"
@@ -1882,49 +1884,13 @@ class TorService : Service() {
             encryptedPayload: ByteArray,
             context: Context
         ) {
-            val svc = instance
-            if (svc == null) {
-                Log.e(TAG, "sendFriendRequestInBackground: TorService not running, marking failed")
-                updateFriendRequestRetryState(context, requestId, success = false)
-                updatePendingRequestStatus(context, requestId, com.securelegion.models.PendingFriendRequest.STATUS_FAILED)
-                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
-                return
-            }
-
-            svc.serviceScope.launch(Dispatchers.IO) {
-                Log.i(TAG, "Background friend request send started (id=$requestId, target=$recipientOnion)")
-
-                val gateOpened = getTransportGate()?.awaitOpen(
-                    com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
-                ) ?: false
-
-                val success = if (gateOpened && !isTransportQuarantined()) {
-                    try {
-                        com.securelegion.crypto.RustBridge.sendFriendRequest(
-                            recipientOnion, encryptedPayload
-                        )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Background friend request failed", e)
-                        false
-                    }
-                } else {
-                    val quarantineSuffix = if (isTransportQuarantined()) {
-                        " (transport quarantine active: ${getTransportQuarantineRemainingMs()}ms remaining)"
-                    } else ""
-                    Log.w(TAG, "Transport gate timed out for background friend request$quarantineSuffix")
-                    false
-                }
-
-                val newStatus = if (success)
-                    com.securelegion.models.PendingFriendRequest.STATUS_PENDING
-                else
-                    com.securelegion.models.PendingFriendRequest.STATUS_FAILED
-
-                Log.i(TAG, "Background friend request finished (id=$requestId, success=$success, newStatus=$newStatus)")
-                updateFriendRequestRetryState(context, requestId, success)
-                updatePendingRequestStatus(context, requestId, newStatus)
-                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
-            }
+            attemptMappedFriendRequestInBackground(
+                requestId = requestId,
+                recipientOnion = recipientOnion,
+                payload = encryptedPayload,
+                kind = DirectFriendRequestKind.PHASE_1,
+                context = context
+            )
         }
 
         /**
@@ -1937,102 +1903,196 @@ class TorService : Service() {
             encryptedAcceptance: ByteArray,
             context: Context
         ) {
+            attemptMappedFriendRequestInBackground(
+                requestId = requestId,
+                recipientOnion = recipientOnion,
+                payload = encryptedAcceptance,
+                kind = DirectFriendRequestKind.PHASE_2,
+                context = context
+            )
+        }
+
+        private enum class DirectFriendRequestKind(val phase: Int) {
+            PHASE_1(com.securelegion.database.entities.PendingFriendRequest.PHASE_1_SENT),
+            PHASE_2(com.securelegion.database.entities.PendingFriendRequest.PHASE_2_SENT)
+        }
+
+        /**
+         * UI sends and WorkManager share the same Room lease. If the direct path cannot own the
+         * row, it does no network I/O and leaves convergence to the dispatcher.
+         */
+        private fun attemptMappedFriendRequestInBackground(
+            requestId: String,
+            recipientOnion: String,
+            payload: ByteArray,
+            kind: DirectFriendRequestKind,
+            context: Context
+        ) {
+            val appContext = context.applicationContext
             val svc = instance
             if (svc == null) {
-                Log.e(TAG, "acceptFriendRequestInBackground: TorService not running, marking failed")
-                updateFriendRequestRetryState(context, requestId, success = false)
-                updatePendingRequestStatus(context, requestId, com.securelegion.models.PendingFriendRequest.STATUS_FAILED)
-                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                Log.w(TAG, "Direct friend-request send deferred: TorService is not running")
+                updatePendingRequestStatus(
+                    appContext,
+                    requestId,
+                    com.securelegion.models.PendingFriendRequest.STATUS_PENDING
+                )
+                appContext.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                FriendRequestWorker.nudgeDispatcher(appContext, "direct-no-service")
                 return
             }
 
             svc.serviceScope.launch(Dispatchers.IO) {
-                Log.i(TAG, "Background Phase 2 accept started (id=$requestId, target=$recipientOnion)")
-
-                val gateOpened = getTransportGate()?.awaitOpen(
-                    com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
-                ) ?: false
-
-                val success = if (gateOpened && !isTransportQuarantined()) {
-                    try {
-                        com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
-                            recipientOnion, encryptedAcceptance
-                        )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Background Phase 2 accept failed", e)
-                        false
-                    }
-                } else {
-                    val quarantineSuffix = if (isTransportQuarantined()) {
-                        " (transport quarantine active: ${getTransportQuarantineRemainingMs()}ms remaining)"
-                    } else ""
-                    Log.w(TAG, "Transport gate timed out for background Phase 2 accept$quarantineSuffix")
-                    false
-                }
-
-                val newStatus = if (success)
-                    com.securelegion.models.PendingFriendRequest.STATUS_PENDING
-                else
-                    com.securelegion.models.PendingFriendRequest.STATUS_FAILED
-
-                Log.i(TAG, "Background Phase 2 accept finished (id=$requestId, success=$success, newStatus=$newStatus)")
-                updateFriendRequestRetryState(context, requestId, success)
-                updatePendingRequestStatus(context, requestId, newStatus)
-                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
-            }
-        }
-
-        private fun updateFriendRequestRetryState(context: Context, requestId: String, success: Boolean) {
-            CoroutineScope(Dispatchers.IO).launch {
+                var claimedDao: com.securelegion.database.dao.PendingFriendRequestDao? = null
+                var claimedId = -1L
+                var claimedRetryCount = 0
+                var leaseToken: String? = null
+                var replaceDispatcher = true
                 try {
-                    val dbId = context.getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
+                    val gateOpened = getTransportGate()?.awaitOpen(
+                        com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
+                    ) ?: false
+                    if (!gateOpened || isTransportQuarantined()) {
+                        Log.w(TAG, "Direct friend-request send deferred: transport unavailable")
+                        return@launch
+                    }
+
+                    val dbId = appContext
+                        .getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
                         .getLong(requestId, -1L)
                     if (dbId <= 0L) {
-                        Log.d(TAG, "No retry dbId mapped for request $requestId")
+                        Log.w(TAG, "Direct friend-request send deferred: no Room mapping for $requestId")
                         return@launch
                     }
 
-                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(context)
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(context, dbPassphrase)
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(appContext)
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+                        appContext,
+                        keyManager.getDatabasePassphrase()
+                    )
                     val dao = database.pendingFriendRequestDao()
-                    val existing = dao.getById(dbId)
+                    val now = System.currentTimeMillis()
+                    val token = java.util.UUID.randomUUID().toString()
+                    val row = dao.claimById(
+                        dbId,
+                        now,
+                        token,
+                        now + FRIEND_REQUEST_LEASE_DURATION_MS
+                    )
+                    if (row == null) {
+                        replaceDispatcher = false
+                        Log.i(TAG, "Direct friend-request send skipped: row $dbId is not claimable")
+                        return@launch
+                    }
+                    claimedDao = dao
+                    claimedId = dbId
+                    claimedRetryCount = row.retryCount
+                    leaseToken = token
 
-                    if (existing == null) {
-                        Log.w(TAG, "Retry row missing for request $requestId (dbId=$dbId)")
+                    if (row.phase != kind.phase ||
+                        normalizeFriendRequestOnion(row.recipientOnion) !=
+                        normalizeFriendRequestOnion(recipientOnion)
+                    ) {
+                        Log.e(TAG, "Direct friend-request mapping did not match persisted row $dbId")
                         return@launch
                     }
 
-                    val now = System.currentTimeMillis()
-                    if (success) {
-                        dao.updateRequest(
-                            existing.copy(
-                                needsRetry = false,
-                                isFailed = false,
-                                lastSentAt = now,
-                                retryCount = existing.retryCount + 1,
-                                nextRetryAt = 0L
-                            )
-                        )
-                        context.getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
-                            .edit()
-                            .remove(requestId)
-                            .apply()
+                    // Phase 2 is already encrypted and persisted; send the database copy so the
+                    // direct path and worker can never diverge byte-for-byte.
+                    val wirePayload = if (kind == DirectFriendRequestKind.PHASE_2) {
+                        decodeStoredFriendRequestCiphertext(row.phase2PayloadBase64)
+                            ?: run {
+                                dao.markFailedIfLeased(dbId, token)
+                                leaseToken = null
+                                Log.e(TAG, "Persisted Phase 2 ciphertext is missing or malformed")
+                                return@launch
+                            }
                     } else {
-                        val nextRetryAt = now + 30_000L
-                        dao.updateRequest(
-                            existing.copy(
-                                needsRetry = true,
-                                isFailed = false,
-                                lastSentAt = now,
-                                retryCount = existing.retryCount + 1,
-                                nextRetryAt = nextRetryAt
-                            )
-                        )
-                        FriendRequestWorker.scheduleForRequest(context, dbId)
+                        payload
                     }
+                    val operationId = "fr-direct:$dbId:$token"
+                    val result = try {
+                        when (kind) {
+                            DirectFriendRequestKind.PHASE_1 ->
+                                com.securelegion.crypto.RustBridge.sendFriendRequestTyped(
+                                    row.recipientOnion,
+                                    wirePayload,
+                                    operationId
+                                )
+                            DirectFriendRequestKind.PHASE_2 ->
+                                com.securelegion.crypto.RustBridge.sendFriendRequestAcceptedTyped(
+                                    row.recipientOnion,
+                                    wirePayload,
+                                    operationId
+                                )
+                        }
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "Direct friend-request send threw", e)
+                        com.securelegion.crypto.RustBridge.FriendRequestSendResult.TRANSIENT_NETWORK
+                    }
+
+                    val finishedAt = System.currentTimeMillis()
+                    when (result) {
+                        com.securelegion.crypto.RustBridge.FriendRequestSendResult.SUCCESS,
+                        com.securelegion.crypto.RustBridge.FriendRequestSendResult.TRANSIENT_NETWORK -> {
+                            val attempt = row.retryCount + 1
+                            dao.updateRetryTrackingIfLeased(
+                                dbId,
+                                token,
+                                finishedAt,
+                                attempt,
+                                com.securelegion.workers.FriendRequestBackoff.nextRetryAt(
+                                    finishedAt,
+                                    attempt
+                                )
+                            )
+                        }
+                        com.securelegion.crypto.RustBridge.FriendRequestSendResult.TOR_NOT_READY,
+                        com.securelegion.crypto.RustBridge.FriendRequestSendResult.CANCELLED ->
+                            dao.updateRetryTrackingIfLeased(
+                                dbId,
+                                token,
+                                finishedAt,
+                                row.retryCount,
+                                finishedAt + 60_000L
+                            )
+                        com.securelegion.crypto.RustBridge.FriendRequestSendResult.PERMANENT_INPUT ->
+                            dao.markFailedIfLeased(dbId, token)
+                    }
+                    leaseToken = null
+                    Log.i(TAG, "Direct friend-request attempt completed (db=$dbId, result=$result)")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to update friend-request retry state for $requestId", e)
+                    Log.e(TAG, "Direct friend-request attempt failed", e)
+                    val dao = claimedDao
+                    val token = leaseToken
+                    if (dao != null && claimedId > 0L && token != null) {
+                        val now = System.currentTimeMillis()
+                        val attempt = claimedRetryCount + 1
+                        dao.updateRetryTrackingIfLeased(
+                            claimedId,
+                            token,
+                            now,
+                            attempt,
+                            com.securelegion.workers.FriendRequestBackoff.nextRetryAt(now, attempt)
+                        )
+                        leaseToken = null
+                    }
+                } finally {
+                    val token = leaseToken
+                    if (claimedDao != null && claimedId > 0L && token != null) {
+                        claimedDao.releaseLease(claimedId, token)
+                    }
+                    updatePendingRequestStatus(
+                        appContext,
+                        requestId,
+                        com.securelegion.models.PendingFriendRequest.STATUS_PENDING
+                    )
+                    appContext.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                    if (replaceDispatcher) {
+                        FriendRequestWorker.nudgeDispatcher(appContext, "direct-finished")
+                    } else {
+                        FriendRequestWorker.scheduleDispatcher(appContext, "direct-lease-owned")
+                    }
                 }
             }
         }
@@ -2042,7 +2102,7 @@ class TorService : Service() {
          * Thread-safe: synchronized on prefsLock to prevent concurrent clobbering.
          */
         fun updatePendingRequestStatus(context: Context, requestId: String, newStatus: String) {
-            synchronized(prefsLock) {
+            synchronized(pendingRequestPrefsLock) {
                 try {
                     val prefs = context.getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
                     val pendingSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
@@ -2073,6 +2133,49 @@ class TorService : Service() {
                     Log.e(TAG, "Failed to update pending request status", e)
                 }
             }
+        }
+
+        /** Remove the legacy UI snapshot after WorkManager completes a persisted Phase 3 row. */
+        fun completePendingUiForDatabaseId(context: Context, databaseId: Long) {
+            val appContext = context.applicationContext
+            synchronized(pendingRequestPrefsLock) {
+                val retryPrefs = appContext.getSharedPreferences(
+                    FRIEND_RETRY_PREFS,
+                    Context.MODE_PRIVATE
+                )
+                val uiIds = retryPrefs.all.mapNotNull { (key, value) ->
+                    key.takeIf { (value as? Long) == databaseId }
+                }
+                if (uiIds.isEmpty()) return@synchronized
+
+                val retryEditor = retryPrefs.edit()
+                uiIds.forEach(retryEditor::remove)
+                if (!retryEditor.commit()) {
+                    Log.w(TAG, "Worker completed Phase 3 but retry-map cleanup failed")
+                }
+
+                val prefs = appContext.getSharedPreferences(
+                    "friend_requests",
+                    Context.MODE_PRIVATE
+                )
+                val current = prefs.getStringSet("pending_requests_v2", emptySet()).orEmpty()
+                val remaining = current.filterTo(mutableSetOf()) { json ->
+                    val request = try {
+                        com.securelegion.models.PendingFriendRequest.fromJson(json)
+                    } catch (_: Exception) {
+                        return@filterTo true
+                    }
+                    request.id !in uiIds
+                }
+                if (!prefs.edit().putStringSet("pending_requests_v2", remaining).commit()) {
+                    Log.w(TAG, "Worker completed Phase 3 but pending UI cleanup failed")
+                }
+            }
+            appContext.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+            appContext.sendBroadcast(
+                Intent("com.securelegion.FRIEND_REQUEST_COMPLETED")
+                    .setPackage(appContext.packageName)
+            )
         }
     }
 
@@ -3065,18 +3168,21 @@ class TorService : Service() {
                 Log.w(TAG, "Arti not fully ready — outbound connections may fail until bootstrap completes")
             }
 
-            // Mark listeners as ready and open gate regardless — incoming HS is up
+            // Track inbound publication separately from outbound transport readiness.
             val hsStatus = getMessagingHsPublisherStatus()
-            val hsReady = hsStatus == "Running"
+            val hsReady = isMessagingHsReady(hsStatus)
             listenersReady = hsReady
-            if (artiReady && hsReady) {
+            if (isTransportActuallyReady()) {
                 clearTransportQuarantine("gate_open_startup")
                 gate.open()
                 kickPendingMessagesFlush("gate_open_startup")
-                Log.i(TAG, "Transport gate opened — Tor + messaging HS are fully operational")
+                Log.i(TAG, "Outbound transport gate opened (hsStatus=$hsStatus)")
+                if (!hsReady) {
+                    Log.w(TAG, "Messaging HS is still publishing; inbound availability remains pending")
+                }
             } else {
-                gate.close("STARTUP_HS_NOT_READY")
-                Log.w(TAG, "Startup complete locally but transport not yet reachable (outboundReady=$artiReady, hsStatus=$hsStatus)")
+                gate.close("STARTUP_OUTBOUND_NOT_READY")
+                Log.w(TAG, "Startup complete locally but outbound transport is not ready (outboundReady=$artiReady, hsStatus=$hsStatus)")
             }
 
             // Start bandwidth monitoring and voice service
@@ -3162,23 +3268,27 @@ class TorService : Service() {
         val bootstrapPercent = RustBridge.getBootstrapStatus()
         val circuitsEstablished = RustBridge.getCircuitEstablished()
         val hsReady = isMessagingHsReady()
-        val isTorHealthy = bootstrapPercent == 100 && circuitsEstablished >= 1 && hsReady
+        val outboundReady = try { RustBridge.isSocksProxyRunning() } catch (_: Exception) { false }
+        val isOutboundHealthy = bootstrapPercent == 100 &&
+            circuitsEstablished >= 1 &&
+            torState == TorState.RUNNING &&
+            outboundReady
 
-        // If gate is open AND Tor is healthy → no rebind needed
-        if (gate.isOpenNow() && isTorHealthy) {
-            Log.i(TAG, "Gate open + Tor healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished, hsReady=$hsReady) - no rebind needed")
+        // Listener publication does not gate outbound operations.
+        if (gate.isOpenNow() && isOutboundHealthy) {
+            listenersReady = hsReady
+            Log.i(TAG, "Gate open + outbound Tor healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished, hsReady=$hsReady) - no rebind needed")
             return
         }
 
-        // If gate is closed but Tor unhealthy → wait for Tor to recover
-        if (!isTorHealthy) {
-            Log.w(TAG, "Tor not healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished, hsReady=$hsReady) - waiting for recovery, no rebind")
+        // If gate is closed but outbound Tor is unhealthy, wait for transport recovery.
+        if (!isOutboundHealthy) {
+            Log.w(TAG, "Outbound Tor not healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished, outboundReady=$outboundReady, hsReady=$hsReady) - waiting for recovery")
             return
         }
 
-        // Gate is closed but Tor is healthy → reopen gate (no listener restart needed)
-        Log.i(TAG, "Gate closed but Tor healthy - reopening gate without listener restart")
-        listenersReady = true
+        Log.i(TAG, "Gate closed but outbound Tor is healthy - reopening without listener restart (hsReady=$hsReady)")
+        listenersReady = hsReady
         clearTransportQuarantine("gate_open_rebind")
         gate.open()
         kickPendingMessagesFlush("gate_open_rebind")
@@ -3242,7 +3352,9 @@ class TorService : Service() {
                             2 -> handleIncomingMessage(withConnectionId())
                             3 -> handleIncomingVoiceMessage(withConnectionId())
                             4 -> handleIncomingTap(payload)
-                            5 -> handleIncomingFriendRequest(payload)
+                            5 -> friendRequestProcessingMutex.withLock {
+                                handleIncomingFriendRequest(payload)
+                            }
                             6 -> handleIncomingPong(payload)
                             7 -> processIncomingAckEvent(payload)
                             else -> Log.w(TAG, "Unknown inbound event kind=$kind")
@@ -3429,7 +3541,9 @@ class TorService : Service() {
                 Log.i(TAG, "Received incoming friend request: ${friendRequestBytes.size} bytes")
                 serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                     try {
-                        handleIncomingFriendRequest(friendRequestBytes)
+                        friendRequestProcessingMutex.withLock {
+                            handleIncomingFriendRequest(friendRequestBytes)
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in handleIncomingFriendRequest coroutine", e)
                     }
@@ -3681,7 +3795,7 @@ class TorService : Service() {
      * Phase 1 (0x07): PIN-encrypted minimal info
      * Phase 2 (0x08): X25519-encrypted full ContactCard
      */
-    private fun handleIncomingFriendRequest(encryptedBytes: ByteArray) {
+    private suspend fun handleIncomingFriendRequest(encryptedBytes: ByteArray) {
         try {
             Log.i(TAG, "Handling incoming friend request (${encryptedBytes.size} bytes)")
 
@@ -3713,9 +3827,10 @@ class TorService : Service() {
 
                     when {
                         hasPhase3Candidate && handlePhase3Acknowledgment(encryptedPayload) -> Unit
+                        replayCompletedPhase3IfAuthenticated(encryptedPayload) -> Unit
                         hasPhase2Candidate && handlePhase2FriendRequest(encryptedPayload) -> Unit
                         hasPhase3Candidate || hasPhase2Candidate -> Log.e(TAG, "Received 0x08 but no pending request key could decrypt it")
-                        else -> Log.e(TAG, "Received 0x08 but no matching outgoing request found")
+                        else -> Log.e(TAG, "Received 0x08 but no active request or replay tombstone matched")
                     }
                 }
                 else -> {
@@ -3739,6 +3854,64 @@ class TorService : Service() {
                 null
             }
         }
+    }
+
+    /** Remove only the authenticated request after contact and keychain state are durable. */
+    private fun removePendingRequestExact(
+        request: com.securelegion.models.PendingFriendRequest
+    ): Boolean = synchronized(pendingRequestPrefsLock) {
+        val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+        val current = prefs.getStringSet("pending_requests_v2", emptySet()).orEmpty()
+        var found = false
+        val remaining = current.filterTo(mutableSetOf()) { requestJson ->
+            val existing = try {
+                com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+            } catch (_: Exception) {
+                return@filterTo true
+            }
+            if (existing.id == request.id) {
+                found = true
+                false
+            } else {
+                true
+            }
+        }
+        if (!found) return@synchronized true
+        val committed = prefs.edit().putStringSet("pending_requests_v2", remaining).commit()
+        if (committed) sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+        committed
+    }
+
+    /**
+     * Delete only this UI request's durable retry row after authenticated protocol completion.
+     * The UUID-to-Room mapping is retained across transport sends and removed only here.
+     */
+    private suspend fun completePendingRetryExact(
+        request: com.securelegion.models.PendingFriendRequest
+    ): Boolean = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val retryPrefs = getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE)
+        val dbId = retryPrefs.getLong(request.id, -1L)
+        if (dbId <= 0L) {
+            return@withContext true
+        }
+
+        try {
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+                this@TorService,
+                keyManager.getDatabasePassphrase()
+            )
+            database.pendingFriendRequestDao().deleteById(dbId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete exact friend-request retry row (ui=${request.id}, db=$dbId)", e)
+            return@withContext false
+        }
+
+        val committed = retryPrefs.edit().remove(request.id).commit()
+        if (!committed) {
+            Log.e(TAG, "Failed to persist exact friend-request retry-map cleanup (ui=${request.id})")
+        }
+        committed
     }
 
     private fun pendingContactJsonObject(request: com.securelegion.models.PendingFriendRequest): org.json.JSONObject? {
@@ -3978,12 +4151,226 @@ class TorService : Service() {
         }
     }
 
+    private data class AuthenticatedPhase2Payload(
+        val contactCard: com.securelegion.models.ContactCard,
+        val kyberCiphertext: ByteArray?
+    )
+
+    /**
+     * Authenticate the decrypted Phase 2 using the sender key embedded in its encrypted frame.
+     * Signed wrappers are verified over their exact signed bytes; unsigned plain cards remain
+     * supported for the existing iOS compatibility path.
+     */
+    private fun parseAuthenticatedPhase2(
+        decryptedJson: String,
+        authenticatedSenderKey: ByteArray
+    ): AuthenticatedPhase2Payload? {
+        var contactCard: com.securelegion.models.ContactCard? = null
+        var kyberCiphertext: ByteArray? = null
+        var authenticatedSigningKey: ByteArray? = null
+
+        try {
+            val phase2Obj = org.json.JSONObject(decryptedJson)
+            if (phase2Obj.optInt("phase", -1) == 2 && phase2Obj.has("contact_card")) {
+                val hasSignature = phase2Obj.has("signature")
+                val hasSigningKey = phase2Obj.has("ed25519_public_key")
+                val hasSignedPayload = phase2Obj.has("signed_payload")
+                val hasAnySignatureField = hasSignature || hasSigningKey || hasSignedPayload
+                var authenticatedPhase2Obj = phase2Obj
+
+                if (hasAnySignatureField) {
+                    if (!hasSignature || !hasSigningKey) {
+                        Log.e(TAG, "Incomplete Phase 2 signature fields - rejecting")
+                        return null
+                    }
+
+                    val signature = android.util.Base64.decode(
+                        phase2Obj.getString("signature"),
+                        android.util.Base64.NO_WRAP
+                    )
+                    val senderEd25519PublicKey = android.util.Base64.decode(
+                        phase2Obj.getString("ed25519_public_key"),
+                        android.util.Base64.NO_WRAP
+                    )
+                    if (signature.size != 64 || senderEd25519PublicKey.size != 32) {
+                        Log.e(TAG, "Invalid Phase 2 signature/key length - rejecting")
+                        return null
+                    }
+
+                    val unsignedBytes = if (hasSignedPayload) {
+                        val exactBytes = android.util.Base64.decode(
+                            phase2Obj.getString("signed_payload"),
+                            android.util.Base64.NO_WRAP
+                        )
+                        val signedObj = org.json.JSONObject(exactBytes.toString(Charsets.UTF_8))
+                        if (signedObj.optInt("phase", -1) != 2 ||
+                            !signedObj.has("contact_card")
+                        ) {
+                            Log.e(TAG, "Signed Phase 2 payload schema invalid - rejecting")
+                            return null
+                        }
+                        authenticatedPhase2Obj = signedObj
+                        exactBytes
+                    } else {
+                        org.json.JSONObject().apply {
+                            put("contact_card", phase2Obj.getJSONObject("contact_card"))
+                            if (phase2Obj.has("kyber_ciphertext") &&
+                                !phase2Obj.isNull("kyber_ciphertext")
+                            ) {
+                                put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
+                            }
+                            put("phase", 2)
+                        }.toString().toByteArray(Charsets.UTF_8)
+                    }
+
+                    if (!RustBridge.verifySignature(
+                            unsignedBytes,
+                            signature,
+                            senderEd25519PublicKey
+                        )
+                    ) {
+                        Log.e(TAG, "Phase 2 signature verification FAILED - rejecting")
+                        return null
+                    }
+                    authenticatedSigningKey = senderEd25519PublicKey
+                } else {
+                    Log.w(TAG, "Unsigned legacy Phase 2 wrapper accepted")
+                }
+
+                contactCard = com.securelegion.models.ContactCard.fromJson(
+                    authenticatedPhase2Obj.getJSONObject("contact_card").toString()
+                )
+                if (authenticatedPhase2Obj.has("kyber_ciphertext") &&
+                    !authenticatedPhase2Obj.isNull("kyber_ciphertext")
+                ) {
+                    kyberCiphertext = android.util.Base64.decode(
+                        authenticatedPhase2Obj.getString("kyber_ciphertext"),
+                        android.util.Base64.NO_WRAP
+                    )
+                }
+            } else {
+                contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Malformed Phase 2 payload - rejecting", e)
+            return null
+        }
+
+        val authenticatedCard = contactCard ?: run {
+            Log.e(TAG, "Failed to parse ContactCard from Phase 2")
+            return null
+        }
+        if (!authenticatedCard.x25519PublicKey.contentEquals(authenticatedSenderKey)) {
+            Log.e(TAG, "Phase 2 ContactCard encryption key did not match the authenticated peer")
+            return null
+        }
+        if (authenticatedSigningKey != null &&
+            !authenticatedCard.solanaPublicKey.contentEquals(authenticatedSigningKey)
+        ) {
+            Log.e(TAG, "Phase 2 ContactCard signing identity did not match its verified signature key")
+            return null
+        }
+        return AuthenticatedPhase2Payload(authenticatedCard, kyberCiphertext)
+    }
+
+    /**
+     * A peer may resend authenticated Phase 2 when our Phase 3 reached Tor but its connection
+     * result was lost. Completed rows retain the exact original Phase 3 bytes for this case.
+     */
+    private suspend fun replayCompletedPhase3IfAuthenticated(
+        encryptedPayload: ByteArray
+    ): Boolean {
+        val embeddedSenderKey = phase2EmbeddedSenderKey(encryptedPayload) ?: return false
+        return try {
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+                this@TorService,
+                keyManager.getDatabasePassphrase()
+            )
+            val completedAfter = System.currentTimeMillis() - PHASE3_REPLAY_TTL_MS
+            val phase2Fingerprint = friendRequestPayloadFingerprint(encryptedPayload)
+            val tombstones = database.pendingFriendRequestDao().getRecentCompletedPhase3(
+                completedAfter,
+                PHASE3_REPLAY_MAX_ROWS
+            )
+            val senderCandidates = tombstones.filter { row ->
+                if (row.phase1PayloadJson != phase2Fingerprint) return@filter false
+                val storedCard = try {
+                    row.contactCardJson?.let(com.securelegion.models.ContactCard::fromJson)
+                } catch (_: Exception) {
+                    null
+                }
+                storedCard?.x25519PublicKey?.contentEquals(embeddedSenderKey) == true
+            }
+            if (senderCandidates.isEmpty()) return false
+
+            val decryptedJson = com.securelegion.crypto.RustBridge.decryptMessage(
+                encryptedPayload,
+                embeddedSenderKey,
+                ByteArray(32)
+            )
+            if (decryptedJson.isNullOrEmpty()) return false
+            val authenticated = parseAuthenticatedPhase2(decryptedJson, embeddedSenderKey)
+                ?: return false
+
+            val matches = senderCandidates.mapNotNull { row ->
+                val storedCard = try {
+                    row.contactCardJson?.let(com.securelegion.models.ContactCard::fromJson)
+                } catch (_: Exception) {
+                    null
+                } ?: return@mapNotNull null
+                if (!phase3ReplayIdentityMatches(
+                        storedCard,
+                        authenticated.contactCard,
+                        row.recipientOnion
+                    )
+                ) return@mapNotNull null
+                val ciphertext = decodeStoredFriendRequestCiphertext(row.phase2PayloadBase64)
+                    ?: return@mapNotNull null
+                row to ciphertext
+            }
+            if (matches.isEmpty()) return false
+
+            val firstCiphertext = matches.first().second
+            if (matches.any { !it.second.contentEquals(firstCiphertext) }) {
+                Log.e(TAG, "Conflicting Phase 3 replay tombstones for one authenticated peer")
+                return true
+            }
+
+            val selected = matches.first()
+            val operationId = "fr-phase3-replay:${selected.first.id}:${java.util.UUID.randomUUID()}"
+            val result = try {
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.sendFriendRequestAcceptedTyped(
+                        selected.first.recipientOnion,
+                        selected.second,
+                        operationId
+                    )
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Exact Phase 3 tombstone replay threw", e)
+                com.securelegion.crypto.RustBridge.FriendRequestSendResult.TRANSIENT_NETWORK
+            }
+            Log.i(
+                TAG,
+                "Authenticated duplicate Phase 2 replayed exact Phase 3 " +
+                    "(row=${selected.first.id}, result=$result)"
+            )
+            // The authenticated duplicate was handled even if transport failed. Never fall
+            // through and generate a second ciphertext for the same request identity.
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Phase 3 tombstone replay lookup failed", e)
+            false
+        }
+    }
+
     /**
      * Handle Phase 2 friend request (X25519-encrypted)
      * Payload: Full ContactCard JSON encrypted with X25519
      * This is received when someone accepts OUR outgoing friend request
      */
-    private fun handlePhase2FriendRequest(encryptedPayload: ByteArray): Boolean {
+    private suspend fun handlePhase2FriendRequest(encryptedPayload: ByteArray): Boolean {
         try {
             Log.i(TAG, "Processing Phase 2 friend request (X25519-encrypted)")
 
@@ -3991,146 +4378,77 @@ class TorService : Service() {
                 val json = pendingContactJsonObject(request)
                 if (!isOutgoingPhase1AwaitingResponse(request, json) || json == null) return@mapNotNull null
                 val senderKey = decodePendingX25519(json) ?: return@mapNotNull null
-                request to senderKey
+                Phase2PendingCandidate(request, senderKey)
             }
 
-            if (candidates.isEmpty()) {
-                Log.e(TAG, "No matching outgoing friend request found for Phase 2")
-                return false
-            }
-
-            var matchingRequest: com.securelegion.models.PendingFriendRequest? = null
-            var decryptedJson: String? = null
-            for ((request, senderKey) in candidates) {
-                val candidateJson = RustBridge.decryptMessage(
-                    encryptedPayload,
-                    senderKey,
-                    ByteArray(32) // privateKey parameter is deprecated/unused
-                )
-                if (!candidateJson.isNullOrEmpty()) {
-                    matchingRequest = request
-                    decryptedJson = candidateJson
-                    Log.d(TAG, "Matched Phase 2 response to pending request: ${request.displayName}")
-                    break
+            val selection = selectExactPhase2Candidate(encryptedPayload, candidates)
+            val matched = when (selection) {
+                is Phase2CandidateSelection.Matched -> selection
+                Phase2CandidateSelection.MalformedPayload -> {
+                    Log.e(
+                        TAG,
+                        "Malformed Phase 2 encrypted payload (${encryptedPayload.size} bytes; " +
+                            "minimum is $PHASE2_MIN_ENCRYPTED_PAYLOAD_BYTES)"
+                    )
+                    return false
+                }
+                Phase2CandidateSelection.MalformedCandidate -> {
+                    Log.e(TAG, "Malformed X25519 key in eligible Phase 2 pending state")
+                    return false
+                }
+                Phase2CandidateSelection.NoMatch -> {
+                    Log.e(TAG, "Phase 2 embedded sender key did not match an eligible outgoing request")
+                    return false
+                }
+                Phase2CandidateSelection.AmbiguousMatch -> {
+                    Log.e(TAG, "Phase 2 embedded sender key matched multiple eligible outgoing requests")
+                    return false
                 }
             }
+            val matchedRequest = matched.value
+            val expectedSenderKey = matched.senderX25519PublicKey
+            Log.d(TAG, "Matched Phase 2 response to pending request: ${matchedRequest.displayName}")
 
-            if (decryptedJson == null) {
+            // decryptMessage derives ECDH from the embedded key; decrypt only after exact
+            // correlation so an unrelated candidate can never win because of iteration order.
+            val decryptedJson = RustBridge.decryptMessage(
+                encryptedPayload,
+                expectedSenderKey,
+                ByteArray(32) // privateKey parameter is deprecated/unused
+            )
+            if (decryptedJson.isNullOrEmpty()) {
                 Log.e(TAG, "Failed to decrypt Phase 2 ContactCard")
-                return false
-            }
-            val matchedRequest = matchingRequest ?: run {
-                Log.e(TAG, "Phase 2 decrypted but no pending request was matched")
                 return false
             }
 
             Log.i(TAG, "Phase 2 decrypted successfully")
-
-            // Try to parse as NEW Phase 2 format with signature (v2.1+)
-            var contactCard: com.securelegion.models.ContactCard? = null
-            var kyberCiphertext: ByteArray? = null
-
-            try {
-                val phase2Obj = org.json.JSONObject(decryptedJson)
-                if (phase2Obj.has("phase") && phase2Obj.getInt("phase") == 2) {
-                    // NEW Phase 2 format with signature
-                    Log.d(TAG, "Parsing NEW Phase 2 format with signature...")
-
-                    // Verify Ed25519 signature
-                    if (phase2Obj.has("signature") && phase2Obj.has("ed25519_public_key")) {
-                        val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
-                        val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
-
-                        // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
-                        val unsignedBytes = if (phase2Obj.has("signed_payload")) {
-                            android.util.Base64.decode(phase2Obj.getString("signed_payload"), android.util.Base64.NO_WRAP)
-                        } else {
-                            org.json.JSONObject().apply {
-                                put("contact_card", phase2Obj.getJSONObject("contact_card"))
-                                if (phase2Obj.has("kyber_ciphertext")) {
-                                    put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
-                                }
-                                put("phase", 2)
-                            }.toString().toByteArray(Charsets.UTF_8)
-                        }
-
-                        val signatureValid = RustBridge.verifySignature(
-                            unsignedBytes,
-                            signature,
-                            senderEd25519PublicKey
-                        )
-
-                        if (!signatureValid) {
-                            Log.e(TAG, "Phase 2 signature verification FAILED - rejecting (possible MitM)")
-                            return false
-                        }
-                        Log.i(TAG, "Phase 2 signature verified (Ed25519)")
-                    }
-
-                    // Extract contact card and kyber ciphertext
-                    val contactCardJson = phase2Obj.getJSONObject("contact_card").toString()
-                    contactCard = com.securelegion.models.ContactCard.fromJson(contactCardJson)
-
-                    if (phase2Obj.has("kyber_ciphertext")) {
-                        val ciphertextBase64 = phase2Obj.getString("kyber_ciphertext")
-                        kyberCiphertext = android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)
-                        Log.i(TAG, "Phase 2 with Kyber ciphertext (${kyberCiphertext.size} bytes)")
-                    }
-                } else {
-                    // OLD Phase 2 format (plain ContactCard)
-                    contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
-                }
-            } catch (e: org.json.JSONException) {
-                // Fallback: Try parsing as plain ContactCard (old format)
-                Log.d(TAG, "Not Phase 2 wrapper, trying plain ContactCard format...")
-                contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
-            }
-
-            if (contactCard == null) {
-                Log.e(TAG, "Failed to parse ContactCard from Phase 2")
-                return false
-            }
+            val authenticatedSenderKey = expectedSenderKey
+            val authenticated = parseAuthenticatedPhase2(
+                decryptedJson,
+                authenticatedSenderKey
+            ) ?: return false
+            val contactCard = authenticated.contactCard
+            val kyberCiphertext = authenticated.kyberCiphertext
 
             Log.i(TAG, "Friend request accepted by: ${contactCard.displayName}")
 
-            // Add to contacts database (WITHOUT key chain - we'll initialize it below)
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
-
-            val contact = com.securelegion.database.entities.Contact(
-                displayName = contactCard.displayName,
-                solanaAddress = contactCard.solanaAddress,
-                publicKeyBase64 = android.util.Base64.encodeToString(contactCard.solanaPublicKey, android.util.Base64.NO_WRAP),
-                x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
-                kyberPublicKeyBase64 = android.util.Base64.encodeToString(contactCard.kyberPublicKey, android.util.Base64.NO_WRAP),
-                friendRequestOnion = contactCard.friendRequestOnion,
-                messagingOnion = contactCard.messagingOnion,
-                voiceOnion = contactCard.voiceOnion,
-                contactPin = contactCard.contactPin,
-                ipfsCid = contactCard.ipfsCid,
-                addedTimestamp = System.currentTimeMillis(),
-                friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_PENDING_SENT
-            )
-
-            val contactId = kotlinx.coroutines.runBlocking {
-                database.contactDao().insertContact(contact)
-            }
-
-            Log.i(TAG, "Contact added to database (pending ACK): ${contactCard.displayName} (ID: $contactId)")
-
-            // Initialize key chain with kyber ciphertext if present
-            serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                try {
+            val contactId = try {
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+                        this@TorService,
+                        keyManager.getDatabasePassphrase()
+                    )
+                    val stableContactId = upsertPendingContactPreservingId(database, contactCard)
+                        ?: throw IllegalStateException("Unable to persist authenticated Phase 2 identity")
                     val ourMessagingOnion = torManager.getOnionAddress()
                     val theirMessagingOnion = contactCard.messagingOnion
                     if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
-                        Log.e(TAG, "Cannot initialize key chain: missing onion address")
+                        throw IllegalStateException("Cannot initialize Phase 2 keychain: missing onion address")
                     } else if (kyberCiphertext != null) {
-                        // Device A path: Decapsulate the ciphertext from Phase 2
                         com.securelegion.crypto.KeyChainManager.initializeKeyChain(
                             context = this@TorService,
-                            contactId = contactId,
+                            contactId = stableContactId,
                             theirX25519PublicKey = contactCard.x25519PublicKey,
                             theirKyberPublicKey = contactCard.kyberPublicKey,
                             ourMessagingOnion = ourMessagingOnion,
@@ -4143,7 +4461,7 @@ class TorService : Service() {
                         Log.w(TAG, "No Kyber ciphertext - key chain will be initialized without quantum parameters")
                         com.securelegion.crypto.KeyChainManager.initializeKeyChain(
                             context = this@TorService,
-                            contactId = contactId,
+                            contactId = stableContactId,
                             theirX25519PublicKey = contactCard.x25519PublicKey,
                             theirKyberPublicKey = contactCard.kyberPublicKey,
                             ourMessagingOnion = ourMessagingOnion,
@@ -4151,27 +4469,29 @@ class TorService : Service() {
                         )
                         Log.i(TAG, "Key chain initialized for ${contactCard.displayName} (legacy)")
                     }
-
-                    // Auto-send our profile picture to the new contact (if we have one set)
-                    val prefs = this@TorService.getSharedPreferences("secure_legion_settings", android.content.Context.MODE_PRIVATE)
-                    val myPhotoBase64 = prefs.getString("profile_photo_base64", null)
-                    if (!myPhotoBase64.isNullOrBlank()) {
-                        kotlinx.coroutines.delay(3_000L)
-                        try {
-                            val messageService = com.securelegion.services.MessageService(this@TorService)
-                            messageService.sendProfileUpdate(contactId, myPhotoBase64)
-                            Log.i(TAG, "Profile picture auto-sent to new contact: ${contactCard.displayName}")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to auto-send profile picture to ${contactCard.displayName}", e)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize key chain for ${contactCard.displayName}", e)
+                    stableContactId
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Phase 2 durable contact/keychain finalization failed; pending retained", e)
+                return false
             }
 
-            // Remove pending outgoing request
-            removePendingRequest(matchedRequest)
+            val phase3Attempt = persistAndSendPhase3Acknowledgment(
+                matchedRequest,
+                contactCard,
+                contactId,
+                encryptedPayload
+            ) ?: run {
+                Log.e(TAG, "Phase 3 ACK deferred; exact persisted state remains retryable")
+                return false
+            }
+            if (!finalizePersistedPhase3(matchedRequest, phase3Attempt, contactId)) {
+                return false
+            }
+            if (!removePendingRequestExact(matchedRequest)) {
+                Log.e(TAG, "Phase 2 completed but exact pending-request removal was not persisted")
+                return false
+            }
 
             // Show "Friend request accepted" notification
             showFriendRequestAcceptedNotification(contactCard.displayName)
@@ -4185,8 +4505,19 @@ class TorService : Service() {
 
             Log.i(TAG, "Phase 2 complete - ${contactCard.displayName} added to contacts")
 
-            // Send Phase 3 ACK back to sender's friend-request .onion
-            sendPhase3Acknowledgment(contactCard)
+            val myPhotoBase64 = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
+                .getString("profile_photo_base64", null)
+            if (!myPhotoBase64.isNullOrBlank()) {
+                serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    kotlinx.coroutines.delay(3_000L)
+                    try {
+                        com.securelegion.services.MessageService(this@TorService)
+                            .sendProfileUpdate(contactId, myPhotoBase64)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Post-confirmation profile delivery failed", e)
+                    }
+                }
+            }
             return true
 
         } catch (e: Exception) {
@@ -4195,81 +4526,300 @@ class TorService : Service() {
         }
     }
 
+    private data class PersistedPhase3Attempt(
+        val row: com.securelegion.database.entities.PendingFriendRequest,
+        val leaseToken: String,
+        val ciphertext: ByteArray
+    )
+
+    private fun buildPhase3Ciphertext(
+        peerCard: com.securelegion.models.ContactCard
+    ): ByteArray {
+        // This is the existing Android/iOS 0x08 payload. Only its local persistence is new.
+        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+        val ownContactCard = com.securelegion.models.ContactCard(
+            displayName = keyManager.getUsername() ?: "Unknown",
+            solanaPublicKey = keyManager.getSolanaPublicKey(),
+            x25519PublicKey = keyManager.getEncryptionPublicKey(),
+            kyberPublicKey = keyManager.getKyberPublicKey(),
+            solanaAddress = keyManager.getSolanaAddress(),
+            friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
+            messagingOnion = keyManager.getMessagingOnion() ?: "",
+            voiceOnion = TorManager.getInstance(this@TorService).getVoiceOnionAddress() ?: "",
+            contactPin = keyManager.getContactPin() ?: "",
+            inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
+            ipfsCid = keyManager.getIPFSCID(),
+            timestamp = System.currentTimeMillis() / 1000
+        )
+        return com.securelegion.crypto.RustBridge.encryptMessage(
+            plaintext = ownContactCard.toJson(),
+            recipientX25519PublicKey = peerCard.x25519PublicKey
+        )
+    }
+
     /**
-     * Send Phase 3 ACK to confirm friend request is complete
+     * Convert the matched Phase 1 outbox row into a leased Phase 3 row before the first socket
+     * write. If Phase 3 was already prepared, reuse its stored bytes instead of encrypting again.
      */
-    private fun sendPhase3Acknowledgment(contactCard: com.securelegion.models.ContactCard) {
-        try {
-            Log.i(TAG, "Sending Phase 3 ACK to ${contactCard.displayName}")
+    private suspend fun persistAndSendPhase3Acknowledgment(
+        matchedRequest: com.securelegion.models.PendingFriendRequest,
+        peerCard: com.securelegion.models.ContactCard,
+        contactId: Long,
+        authenticatedPhase2Ciphertext: ByteArray
+    ): PersistedPhase3Attempt? = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+        val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+            this@TorService,
+            keyManager.getDatabasePassphrase()
+        )
+        val dao = database.pendingFriendRequestDao()
+        val retryPrefs = getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE)
+        val mappedId = retryPrefs.getLong(matchedRequest.id, -1L)
+        val phase2Fingerprint = friendRequestPayloadFingerprint(authenticatedPhase2Ciphertext)
+        val fingerprintRows = if (mappedId > 0L) {
+            emptyList()
+        } else {
+            dao.getPhase3ByRequestFingerprint(phase2Fingerprint)
+        }
+        if (fingerprintRows.size > 1) {
+            Log.e(TAG, "Multiple Phase 3 rows share one authenticated request fingerprint")
+            return@withContext null
+        }
+        val existingId = mappedId.takeIf { it > 0L } ?: fingerprintRows.singleOrNull()?.id
+        val initial = existingId?.let { dao.getById(it) }
 
-            // Build ACK payload with OUR full ContactCard so they can add us
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            val torManager = TorManager.getInstance(this@TorService)
-            val ownContactCard = com.securelegion.models.ContactCard(
-                displayName = keyManager.getUsername() ?: "Unknown",
-                solanaPublicKey = keyManager.getSolanaPublicKey(),
-                x25519PublicKey = keyManager.getEncryptionPublicKey(),
-                kyberPublicKey = keyManager.getKyberPublicKey(),
-                solanaAddress = keyManager.getSolanaAddress(),
-                friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
-                messagingOnion = keyManager.getMessagingOnion() ?: "",
-                voiceOnion = torManager.getVoiceOnionAddress() ?: "",
-                contactPin = keyManager.getContactPin() ?: "",
-                inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
-                ipfsCid = keyManager.getIPFSCID(),
-                timestamp = System.currentTimeMillis() / 1000
-            )
-            val ackPayload = ownContactCard.toJson()
+        val generatedCiphertext = if (initial?.phase ==
+            com.securelegion.database.entities.PendingFriendRequest.PHASE_3_SENT
+        ) {
+            null
+        } else {
+            try {
+                buildPhase3Ciphertext(peerCard)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to build Phase 3 ciphertext", e)
+                return@withContext null
+            }
+        }
 
-            // Encrypt with their X25519 public key
-            val encryptedAck = com.securelegion.crypto.RustBridge.encryptMessage(
-                plaintext = ackPayload,
-                recipientX25519PublicKey = contactCard.x25519PublicKey
-            )
-
-            // Send to their friend-request .onion (reuse Phase 2 function - same wire format)
-            serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                val success = com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
-                    recipientOnion = contactCard.friendRequestOnion,
-                    encryptedAcceptance = encryptedAck
+        val now = System.currentTimeMillis()
+        val token = java.util.UUID.randomUUID().toString()
+        var selectedCiphertext = generatedCiphertext
+        val prepared = database.withTransaction {
+            val current = existingId?.let { dao.getById(it) }
+            if (current?.phase ==
+                com.securelegion.database.entities.PendingFriendRequest.PHASE_3_SENT
+            ) {
+                if (current.isCompleted || current.isFailed) {
+                    Log.w(TAG, "Phase 3 row ${current.id} is already terminal")
+                    return@withTransaction null
+                }
+                if (current.phase1PayloadJson != phase2Fingerprint) {
+                    Log.e(TAG, "Phase 3 row belongs to a different authenticated Phase 2")
+                    return@withTransaction null
+                }
+                val storedPeer = try {
+                    current.contactCardJson?.let(com.securelegion.models.ContactCard::fromJson)
+                } catch (_: Exception) {
+                    null
+                }
+                val storedBytes = decodeStoredFriendRequestCiphertext(current.phase2PayloadBase64)
+                if (storedPeer == null || storedBytes == null ||
+                    !phase3ReplayIdentityMatches(storedPeer, peerCard, current.recipientOnion)
+                ) {
+                    dao.updateRequest(
+                        current.copy(
+                            isFailed = true,
+                            needsRetry = false,
+                            leaseToken = null,
+                            leaseExpiresAt = 0
+                        )
+                    )
+                    Log.e(TAG, "Existing Phase 3 row is not safely replayable; refusing replacement")
+                    return@withTransaction null
+                }
+                if (current.leaseToken != null && current.leaseExpiresAt > now) {
+                    Log.i(TAG, "Phase 3 row ${current.id} is already being delivered")
+                    return@withTransaction null
+                }
+                selectedCiphertext = storedBytes
+                current.copy(
+                    needsRetry = true,
+                    nextRetryAt = now,
+                    contactId = contactId,
+                    leaseToken = token,
+                    leaseExpiresAt = now + FRIEND_REQUEST_LEASE_DURATION_MS
+                ).also { dao.updateRequest(it) }
+            } else {
+                val exactCiphertext = selectedCiphertext ?: return@withTransaction null
+                val encoded = android.util.Base64.encodeToString(
+                    exactCiphertext,
+                    android.util.Base64.NO_WRAP
                 )
-
-                if (success) {
-                    Log.i(TAG, "Phase 3 ACK sent to ${contactCard.displayName}")
-                    cleanupConfirmedFriendRequestState(contactCard, "phase3_ack_sent")
-
-                    // Two-phase commit complete on our side: flip PENDING_SENT → CONFIRMED.
-                    // Mirror of the receiver-side flip at the Phase 3 ACK handler.
-                    try {
-                        val dbPassphrase = keyManager.getDatabasePassphrase()
-                        val db = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
-                        val x25519Base64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP)
-                        val existing = db.contactDao().getContactByX25519PublicKey(x25519Base64)
-                        if (existing != null && existing.friendshipStatus == com.securelegion.database.entities.Contact.FRIENDSHIP_PENDING_SENT) {
-                            db.contactDao().updateContact(
-                                existing.copy(friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED)
-                            )
-                            Log.i(TAG, "Local contact ${contactCard.displayName} → CONFIRMED after Phase 3 ACK send")
-                            sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to flip contact to CONFIRMED after Phase 3 ACK send", e)
-                    }
+                if (current != null) {
+                    current.copy(
+                        recipientOnion = peerCard.friendRequestOnion,
+                        phase = com.securelegion.database.entities.PendingFriendRequest.PHASE_3_SENT,
+                        needsRetry = true,
+                        isCompleted = false,
+                        isFailed = false,
+                        lastSentAt = null,
+                        nextRetryAt = now,
+                        retryCount = 0,
+                        phase1PayloadJson = phase2Fingerprint,
+                        phase2PayloadBase64 = encoded,
+                        contactCardJson = peerCard.toJson(),
+                        completedAt = null,
+                        contactId = contactId,
+                        leaseToken = token,
+                        leaseExpiresAt = now + FRIEND_REQUEST_LEASE_DURATION_MS
+                    ).also { dao.updateRequest(it) }
                 } else {
-                    Log.e(TAG, "Failed to send Phase 3 ACK to ${contactCard.displayName}")
+                    val inserted = com.securelegion.database.entities.PendingFriendRequest(
+                        recipientOnion = peerCard.friendRequestOnion,
+                        phase = com.securelegion.database.entities.PendingFriendRequest.PHASE_3_SENT,
+                        direction = com.securelegion.database.entities.PendingFriendRequest.DIRECTION_OUTGOING,
+                        needsRetry = true,
+                        nextRetryAt = now,
+                        phase1PayloadJson = phase2Fingerprint,
+                        phase2PayloadBase64 = encoded,
+                        contactCardJson = peerCard.toJson(),
+                        contactId = contactId,
+                        leaseToken = token,
+                        leaseExpiresAt = now + FRIEND_REQUEST_LEASE_DURATION_MS
+                    )
+                    val insertedId = dao.insertRequest(inserted)
+                    if (insertedId <= 0L) return@withTransaction null
+                    inserted.copy(id = insertedId)
                 }
             }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending Phase 3 ACK", e)
+        } ?: run {
+            FriendRequestWorker.scheduleDispatcher(this@TorService, "phase3-not-claimable")
+            return@withContext null
         }
+
+        // The Room row is authoritative even if the legacy UUID map cannot be committed.
+        if (!retryPrefs.edit().putLong(matchedRequest.id, prepared.id).commit()) {
+            Log.e(TAG, "Phase 3 persisted but UUID-to-Room mapping commit failed")
+        }
+        FriendRequestWorker.nudgeDispatcher(this@TorService, "phase3-persisted-before-send")
+
+        val exactCiphertext = selectedCiphertext ?: run {
+            dao.markFailedIfLeased(prepared.id, token)
+            return@withContext null
+        }
+        val operationId = "fr-phase3:${prepared.id}:$token"
+        val result = try {
+            com.securelegion.crypto.RustBridge.sendFriendRequestAcceptedTyped(
+                prepared.recipientOnion,
+                exactCiphertext,
+                operationId
+            )
+        } catch (e: Throwable) {
+            Log.e(TAG, "Phase 3 send threw", e)
+            com.securelegion.crypto.RustBridge.FriendRequestSendResult.TRANSIENT_NETWORK
+        }
+
+        if (result == com.securelegion.crypto.RustBridge.FriendRequestSendResult.SUCCESS) {
+            Log.i(TAG, "Persisted Phase 3 ACK sent to ${peerCard.displayName}")
+            return@withContext PersistedPhase3Attempt(prepared, token, exactCiphertext)
+        }
+
+        val failedAt = System.currentTimeMillis()
+        when (result) {
+            com.securelegion.crypto.RustBridge.FriendRequestSendResult.TRANSIENT_NETWORK -> {
+                val attempt = prepared.retryCount + 1
+                dao.updateRetryTrackingIfLeased(
+                    prepared.id,
+                    token,
+                    failedAt,
+                    attempt,
+                    com.securelegion.workers.FriendRequestBackoff.nextRetryAt(failedAt, attempt)
+                )
+            }
+            com.securelegion.crypto.RustBridge.FriendRequestSendResult.TOR_NOT_READY,
+            com.securelegion.crypto.RustBridge.FriendRequestSendResult.CANCELLED ->
+                dao.updateRetryTrackingIfLeased(
+                    prepared.id,
+                    token,
+                    failedAt,
+                    prepared.retryCount,
+                    failedAt + 60_000L
+                )
+            com.securelegion.crypto.RustBridge.FriendRequestSendResult.PERMANENT_INPUT ->
+                dao.markFailedIfLeased(prepared.id, token)
+            com.securelegion.crypto.RustBridge.FriendRequestSendResult.SUCCESS -> Unit
+        }
+        FriendRequestWorker.nudgeDispatcher(this@TorService, "phase3-send-$result")
+        null
+    }
+
+    /** Confirm local state and retain the completed Phase 3 row as an exact-replay tombstone. */
+    private suspend fun finalizePersistedPhase3(
+        matchedRequest: com.securelegion.models.PendingFriendRequest,
+        attempt: PersistedPhase3Attempt,
+        contactId: Long
+    ): Boolean = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+        val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+            this@TorService,
+            keyManager.getDatabasePassphrase()
+        )
+        val dao = database.pendingFriendRequestDao()
+        try {
+            database.withTransaction {
+                val stable = database.contactDao().getContactById(contactId)
+                    ?: throw IllegalStateException("Stable Phase 2 contact disappeared")
+                if (stable.friendshipStatus !=
+                    com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                ) {
+                    database.contactDao().updateContact(
+                        stable.copy(
+                            friendshipStatus =
+                                com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                        )
+                    )
+                }
+                if (dao.markCompletedIfLeased(
+                        attempt.row.id,
+                        attempt.leaseToken,
+                        System.currentTimeMillis()
+                    ) != 1
+                ) {
+                    throw IllegalStateException("Lost Phase 3 lease before tombstone completion")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Phase 3 sent but local confirmation failed; exact payload retained", e)
+            val now = System.currentTimeMillis()
+            val nextAttempt = attempt.row.retryCount + 1
+            dao.updateRetryTrackingIfLeased(
+                attempt.row.id,
+                attempt.leaseToken,
+                now,
+                nextAttempt,
+                com.securelegion.workers.FriendRequestBackoff.nextRetryAt(now, nextAttempt)
+            )
+            FriendRequestWorker.nudgeDispatcher(this@TorService, "phase3-local-finalize")
+            return@withContext false
+        }
+        val replayCutoff = System.currentTimeMillis() - PHASE3_REPLAY_TTL_MS
+        dao.deleteExpiredCompletedPhase3(replayCutoff)
+        dao.deleteCompletedPhase3BeyondLimit(PHASE3_REPLAY_MAX_ROWS)
+        if (!getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE)
+                .edit()
+                .remove(matchedRequest.id)
+                .commit()
+        ) {
+            Log.w(TAG, "Phase 3 completed but retry-map cleanup was not committed")
+        }
+        true
     }
 
     /**
      * Handle Phase 3 acknowledgment (X25519-encrypted)
      * Payload: Simple confirmation that they received and processed Phase 2
      */
-    private fun handlePhase3Acknowledgment(encryptedPayload: ByteArray): Boolean {
+    private suspend fun handlePhase3Acknowledgment(encryptedPayload: ByteArray): Boolean {
         try {
             Log.i(TAG, "Processing Phase 3 acknowledgment (X25519-encrypted)")
 
@@ -4303,11 +4853,13 @@ class TorService : Service() {
                     null
                 }
 
-                if (candidateCard != null) {
+                if (candidateCard != null && candidateCard.x25519PublicKey.contentEquals(senderKey)) {
                     matchingRequest = request
                     contactCard = candidateCard
                     Log.d(TAG, "Matched Phase 3 ACK to pending request: ${request.displayName}")
                     break
+                } else if (candidateCard != null) {
+                    Log.e(TAG, "Phase 3 decrypted card did not match the authenticated pending encryption key")
                 }
             }
 
@@ -4321,33 +4873,16 @@ class TorService : Service() {
             Log.i(TAG, "Phase 3 ACK decrypted successfully")
             Log.i(TAG, "Friend request fully confirmed by: ${matchedContactCard.displayName}")
 
-            // Add to contacts database and initialize key chain (both in coroutine)
-            serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                try {
+            // Keep required finalization synchronous under friendRequestProcessingMutex. Pending
+            // state is removed only after the stable contact row and keychain both succeed.
+            try {
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
                     // Confirm the pending contact created in Phase 2 (or add fresh if missing)
                     val keyManager2 = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
                     val dbPassphrase2 = keyManager2.getDatabasePassphrase()
                     val db = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase2)
-                    val x25519Base64 = android.util.Base64.encodeToString(matchedContactCard.x25519PublicKey, android.util.Base64.NO_WRAP)
-                    val existingContact = db.contactDao().getContactByX25519PublicKey(x25519Base64)
-                    val contactId: Long
-                    if (existingContact != null) {
-                        // Upgrade from PENDING_SENT to CONFIRMED
-                        val confirmed = existingContact.copy(
-                            friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
-                        )
-                        db.contactDao().updateContact(confirmed)
-                        contactId = existingContact.id
-                        Log.i(TAG, "Contact confirmed: ${matchedContactCard.displayName} (ID: $contactId)")
-                    } else {
-                        // Fallback: add fresh if Phase 2 didn't create one
-                        val newId = addContactToDatabase(matchedContactCard)
-                        if (newId == null) {
-                            Log.e(TAG, "Failed to add contact to database")
-                            return@launch
-                        }
-                        contactId = newId
-                    }
+                    val contactId = upsertPendingContactPreservingId(db, matchedContactCard)
+                        ?: throw IllegalStateException("Unable to persist authenticated contact identity")
 
                     // Extract precomputed shared secret from saved Phase 2 state
                     val savedJson = org.json.JSONObject(matchedRequest.contactCardJson ?: "{}")
@@ -4361,8 +4896,7 @@ class TorService : Service() {
                     val theirMessagingOnion = matchedContactCard.messagingOnion
 
                     if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
-                        Log.e(TAG, "Cannot initialize key chain: missing onion address")
-                        return@launch
+                        throw IllegalStateException("Cannot initialize key chain: missing onion address")
                     }
 
                     if (precomputedSharedSecret != null) {
@@ -4391,28 +4925,56 @@ class TorService : Service() {
                         Log.i(TAG, "Key chain initialized for ${matchedContactCard.displayName} (legacy)")
                     }
 
-                    cleanupConfirmedFriendRequestState(matchedContactCard, "phase3_ack_received")
-
-                    // Auto-send our profile picture to the new contact (if we have one set)
-                    val prefs = this@TorService.getSharedPreferences("secure_legion_settings", android.content.Context.MODE_PRIVATE)
-                    val myPhotoBase64 = prefs.getString("profile_photo_base64", null)
-                    if (!myPhotoBase64.isNullOrBlank()) {
-                        kotlinx.coroutines.delay(3_000L)
-                        try {
-                            val messageService = com.securelegion.services.MessageService(this@TorService)
-                            messageService.sendProfileUpdate(contactId, myPhotoBase64)
-                            Log.i(TAG, "Profile picture auto-sent to new contact: ${matchedContactCard.displayName}")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to auto-send profile picture to ${matchedContactCard.displayName}", e)
-                        }
+                    val durableContact = db.contactDao().getContactById(contactId)
+                        ?: throw IllegalStateException("Stable contact disappeared before confirmation")
+                    if (durableContact.friendshipStatus != com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED) {
+                        db.contactDao().updateContact(
+                            durableContact.copy(
+                                friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                            )
+                        )
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to add contact or initialize key chain for ${matchedContactCard.displayName}", e)
+                    Log.i(TAG, "Phase 3 confirmed stable contact ID=$contactId after keychain initialization")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Phase 3 durable finalization failed; pending request retained", e)
+                return false
             }
 
-            // Remove the pending request
-            removePendingRequest(matchedRequest)
+            if (!completePendingRetryExact(matchedRequest)) {
+                Log.e(TAG, "Phase 3 finalized locally but exact durable retry cleanup failed")
+                return false
+            }
+            if (!removePendingRequestExact(matchedRequest)) {
+                Log.e(TAG, "Phase 3 finalized but exact pending-request removal was not persisted")
+                return false
+            }
+
+            // Profile delivery is noncritical and runs only after durable friend finalization.
+            val myPhotoBase64 = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
+                .getString("profile_photo_base64", null)
+            if (!myPhotoBase64.isNullOrBlank()) {
+                serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    kotlinx.coroutines.delay(3_000L)
+                    try {
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                        val db = com.securelegion.database.SecureLegionDatabase.getInstance(
+                            this@TorService,
+                            keyManager.getDatabasePassphrase()
+                        )
+                        val x25519 = android.util.Base64.encodeToString(
+                            matchedContactCard.x25519PublicKey,
+                            android.util.Base64.NO_WRAP
+                        )
+                        val contactId = db.contactDao().getContactByX25519PublicKey(x25519)?.id
+                            ?: return@launch
+                        com.securelegion.services.MessageService(this@TorService)
+                            .sendProfileUpdate(contactId, myPhotoBase64)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Post-confirmation profile delivery failed", e)
+                    }
+                }
+            }
 
             // Show "Friend added" notification
             showFriendRequestAcceptedNotification(matchedContactCard.displayName)
@@ -4432,151 +4994,75 @@ class TorService : Service() {
     }
 
     /**
-     * Add ContactCard to contacts database
-     * Returns the inserted contact ID, or null on error
+     * Resolve an authenticated peer to one stable parent row without REPLACE. New rows stay
+     * PENDING_SENT until keychain initialization succeeds and the protocol step confirms them.
      */
-    private suspend fun addContactToDatabase(contactCard: com.securelegion.models.ContactCard): Long? {
-        return try {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+    private suspend fun upsertPendingContactPreservingId(
+        database: com.securelegion.database.SecureLegionDatabase,
+        contactCard: com.securelegion.models.ContactCard
+    ): Long? {
+        val dao = database.contactDao()
+        val x25519Base64 = android.util.Base64.encodeToString(
+            contactCard.x25519PublicKey,
+            android.util.Base64.NO_WRAP
+        )
+        val ed25519Base64 = android.util.Base64.encodeToString(
+            contactCard.solanaPublicKey,
+            android.util.Base64.NO_WRAP
+        )
 
-                val contact = com.securelegion.database.entities.Contact(
-                    displayName = contactCard.displayName,
-                    solanaAddress = contactCard.solanaAddress,
-                    publicKeyBase64 = android.util.Base64.encodeToString(contactCard.solanaPublicKey, android.util.Base64.NO_WRAP),
-                    x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
-                    kyberPublicKeyBase64 = android.util.Base64.encodeToString(contactCard.kyberPublicKey, android.util.Base64.NO_WRAP),
-                    friendRequestOnion = contactCard.friendRequestOnion,
-                    messagingOnion = contactCard.messagingOnion,
-                    voiceOnion = contactCard.voiceOnion,
-                    contactPin = contactCard.contactPin,
-                    ipfsCid = contactCard.ipfsCid,
-                    addedTimestamp = System.currentTimeMillis(),
-                    friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
-                )
+        fun identityMatches(contact: com.securelegion.database.entities.Contact): Boolean {
+            return contact.x25519PublicKeyBase64 == x25519Base64 &&
+                contact.solanaAddress == contactCard.solanaAddress &&
+                contact.publicKeyBase64 == ed25519Base64
+        }
 
-                val contactId = database.contactDao().insertContact(contact)
-                Log.i(TAG, "Contact added to database: ${contact.displayName} (ID: $contactId)")
-
-                // Seed-restore recovery hook: if we were just restored from seed,
-                // ask this new friend to send our contact list back. No-op otherwise.
-                com.securelegion.services.ContactListSyncService
-                    .getInstance(this@TorService)
-                    .maybeRequestRecovery(contact.messagingOnion)
-
-                // NOTE: Key chain initialization is handled by the caller (Phase 2/3 handlers)
-                // Do NOT initialize here without quantum parameters - causes encryption mismatch!
-
-                contactId
+        dao.getContactByX25519PublicKey(x25519Base64)?.let { existing ->
+            if (!identityMatches(existing)) {
+                Log.e(TAG, "Friend identity conflict on existing encryption key; refusing contact mutation")
+                return null
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add contact to database", e)
-            null
+            Log.i(TAG, "Friend finalization reused stable contact ID=${existing.id}")
+            return existing.id
         }
-    }
 
-    /**
-     * Remove pending friend request
-     */
-    private fun removePendingRequest(request: com.securelegion.models.PendingFriendRequest) {
-        try {
-            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-
-            val newSet = pendingRequestsSet.filter { requestJson ->
-                try {
-                    val existingRequest = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                    existingRequest.ipfsCid != request.ipfsCid
-                } catch (e: Exception) {
-                    true
-                }
-            }.toMutableSet()
-
-            prefs.edit()
-                .putStringSet("pending_requests_v2", newSet)
-                .apply()
-
-            Log.i(TAG, "Removed pending request for ${request.displayName}")
-
-            // Broadcast so MainActivity refreshes badges and list
-            sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to remove pending request", e)
-        }
-    }
-
-    private suspend fun cleanupConfirmedFriendRequestState(
-        contactCard: com.securelegion.models.ContactCard,
-        reason: String
-    ) {
-        withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val onions = setOf(contactCard.friendRequestOnion, contactCard.messagingOnion)
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-                .toSet()
-            if (onions.isEmpty()) return@withContext
-
-            val x25519Base64 = android.util.Base64.encodeToString(
-                contactCard.x25519PublicKey,
+        val pendingContact = com.securelegion.database.entities.Contact(
+            displayName = contactCard.displayName,
+            solanaAddress = contactCard.solanaAddress,
+            publicKeyBase64 = ed25519Base64,
+            x25519PublicKeyBase64 = x25519Base64,
+            kyberPublicKeyBase64 = android.util.Base64.encodeToString(
+                contactCard.kyberPublicKey,
                 android.util.Base64.NO_WRAP
-            )
-
-            try {
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
-                for (onion in onions) {
-                    database.pendingFriendRequestDao().deleteByRecipientOnion(onion)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed DB cleanup for confirmed friend request (${contactCard.displayName}, reason=$reason)", e)
-            }
-
-            try {
-                val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-                val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-                val retryMapEditor = getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE).edit()
-                val newSet = mutableSetOf<String>()
-                var removed = 0
-
-                for (requestJson in pendingRequestsSet) {
-                    try {
-                        val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                        val stored = request.contactCardJson.orEmpty()
-                        val matchesConfirmedPeer =
-                            request.ipfsCid.trim() in onions ||
-                                stored.contains(contactCard.friendRequestOnion) ||
-                                stored.contains(contactCard.messagingOnion) ||
-                                stored.contains(x25519Base64)
-
-                        if (matchesConfirmedPeer) {
-                            retryMapEditor.remove(request.id)
-                            removed++
-                        } else {
-                            newSet.add(requestJson)
-                        }
-                    } catch (_: Exception) {
-                        newSet.add(requestJson)
-                    }
-                }
-
-                if (removed > 0) {
-                    prefs.edit()
-                        .putStringSet("pending_requests_v2", newSet)
-                        .apply()
-                    retryMapEditor.apply()
-                    Log.i(TAG, "Cleaned $removed confirmed friend-request UI/retry row(s) for ${contactCard.displayName} (reason=$reason)")
-                    sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
-                } else {
-                    retryMapEditor.apply()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed prefs cleanup for confirmed friend request (${contactCard.displayName}, reason=$reason)", e)
-            }
+            ),
+            friendRequestOnion = contactCard.friendRequestOnion,
+            messagingOnion = contactCard.messagingOnion,
+            voiceOnion = contactCard.voiceOnion,
+            contactPin = contactCard.contactPin,
+            ipfsCid = contactCard.ipfsCid,
+            addedTimestamp = System.currentTimeMillis(),
+            friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_PENDING_SENT
+        )
+        val insertedId = dao.insertContactIfAbsent(pendingContact)
+        if (insertedId > 0L) {
+            Log.i(TAG, "Friend finalization inserted stable pending contact ID=$insertedId")
+            com.securelegion.services.ContactListSyncService
+                .getInstance(this@TorService)
+                .maybeRequestRecovery(pendingContact.messagingOnion)
+            return insertedId
         }
+
+        // A unique Solana identity may have won a concurrent insert. It is usable only when every
+        // immutable identity field agrees; never overwrite a same-wallet/different-key row.
+        val winner = dao.getContactByX25519PublicKey(x25519Base64)
+            ?: dao.getContactBySolanaAddress(contactCard.solanaAddress)
+            ?: return null
+        if (!identityMatches(winner)) {
+            Log.e(TAG, "Friend identity conflict after insert-ignore; refusing contact mutation")
+            return null
+        }
+        Log.i(TAG, "Friend finalization resolved insert conflict to stable contact ID=${winner.id}")
+        return winner.id
     }
 
     private suspend fun cleanupConfirmedFriendRequestStateOnStartup() {
@@ -4585,7 +5071,23 @@ class TorService : Service() {
                 val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
-                val confirmedContacts = database.contactDao().getAllContacts()
+                val retryDao = database.pendingFriendRequestDao()
+                val replayCutoff = System.currentTimeMillis() - PHASE3_REPLAY_TTL_MS
+                val expiredTombstones = retryDao.deleteExpiredCompletedPhase3(replayCutoff)
+                val surplusTombstones = retryDao.deleteCompletedPhase3BeyondLimit(
+                    PHASE3_REPLAY_MAX_ROWS
+                )
+                if (expiredTombstones > 0 || surplusTombstones > 0) {
+                    Log.i(
+                        TAG,
+                        "Pruned Phase 3 replay tombstones " +
+                            "(expired=$expiredTombstones, surplus=$surplusTombstones)"
+                    )
+                }
+                val confirmedContacts = database.contactDao().getAllContacts().filter {
+                    it.friendshipStatus ==
+                        com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                }
                 if (confirmedContacts.isEmpty()) return@withContext
 
                 val confirmedOnions = confirmedContacts
@@ -4605,43 +5107,53 @@ class TorService : Service() {
                     .toSet()
 
                 for (onion in confirmedOnions) {
-                    database.pendingFriendRequestDao().deleteByRecipientOnion(onion)
+                    retryDao.deleteUnfinishedByRecipientOnion(onion)
                 }
 
-                val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-                val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-                val retryMapEditor = getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE).edit()
-                val newSet = mutableSetOf<String>()
-                var removed = 0
+                val removed = synchronized(pendingRequestPrefsLock) {
+                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                    val pendingRequestsSet =
+                        prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                    val retryMapEditor =
+                        getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE).edit()
+                    val newSet = mutableSetOf<String>()
+                    var removedCount = 0
 
-                for (requestJson in pendingRequestsSet) {
-                    try {
-                        val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                        val stored = request.contactCardJson.orEmpty()
-                        val matchesConfirmedPeer =
-                            request.ipfsCid.trim() in confirmedOnions ||
-                                confirmedOnions.any { stored.contains(it) } ||
-                                confirmedX25519.any { stored.contains(it) }
+                    for (requestJson in pendingRequestsSet) {
+                        try {
+                            val request =
+                                com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                            val stored = request.contactCardJson.orEmpty()
+                            val matchesConfirmedPeer =
+                                request.ipfsCid.trim() in confirmedOnions ||
+                                    confirmedOnions.any { stored.contains(it) } ||
+                                    confirmedX25519.any { stored.contains(it) }
 
-                        if (matchesConfirmedPeer) {
-                            retryMapEditor.remove(request.id)
-                            removed++
-                        } else {
+                            if (matchesConfirmedPeer) {
+                                retryMapEditor.remove(request.id)
+                                removedCount++
+                            } else {
+                                newSet.add(requestJson)
+                            }
+                        } catch (_: Exception) {
                             newSet.add(requestJson)
                         }
-                    } catch (_: Exception) {
-                        newSet.add(requestJson)
                     }
-                }
 
+                    if (removedCount > 0 &&
+                        !prefs.edit().putStringSet("pending_requests_v2", newSet).commit()
+                    ) {
+                        Log.w(TAG, "Startup pending friend-request cleanup was not committed")
+                    }
+                    if (!retryMapEditor.commit()) {
+                        Log.w(TAG, "Startup friend-request retry-map cleanup was not committed")
+                    }
+                    removedCount
+                }
                 if (removed > 0) {
-                    prefs.edit()
-                        .putStringSet("pending_requests_v2", newSet)
-                        .apply()
                     Log.i(TAG, "Startup cleaned $removed stale confirmed friend-request UI/retry row(s)")
                     sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
                 }
-                retryMapEditor.apply()
             } catch (e: Exception) {
                 Log.w(TAG, "Startup confirmed friend-request cleanup failed", e)
             }
@@ -4657,7 +5169,7 @@ class TorService : Service() {
      */
     private fun savePendingFriendRequest(
         request: com.securelegion.models.PendingFriendRequest
-    ): PendingFriendRequestSaveResult {
+    ): PendingFriendRequestSaveResult = synchronized(pendingRequestPrefsLock) {
         try {
             val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
             val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
@@ -4693,11 +5205,11 @@ class TorService : Service() {
 
             if (!committed) {
                 Log.e(TAG, "SharedPreferences rejected pending friend-request commit")
-                return PendingFriendRequestSaveResult.FAILED
+                return@synchronized PendingFriendRequestSaveResult.FAILED
             }
 
             Log.i(TAG, "Saved pending friend request for ${request.displayName}")
-            return if (replacedExisting) {
+            return@synchronized if (replacedExisting) {
                 PendingFriendRequestSaveResult.UPDATED
             } else {
                 PendingFriendRequestSaveResult.NEW
@@ -4705,7 +5217,7 @@ class TorService : Service() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save pending friend request", e)
-            return PendingFriendRequestSaveResult.FAILED
+            return@synchronized PendingFriendRequestSaveResult.FAILED
         }
     }
 
@@ -6278,29 +6790,9 @@ class TorService : Service() {
             val contact = database.contactDao().getContactByX25519PublicKey(senderX25519Base64)
 
             if (contact == null) {
-                // Unknown sender - check if we have a pending outgoing request
-                // If yes, this is a FRIEND_REQUEST_ACCEPTED notification
-                // If no, this is a new incoming FRIEND_REQUEST
-                val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-                val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-                val hasPendingOutgoingRequest = pendingRequestsV2.any { requestJson ->
-                    try {
-                        val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                        request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING
-                        // Note: We can't match by X25519 key here since we don't have their card yet
-                        // We'll handle this inside handleFriendRequestAcceptedFromPending
-                    } catch (e: Exception) {
-                        false
-                    }
-                }
-
-                if (hasPendingOutgoingRequest) {
-                    Log.i(TAG, "→ Unknown sender with pending outgoing request - treating as FRIEND_REQUEST_ACCEPTED")
-                    handleFriendRequestAcceptedFromPending(senderX25519PublicKey, encryptedPayload)
-                } else {
-                    Log.i(TAG, "→ Unknown sender - treating as FRIEND_REQUEST")
-                    handleFriendRequest(senderX25519PublicKey, encryptedPayload)
-                }
+                // Current v2 friend-request frames are accepted only on the isolated FR onion.
+                // Never reinterpret arbitrary messaging traffic as an acceptance notification.
+                Log.w(TAG, "Dropping generic message from unknown sender (wireType=0x${"%02x".format(msgTypeInt)}); friend requests require FR transport")
                 return
             }
 
@@ -7424,536 +7916,6 @@ class TorService : Service() {
     }
 
     /**
-     * Handle incoming friend request from unknown contact
-     * Wire format: [0x07][Sender X25519 - 32 bytes][Encrypted FriendRequest JSON]
-     * Note: Wire type byte and X25519 key are already stripped by caller
-     */
-    private fun handleFriendRequest(senderX25519PublicKey: ByteArray, encryptedFriendRequest: ByteArray) {
-        try {
-            Log.i(TAG, "")
-            Log.i(TAG, "FRIEND REQUEST from unknown contact on legacy message path")
-            Log.i(TAG, "")
-
-            // Wire type byte (0x07) has already been stripped by caller.
-            if (encryptedFriendRequest.isEmpty()) {
-                Log.e(TAG, "Friend request too short")
-                return
-            }
-
-            Log.d(TAG, "Routing legacy friend request payload through Phase 1 handler: payload=${encryptedFriendRequest.size} bytes, senderKey=${senderX25519PublicKey.size} bytes")
-            handlePhase1FriendRequest(encryptedFriendRequest)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error handling friend request", e)
-        }
-    }
-
-    /**
-     * Handle incoming friend request accepted notification from pending outgoing request
-     * This means someone accepted our friend request - add them to Contacts
-     *
-     * NEW (Phase 2): Receives full ContactCard encrypted with our X25519 key
-     * OLD (v1.0): Receives FriendRequest with CID (for backward compatibility)
-     */
-    private fun handleFriendRequestAcceptedFromPending(senderX25519PublicKey: ByteArray, encryptedAcceptance: ByteArray) {
-        try {
-            Log.i(TAG, "")
-            Log.i(TAG, "FRIEND REQUEST ACCEPTED (FROM PENDING)")
-            Log.i(TAG, "")
-
-            // Decrypt acceptance notification
-            val wireMessage = senderX25519PublicKey + encryptedAcceptance
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            val ourEd25519PublicKey = keyManager.getSigningPublicKey()
-            val ourPrivateKey = keyManager.getSigningKeyBytes()
-
-            val decryptedJson = RustBridge.decryptMessage(
-                wireMessage,
-                ourEd25519PublicKey,
-                ourPrivateKey
-            )
-
-            if (decryptedJson.isNullOrEmpty()) {
-                Log.e(TAG, "Failed to decrypt acceptance notification")
-                return
-            }
-
-            Log.d(TAG, "Decrypted JSON (first 200 chars): ${decryptedJson.take(200)}...")
-
-            // Try to parse as NEW Phase 2 format with Kyber ciphertext (v2.1)
-            var contactCard: com.securelegion.models.ContactCard? = null
-            var kyberCiphertext: ByteArray? = null
-            var isPhase2 = false
-
-            try {
-                val phase2Obj = org.json.JSONObject(decryptedJson)
-                if (phase2Obj.has("phase") && phase2Obj.getInt("phase") == 2) {
-                    // NEW Phase 2 format with contact_card + kyber_ciphertext
-                    Log.d(TAG, "Parsing Phase 2 with Kyber ciphertext...")
-                    val contactCardJson = phase2Obj.getJSONObject("contact_card").toString()
-                    contactCard = com.securelegion.models.ContactCard.fromJson(contactCardJson)
-
-                    // Extract Kyber ciphertext if present
-                    if (phase2Obj.has("kyber_ciphertext")) {
-                        val ciphertextBase64 = phase2Obj.getString("kyber_ciphertext")
-                        kyberCiphertext = android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)
-                        Log.i(TAG, "Phase 2 (quantum): Received ContactCard + Kyber ciphertext (${kyberCiphertext.size} bytes) from: ${contactCard?.displayName}")
-                    } else {
-                        Log.i(TAG, "Phase 2 (legacy): Received ContactCard from: ${contactCard?.displayName}")
-                    }
-
-                    // Verify Ed25519 signature (defense-in-depth against .onion MitM)
-                    if (phase2Obj.has("signature") && phase2Obj.has("ed25519_public_key")) {
-                        val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
-                        val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
-
-                        // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
-                        val unsignedBytes = if (phase2Obj.has("signed_payload")) {
-                            android.util.Base64.decode(phase2Obj.getString("signed_payload"), android.util.Base64.NO_WRAP)
-                        } else {
-                            org.json.JSONObject().apply {
-                                put("contact_card", phase2Obj.getJSONObject("contact_card"))
-                                if (phase2Obj.has("kyber_ciphertext")) {
-                                    put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
-                                }
-                                put("phase", 2)
-                            }.toString().toByteArray(Charsets.UTF_8)
-                        }
-
-                        val signatureValid = RustBridge.verifySignature(
-                            unsignedBytes,
-                            signature,
-                            senderEd25519PublicKey
-                        )
-
-                        if (!signatureValid) {
-                            Log.e(TAG, "Phase 2 signature verification FAILED - rejecting contact (possible MitM attack)")
-                            return
-                        }
-                        Log.i(TAG, "Phase 2 signature verified (Ed25519)")
-                    } else {
-                        Log.w(TAG, "Phase 2 has no signature (legacy response)")
-                    }
-
-                    isPhase2 = true
-                } else {
-                    // Try old Phase 2 format (just ContactCard)
-                    contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
-                    isPhase2 = true
-                    Log.i(TAG, "Phase 2 (old format): Received ContactCard from: ${contactCard?.displayName}")
-                }
-            } catch (e: Exception) {
-                Log.d(TAG, "Not a Phase 2 ContactCard, trying old v1.0 format... ${e.message}")
-            }
-
-            // PHASE 2 PATH: Full contact card received
-            if (isPhase2 && contactCard != null) {
-                Log.i(TAG, "Phase 2: Adding ${contactCard.displayName} to Contacts directly...")
-
-                // Add contact to database
-                try {
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
-
-                    val contact = com.securelegion.database.entities.Contact(
-                        displayName = contactCard.displayName,
-                        solanaAddress = contactCard.solanaAddress,
-                        publicKeyBase64 = android.util.Base64.encodeToString(
-                            contactCard.solanaPublicKey,
-                            android.util.Base64.NO_WRAP
-                        ),
-                        x25519PublicKeyBase64 = android.util.Base64.encodeToString(
-                            contactCard.x25519PublicKey,
-                            android.util.Base64.NO_WRAP
-                        ),
-                        kyberPublicKeyBase64 = android.util.Base64.encodeToString(
-                            contactCard.kyberPublicKey,
-                            android.util.Base64.NO_WRAP
-                        ),
-
-                        friendRequestOnion = contactCard.friendRequestOnion, // NEW - public .onion for friend requests (port 9151)
-                        messagingOnion = contactCard.messagingOnion, // NEW - private .onion for messaging (port 8080)
-                        voiceOnion = contactCard.voiceOnion, // NEW - voice calling .onion (port 9152)
-                        ipfsCid = contactCard.ipfsCid,
-                        contactPin = contactCard.contactPin,
-                        addedTimestamp = System.currentTimeMillis(),
-                        lastContactTimestamp = System.currentTimeMillis(),
-                        trustLevel = com.securelegion.database.entities.Contact.TRUST_UNTRUSTED,
-                        friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
-                    )
-
-                    val contactId = kotlinx.coroutines.runBlocking {
-                        database.contactDao().insertContact(contact)
-                    }
-
-                    Log.i(TAG, "Phase 2: Added ${contactCard.displayName} to Contacts (ID: $contactId)")
-
-                    // Initialize key chain for progressive ephemeral key evolution
-                    serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        try {
-                            val ourMessagingOnion = torManager.getOnionAddress()
-                            val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
-                            if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
-                                Log.e(TAG, "Cannot initialize key chain: missing onion address (ours=$ourMessagingOnion, theirs=$theirMessagingOnion) for ${contact.displayName}")
-                            } else {
-                                // Check if we have a saved shared secret from Phase 2 encapsulation
-                                // This happens when Device B (accepter) receives Phase 2b from Device A (initiator)
-                                var precomputedSharedSecret: ByteArray? = null
-                                try {
-                                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-                                    val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-                                    val savedRequest = pendingRequestsSet.mapNotNull { requestJson ->
-                                        try {
-                                            com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                                        } catch (e: Exception) {
-                                            null
-                                        }
-                                    }.find { it.ipfsCid == contactCard.friendRequestOnion }
-
-                                    if (savedRequest != null && savedRequest.contactCardJson != null) {
-                                        val savedData = org.json.JSONObject(savedRequest.contactCardJson)
-                                        if (savedData.has("hybrid_shared_secret")) {
-                                            val sharedSecretBase64 = savedData.getString("hybrid_shared_secret")
-                                            precomputedSharedSecret = android.util.Base64.decode(sharedSecretBase64, android.util.Base64.NO_WRAP)
-                                            Log.i(TAG, "Found saved shared secret (${precomputedSharedSecret.size} bytes) from Phase 2 encapsulation")
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "Could not load saved shared secret: ${e.message}")
-                                }
-
-                                // Initialize key chain with appropriate parameters
-                                if (precomputedSharedSecret != null) {
-                                    // Device B (accepter) path: Use shared secret from Phase 2 encapsulation
-                                    com.securelegion.crypto.KeyChainManager.initializeKeyChain(
-                                        context = this@TorService,
-                                        contactId = contactId,
-                                        theirX25519PublicKey = contactCard.x25519PublicKey,
-                                        theirKyberPublicKey = contactCard.kyberPublicKey,
-                                        ourMessagingOnion = ourMessagingOnion,
-                                        theirMessagingOnion = theirMessagingOnion,
-                                        precomputedSharedSecret = precomputedSharedSecret
-                                    )
-                                    Log.i(TAG, "Key chain initialized for ${contact.displayName} (quantum - precomputed secret)")
-                                } else if (kyberCiphertext != null) {
-                                    // Device A (initiator) path: Decapsulate ciphertext from Phase 2
-                                    com.securelegion.crypto.KeyChainManager.initializeKeyChain(
-                                        context = this@TorService,
-                                        contactId = contactId,
-                                        theirX25519PublicKey = contactCard.x25519PublicKey,
-                                        theirKyberPublicKey = contactCard.kyberPublicKey,
-                                        ourMessagingOnion = ourMessagingOnion,
-                                        theirMessagingOnion = theirMessagingOnion,
-                                        kyberCiphertext = kyberCiphertext
-                                    )
-                                    Log.i(TAG, "Key chain initialized for ${contact.displayName} (quantum - decapsulated)")
-                                } else {
-                                    // PQ_MISSING_PARAMS: Have Kyber keys but no quantum parameters
-                                    // Fall back to X25519-only key chain instead of crashing
-                                    Log.e(TAG, "PQ_MISSING_PARAMS: Have Kyber keys but missing BOTH precomputedSharedSecret AND kyberCiphertext. " +
-                                        "Falling back to X25519-only key chain. Messages may fail to decrypt. " +
-                                        "Delete and re-add contact to fix.")
-                                    Log.e(TAG, "Contact has Kyber key: ${contactCard.kyberPublicKey.any { it != 0.toByte() }}")
-                                    com.securelegion.crypto.KeyChainManager.initializeKeyChain(
-                                        context = this@TorService,
-                                        contactId = contactId,
-                                        theirX25519PublicKey = contactCard.x25519PublicKey,
-                                        theirKyberPublicKey = null, // Force legacy mode
-                                        ourMessagingOnion = ourMessagingOnion,
-                                        theirMessagingOnion = theirMessagingOnion,
-                                    )
-                                    Log.w(TAG, "Key chain initialized for ${contact.displayName} (X25519-only fallback — PQ desync)")
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
-                        }
-                    }
-
-                    // Send Phase 2b confirmation back to them
-                    // This tells them we received their contact card and added them
-                    serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        try {
-                            Log.d(TAG, "Sending Phase 2b confirmation to ${contactCard.displayName}")
-
-                            // Build our contact card
-                            val torManager = TorManager.getInstance(this@TorService)
-                            val ownContactCard = com.securelegion.models.ContactCard(
-                                displayName = keyManager.getUsername() ?: "Unknown",
-                                solanaPublicKey = keyManager.getSolanaPublicKey(),
-                                x25519PublicKey = keyManager.getEncryptionPublicKey(),
-                                kyberPublicKey = keyManager.getKyberPublicKey(),
-                                solanaAddress = keyManager.getSolanaAddress(),
-                                friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
-                                messagingOnion = keyManager.getMessagingOnion() ?: "",
-                                voiceOnion = torManager.getVoiceOnionAddress() ?: "",
-                                contactPin = keyManager.getContactPin() ?: "",
-                                inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
-                                ipfsCid = keyManager.deriveContactListCID(),
-                                timestamp = System.currentTimeMillis() / 1000
-                            )
-
-                            // Encrypt with their X25519 public key
-                            val confirmationJson = ownContactCard.toJson()
-                            val encryptedConfirmation = RustBridge.encryptMessage(
-                                plaintext = confirmationJson,
-                                recipientX25519PublicKey = contactCard.x25519PublicKey
-                            )
-
-                            // Send via their friend-request.onion
-                            val success = RustBridge.sendFriendRequestAccepted(
-                                recipientOnion = contactCard.friendRequestOnion,
-                                encryptedAcceptance = encryptedConfirmation
-                            )
-
-                            if (success) {
-                                Log.i(TAG, "Sent Phase 2b confirmation to ${contactCard.displayName}")
-                            } else {
-                                Log.w(TAG, "Failed to send Phase 2b confirmation (they may be offline)")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error sending Phase 2b confirmation", e)
-                        }
-                    }
-
-                    // Remove any pending outgoing requests to this friend
-                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-                    val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-                    val updatedRequests = pendingRequestsV2.filter { requestJson ->
-                        try {
-                            val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                            // Keep requests that don't match this friend
-                            request.displayName != contactCard.displayName ||
-                            request.direction != com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING
-                        } catch (e: Exception) {
-                            true // Keep if can't parse
-                        }
-                    }.toMutableSet()
-                    prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
-
-                    // Broadcast to update AddFriendActivity UI
-                    val broadcastIntent = Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
-                    broadcastIntent.setPackage(packageName)
-                    sendBroadcast(broadcastIntent)
-                    Log.d(TAG, "Broadcast sent to refresh UI after friend added")
-
-                    // Show notification
-                    showFriendRequestAcceptedNotification(contactCard.displayName)
-                    return
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to add Phase 2 contact to database", e)
-                    return
-                }
-            }
-
-            // OLD v1.0 PATH: Parse as FriendRequest (backward compatibility)
-            val acceptance = try {
-                com.securelegion.models.FriendRequest.fromJson(decryptedJson)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to parse as either Phase 2 or v1.0 format", e)
-                return
-            }
-
-            Log.i(TAG, "v1.0: Acceptance from: ${acceptance.displayName}, CID: ${acceptance.ipfsCid}")
-
-            // Find matching pending outgoing request
-            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-            val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-            val matchingRequest = pendingRequestsV2.mapNotNull { requestJson ->
-                try {
-                    com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                } catch (e: Exception) {
-                    null
-                }
-            }.find {
-                it.ipfsCid == acceptance.ipfsCid &&
-                it.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING
-            }
-
-            if (matchingRequest == null) {
-                Log.w(TAG, "No matching pending outgoing request found for CID: ${acceptance.ipfsCid}")
-                return
-            }
-
-            Log.i(TAG, "Found matching pending request for: ${matchingRequest.displayName}")
-
-            // Parse the saved contact card and add to Contacts
-            if (matchingRequest.contactCardJson == null) {
-                Log.w(TAG, "No contact card data saved with pending request - cannot add to Contacts")
-                return
-            }
-
-            try {
-                val contactCard = com.securelegion.models.ContactCard.fromJson(matchingRequest.contactCardJson)
-                    ?: throw Exception("ContactCard missing invite_token (schema v4 required)")
-                Log.d(TAG, "Parsed contact card for: ${contactCard.displayName}")
-
-                // Add to Contacts database
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
-
-                val contact = com.securelegion.database.entities.Contact(
-                    displayName = contactCard.displayName,
-                    solanaAddress = contactCard.solanaAddress,
-                    publicKeyBase64 = android.util.Base64.encodeToString(
-                        contactCard.solanaPublicKey,
-                        android.util.Base64.NO_WRAP
-                    ),
-                    x25519PublicKeyBase64 = android.util.Base64.encodeToString(
-                        contactCard.x25519PublicKey,
-                        android.util.Base64.NO_WRAP
-                    ),
-                    kyberPublicKeyBase64 = android.util.Base64.encodeToString(
-                        contactCard.kyberPublicKey,
-                        android.util.Base64.NO_WRAP
-                    ),
-                    friendRequestOnion = contactCard.friendRequestOnion,
-                    messagingOnion = contactCard.messagingOnion,
-                    voiceOnion = contactCard.voiceOnion,
-                    ipfsCid = contactCard.ipfsCid,
-                    contactPin = contactCard.contactPin,
-                    addedTimestamp = System.currentTimeMillis(),
-                    lastContactTimestamp = System.currentTimeMillis(),
-                    trustLevel = com.securelegion.database.entities.Contact.TRUST_UNTRUSTED,
-                    friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
-                )
-
-                val contactId = kotlinx.coroutines.runBlocking {
-                    database.contactDao().insertContact(contact)
-                }
-
-                Log.i(TAG, "Added ${contactCard.displayName} to Contacts with CONFIRMED status (ID: $contactId)")
-
-                // NOTE: This is the OLD v1.0 friend request handler (DEPRECATED)
-                // Key chain initialization should happen in Phase 2 handler with quantum parameters
-                // Do NOT initialize here - will cause encryption mismatch!
-                Log.w(TAG, "OLD v1.0 friend request path - key chain NOT initialized (use NEW Phase 1/2/2b flow)")
-
-                // Remove from pending
-                val newPendingSet = pendingRequestsV2.toMutableSet()
-                newPendingSet.remove(matchingRequest.toJson())
-                prefs.edit().putStringSet("pending_requests_v2", newPendingSet).apply()
-
-                Log.i(TAG, "Friend request accepted! ${acceptance.displayName} is now your friend")
-                Log.i(TAG, "Removed from pending requests, added to Contacts")
-
-                // Broadcast to update AddFriendActivity UI
-                val broadcastIntent = Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
-                broadcastIntent.setPackage(packageName)
-                sendBroadcast(broadcastIntent)
-                Log.d(TAG, "Broadcast sent to refresh UI after friend added")
-
-                // Show notification
-                showFriendRequestAcceptedNotification(acceptance.displayName)
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to add contact to database", e)
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error handling friend request accepted from pending", e)
-        }
-    }
-
-    /**
-     * Handle incoming friend request accepted notification
-     * This means someone accepted our friend request - update their status to CONFIRMED
-     */
-    private fun handleFriendRequestAccepted(contact: com.securelegion.database.entities.Contact, senderX25519PublicKey: ByteArray, encryptedAcceptance: ByteArray) {
-        try {
-            Log.i(TAG, "")
-            Log.i(TAG, "FRIEND REQUEST ACCEPTED RECEIVED")
-            Log.i(TAG, "")
-            Log.d(TAG, "Contact: ${contact.displayName}, Current status: ${contact.friendshipStatus}")
-
-            // Reconstruct wire format for decryption: [Sender X25519 - 32 bytes][Encrypted Data]
-            val wireMessage = senderX25519PublicKey + encryptedAcceptance
-
-            Log.d(TAG, "Reconstructed wire message: ${wireMessage.size} bytes")
-
-            try {
-                // Decrypt acceptance notification (same as friend request decryption)
-                // decryptMessage will derive X25519 private key from Ed25519
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-                val ourEd25519PublicKey = keyManager.getSigningPublicKey()
-                val ourPrivateKey = keyManager.getSigningKeyBytes()
-
-                Log.d(TAG, "Attempting to decrypt acceptance notification...")
-                val decryptedJson = RustBridge.decryptMessage(
-                    wireMessage,
-                    ourEd25519PublicKey,
-                    ourPrivateKey
-                )
-
-                if (decryptedJson.isNullOrEmpty()) {
-                    Log.e(TAG, "Failed to decrypt friend request accepted notification - null result")
-                    return
-                }
-
-                Log.i(TAG, "Decrypted acceptance notification from ${contact.displayName}")
-                Log.d(TAG, "Decrypted JSON: $decryptedJson")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Exception during decryption", e)
-                return
-            }
-
-            // Update contact status to CONFIRMED
-            try {
-                Log.d(TAG, "Updating contact status to CONFIRMED...")
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
-
-                val updatedContact = contact.copy(
-                    friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
-                )
-
-                kotlinx.coroutines.runBlocking {
-                    Log.d(TAG, "Calling database updateContact...")
-                    database.contactDao().updateContact(updatedContact)
-                    Log.d(TAG, "Database update completed")
-                }
-
-                Log.i(TAG, "Updated ${contact.displayName} to CONFIRMED status - you are now mutual friends!")
-
-                // Remove the outgoing pending request matching this contact
-                try {
-                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-                    val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-                    val newSet = pendingRequestsSet.filter { json ->
-                        try {
-                            val req = com.securelegion.models.PendingFriendRequest.fromJson(json)
-                            // Keep requests that aren't for this contact
-                            req.displayName != contact.displayName
-                        } catch (e: Exception) { true }
-                    }.toMutableSet()
-                    prefs.edit().putStringSet("pending_requests_v2", newSet).apply()
-                    Log.d(TAG, "Removed outgoing pending request for ${contact.displayName}")
-                    // Broadcast status change so UI refreshes badge/list
-                    sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to remove pending request", e)
-                }
-
-                // Show notification
-                Log.d(TAG, "Showing acceptance notification...")
-                showFriendRequestAcceptedNotification(contact.displayName)
-                Log.d(TAG, "Notification shown successfully")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to update contact status to CONFIRMED", e)
-                Log.e(TAG, "Stack trace:", e)
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error handling friend request accepted", e)
-            Log.e(TAG, "Stack trace:", e)
-        }
-    }
-
-    /**
      * Show notification for new friend request
      */
     private fun showFriendRequestNotification(senderName: String) {
@@ -8006,55 +7968,6 @@ class TorService : Service() {
             Log.i(TAG, "Friend request notification shown for $senderName (ID: $friendRequestNotificationId)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show friend request notification", e)
-        }
-    }
-
-    /**
-     * Send friend request accepted response
-     * Used when someone resends a friend request and we already have them confirmed
-     */
-    private fun sendFriendRequestAcceptedResponse(recipientContactCard: com.securelegion.models.ContactCard) {
-        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                Log.d(TAG, "Sending FRIEND_REQUEST_ACCEPTED response to ${recipientContactCard.displayName}")
-
-                // Get own account information
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                val ownDisplayName = keyManager.getUsername()
-                    ?: throw Exception("Username not set")
-                val ownCid = keyManager.getIPFSCID()
-                    ?: throw Exception("IPFS CID not found")
-
-                // Create acceptance notification
-                val acceptance = com.securelegion.models.FriendRequest(
-                    displayName = ownDisplayName,
-                    ipfsCid = ownCid
-                )
-
-                // Serialize to JSON
-                val acceptanceJson = acceptance.toJson()
-
-                // Encrypt the acceptance using recipient's X25519 public key
-                val encryptedAcceptance = com.securelegion.crypto.RustBridge.encryptMessage(
-                    plaintext = acceptanceJson,
-                    recipientX25519PublicKey = recipientContactCard.x25519PublicKey
-                )
-
-                // Send via Tor
-                val success = com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
-                    recipientOnion = recipientContactCard.friendRequestOnion,
-                    encryptedAcceptance = encryptedAcceptance
-                )
-
-                if (success) {
-                    Log.i(TAG, "Sent FRIEND_REQUEST_ACCEPTED response to ${recipientContactCard.displayName}")
-                } else {
-                    Log.w(TAG, "Failed to send acceptance response (recipient may be offline)")
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending friend request accepted response", e)
-            }
         }
     }
 
@@ -8185,7 +8098,7 @@ class TorService : Service() {
                         Log.i(TAG, "Recovery blob detected on disk! Attempting import...")
 
                         val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                        val seedPhrase = keyManager.getMainWalletSeedForZcash()
+                        val seedPhrase = keyManager.getMainAccountMnemonic()
 
                         if (seedPhrase != null) {
                             val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@TorService)
@@ -9562,10 +9475,11 @@ class TorService : Service() {
                                 serviceScope.launch(Dispatchers.IO) {
                                     val hasCircuits = RustBridge.getCircuitEstablished() == 1
                                     val hsReady = isMessagingHsReady()
+                                    val outboundReady = try { RustBridge.isSocksProxyRunning() } catch (_: Exception) { false }
                                     val fullyReady = startupCompleted.get()
-                                    if (hasCircuits && hsReady && fullyReady && !gate.isOpenNow()) {
-                                        Log.i(TAG, "Circuits + listeners ready after offline bootstrap — opening gate")
-                                        listenersReady = true
+                                    if (hasCircuits && outboundReady && fullyReady && !gate.isOpenNow()) {
+                                        Log.i(TAG, "Outbound transport ready after offline bootstrap — opening gate (hsReady=$hsReady)")
+                                        listenersReady = hsReady
                                         clearTransportQuarantine("gate_open_offline_bootstrap")
                                         gate.open()
                                         kickPendingMessagesFlush("gate_open_offline_bootstrap")
@@ -9987,7 +9901,8 @@ class TorService : Service() {
 
                 listenersReady = false
                 isListenerRunning = false
-                gate.close("LISTENER_RESTART:$reason")
+                // Listener-only recovery affects inbound availability, not outbound Arti transport.
+                // Keep the outbound gate unchanged; startIncomingListener() updates listenersReady.
 
                 // These pollers hold receivers from the old Rust channels. Recreate them
                 // after the new listener installs fresh channels.
@@ -10259,12 +10174,11 @@ class TorService : Service() {
 
     /**
      * Format payment amount for display
-     * Converts lamports/zatoshis to human-readable format
+     * Converts the token's smallest units to a human-readable format
      */
     private fun formatPaymentAmount(amount: Long, token: String): String {
         val decimals = when (token.uppercase()) {
             "SOL" -> 9
-            "ZEC" -> 8
             "USDC", "USDT" -> 6
             else -> 9
         }
@@ -10309,14 +10223,6 @@ class TorService : Service() {
                             amountSOL = amountSOL,
                             keyManager = keyManager
                         )
-                    }
-                    "ZEC" -> {
-                        // Convert zatoshis to ZEC (1 ZEC = 100,000,000 zatoshis)
-                        val amountZEC = amount.toDouble() / 100_000_000.0
-                        val zcashService = ZcashService.getInstance(this@TorService)
-                        // Include NLx402 quote hash in memo for verification
-                        val memo = "NLx402:$quoteId"
-                        zcashService.sendTransaction(recipientAddress, amountZEC, memo)
                     }
                     else -> {
                         // TODO: Implement SPL token transfer
