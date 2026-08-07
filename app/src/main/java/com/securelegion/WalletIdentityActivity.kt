@@ -40,6 +40,7 @@ class WalletIdentityActivity : AppCompatActivity() {
         private var cachedSettingsHash: String = ""
         private var cachedDecryptCount: Int = 0
         private var cachedFriendRequestOnion: String? = null
+        private var cachedPinRotationTimestamp: Long = Long.MIN_VALUE
     }
 
     private lateinit var profilePhotoAvatar: com.securelegion.views.AvatarView
@@ -154,8 +155,14 @@ class WalletIdentityActivity : AppCompatActivity() {
                 val decryptCount = keyManager.getPinDecryptCount()
                 if (decryptCount != cachedDecryptCount) return@withContext true
 
-                // Check if expired
+                // A usage-triggered rotation resets decryptCount to zero. If the cached QR was
+                // also minted at count zero, comparing only the count incorrectly treats the old
+                // PIN/token QR as fresh. The rotation timestamp is the credential-pair epoch and
+                // must match before a cached invite can be reused.
                 val rotationTimestamp = keyManager.getPinRotationTimestamp()
+                if (rotationTimestamp != cachedPinRotationTimestamp) return@withContext true
+
+                // Check if expired
                 val expiryMs = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
                     rotationTimestamp + rotationIntervalMs
                 } else 0L
@@ -178,7 +185,8 @@ class WalletIdentityActivity : AppCompatActivity() {
         val expiryMs: Long,
         val settingsHash: String,
         val decryptCount: Int,
-        val friendRequestOnion: String?
+        val friendRequestOnion: String?,
+        val pinRotationTimestamp: Long
     )
 
     private fun generateQrCode() {
@@ -241,7 +249,14 @@ class WalletIdentityActivity : AppCompatActivity() {
                 )
 
                 val settingsHash = "$rotationIntervalMs:$maxUses"
-                QrGenResult(bitmap, expiryMs, settingsHash, decryptCount, friendRequestOnion)
+                QrGenResult(
+                    bitmap = bitmap,
+                    expiryMs = expiryMs,
+                    settingsHash = settingsHash,
+                    decryptCount = decryptCount,
+                    friendRequestOnion = friendRequestOnion,
+                    pinRotationTimestamp = rotationTimestamp
+                )
             }
 
             if (result != null) {
@@ -251,6 +266,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                 cachedSettingsHash = result.settingsHash
                 cachedDecryptCount = result.decryptCount
                 cachedFriendRequestOnion = result.friendRequestOnion
+                cachedPinRotationTimestamp = result.pinRotationTimestamp
 
                 currentQrBitmap = result.bitmap
                 currentFriendRequestOnion = result.friendRequestOnion

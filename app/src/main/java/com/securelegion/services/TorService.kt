@@ -2366,7 +2366,10 @@ class TorService : Service() {
             "com.securelegion.action.REPORT_SOCKS_FAILURE" -> handleSocksFailure()
             ACTION_RESET_TOR_STATE -> {
                 Log.w(TAG, "ACTION_RESET_TOR_STATE: full Arti state reset requested")
-                serviceScope.launch { performGuardStateReset(reason = "manual") }
+                // Lifecycle recovery must not queue behind protocolDispatcher. A blocked native
+                // send can occupy that single-thread dispatcher for long enough to make the
+                // manual reset appear to do nothing precisely when the user needs it most.
+                serviceScope.launch(Dispatchers.IO) { performGuardStateReset(reason = "manual") }
             }
             ACTION_RESTART_LISTENERS -> {
                 Log.i(TAG, "ACTION_RESTART_LISTENERS: re-creating Tor listeners")
@@ -2658,25 +2661,21 @@ class TorService : Service() {
         torLifecycleMutex.withLock {
         try {
             beginTransportQuarantine("guard_reset:$reason")
-            Log.w(TAG, "Guard reset ($reason): marking Tor/listener lifecycle stale")
-            setState(TorState.STOPPING, "guard reset:$reason")
-            listenersReady = false
-            isListenerRunning = false
-            startupCompleted.set(false)
-            startTorRequested.set(false)
-            bootstrapPercent = 0
-            bootstrapOperationalSinceMs = 0L
-            lastBootstrapProgressMs = SystemClock.elapsedRealtime()
-            consecutiveHealthyPolls = 0
+            Log.w(TAG, "Guard reset ($reason): step 1/5 full transport stop")
+            // Use the same cleanup pipeline as the network OFF toggle: cancel retry/health
+            // jobs, stop bootstrap and onion listeners, clear poller jobs, and record the
+            // shutdown cooldown. The previous reset jumped straight to shutdownArti(), leaving
+            // Kotlin jobs and listener state attached to the discarded native client.
+            stopTorLocked(force = true)
 
-            Log.w(TAG, "Guard reset ($reason): step 1/4 shutdownArti")
+            Log.w(TAG, "Guard reset ($reason): step 2/5 shutdownArti")
             withContext(Dispatchers.IO) { RustBridge.shutdownArti() }
-            Log.w(TAG, "Guard reset ($reason): step 2/4 resetArtiGuardState")
+            Log.w(TAG, "Guard reset ($reason): step 3/5 resetArtiGuardState")
             val summary = withContext(Dispatchers.IO) { RustBridge.resetArtiGuardState() }
             Log.w(TAG, "Guard reset ($reason): summary=$summary")
-            Log.w(TAG, "Guard reset ($reason): step 3/4 reset TorManager init state")
+            Log.w(TAG, "Guard reset ($reason): step 4/5 reset TorManager init state")
             torManager.resetInitializationState()
-            Log.w(TAG, "Guard reset ($reason): step 4/4 startTor (initialize fresh + re-create listeners)")
+            Log.w(TAG, "Guard reset ($reason): step 5/5 startTor (initialize fresh + re-create listeners)")
             setState(TorState.OFF, "guard reset:$reason ready to restart")
             startTorLocked()
             Log.w(TAG, "Guard reset ($reason): completed")
@@ -2693,8 +2692,8 @@ class TorService : Service() {
         stopTorLocked()
     }
 
-    private suspend fun stopTorLocked() {
-        if (torState == TorState.OFF || torState == TorState.STOPPING) {
+    private suspend fun stopTorLocked(force: Boolean = false) {
+        if (!force && (torState == TorState.OFF || torState == TorState.STOPPING)) {
             Log.d(TAG, "stopTor(): Already stopped/stopping")
             return
         }
@@ -3963,6 +3962,54 @@ class TorService : Service() {
     }
 
     /**
+     * Resolve eligible UI snapshots to their Room-authoritative Phase 1 destinations. The Room
+     * envelope retains the exact invite token from the scanned QR across retries and restarts.
+     */
+    private suspend fun loadPhase2PendingCandidates(): List<
+        Phase2PendingCandidate<com.securelegion.models.PendingFriendRequest>
+    > = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val snapshots = loadPendingFriendRequestSnapshots()
+        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+        val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+            this@TorService,
+            keyManager.getDatabasePassphrase()
+        )
+        val dao = database.pendingFriendRequestDao()
+        val retryPrefs = getSharedPreferences(FRIEND_RETRY_PREFS, MODE_PRIVATE)
+
+        snapshots.mapNotNull { request ->
+            val json = pendingContactJsonObject(request)
+            if (!isOutgoingPhase1AwaitingResponse(request, json)) return@mapNotNull null
+
+            val rowId = retryPrefs.getLong(request.id, -1L)
+            if (rowId <= 0L) {
+                Log.w(TAG, "Ignoring Phase 2 candidate without a Room mapping: ${request.id}")
+                return@mapNotNull null
+            }
+            val row = dao.getById(rowId)
+            if (row == null ||
+                row.phase != com.securelegion.database.entities.PendingFriendRequest.PHASE_1_SENT ||
+                row.direction != com.securelegion.database.entities.PendingFriendRequest.DIRECTION_OUTGOING ||
+                row.isCompleted || row.isFailed
+            ) {
+                Log.w(TAG, "Ignoring Phase 2 candidate with ineligible Room row: $rowId")
+                return@mapNotNull null
+            }
+            val envelope = row.phase1PayloadJson?.let { FriendRequestEnvelope.parse(it) }
+            if (envelope == null) {
+                Log.w(TAG, "Ignoring Phase 2 candidate with malformed Room envelope: $rowId")
+                return@mapNotNull null
+            }
+
+            Phase2PendingCandidate(
+                value = request,
+                recipientOnion = row.recipientOnion,
+                recipientInviteToken = envelope.inviteToken
+            )
+        }
+    }
+
+    /**
      * Handle Phase 1 friend request (PIN-encrypted)
      * Payload: {"username": "...", "friendRequestOnion": "...", "x25519PublicKey": "..."}
      */
@@ -4374,61 +4421,57 @@ class TorService : Service() {
         try {
             Log.i(TAG, "Processing Phase 2 friend request (X25519-encrypted)")
 
-            val candidates = loadPendingFriendRequestSnapshots().mapNotNull { request ->
-                val json = pendingContactJsonObject(request)
-                if (!isOutgoingPhase1AwaitingResponse(request, json) || json == null) return@mapNotNull null
-                val senderKey = decodePendingX25519(json) ?: return@mapNotNull null
-                Phase2PendingCandidate(request, senderKey)
+            val embeddedSenderKey = phase2EmbeddedSenderKey(encryptedPayload)
+            if (embeddedSenderKey == null) {
+                Log.e(
+                    TAG,
+                    "Malformed Phase 2 encrypted payload (${encryptedPayload.size} bytes; " +
+                        "minimum is $PHASE2_MIN_ENCRYPTED_PAYLOAD_BYTES)"
+                )
+                return false
             }
 
-            val selection = selectExactPhase2Candidate(encryptedPayload, candidates)
-            val matched = when (selection) {
-                is Phase2CandidateSelection.Matched -> selection
-                Phase2CandidateSelection.MalformedPayload -> {
-                    Log.e(
-                        TAG,
-                        "Malformed Phase 2 encrypted payload (${encryptedPayload.size} bytes; " +
-                            "minimum is $PHASE2_MIN_ENCRYPTED_PAYLOAD_BYTES)"
-                    )
-                    return false
-                }
-                Phase2CandidateSelection.MalformedCandidate -> {
-                    Log.e(TAG, "Malformed X25519 key in eligible Phase 2 pending state")
-                    return false
-                }
-                Phase2CandidateSelection.NoMatch -> {
-                    Log.e(TAG, "Phase 2 embedded sender key did not match an eligible outgoing request")
-                    return false
-                }
-                Phase2CandidateSelection.AmbiguousMatch -> {
-                    Log.e(TAG, "Phase 2 embedded sender key matched multiple eligible outgoing requests")
-                    return false
-                }
-            }
-            val matchedRequest = matched.value
-            val expectedSenderKey = matched.senderX25519PublicKey
-            Log.d(TAG, "Matched Phase 2 response to pending request: ${matchedRequest.displayName}")
-
-            // decryptMessage derives ECDH from the embedded key; decrypt only after exact
-            // correlation so an unrelated candidate can never win because of iteration order.
+            // Native decryptMessage authenticates the AEAD using the responder key embedded in
+            // the frame. Its historical senderPublicKey/privateKey parameters are ignored.
             val decryptedJson = RustBridge.decryptMessage(
                 encryptedPayload,
-                expectedSenderKey,
-                ByteArray(32) // privateKey parameter is deprecated/unused
+                embeddedSenderKey,
+                ByteArray(32)
             )
             if (decryptedJson.isNullOrEmpty()) {
                 Log.e(TAG, "Failed to decrypt Phase 2 ContactCard")
                 return false
             }
 
-            Log.i(TAG, "Phase 2 decrypted successfully")
-            val authenticatedSenderKey = expectedSenderKey
-            val authenticated = parseAuthenticatedPhase2(
-                decryptedJson,
-                authenticatedSenderKey
-            ) ?: return false
+            val authenticated = parseAuthenticatedPhase2(decryptedJson, embeddedSenderKey)
+                ?: return false
             val contactCard = authenticated.contactCard
             val kyberCiphertext = authenticated.kyberCiphertext
+
+            val selection = selectExactPhase2Candidate(
+                authenticatedFriendRequestOnion = contactCard.friendRequestOnion,
+                authenticatedInviteToken = contactCard.inviteToken,
+                eligibleCandidates = loadPhase2PendingCandidates()
+            )
+            val matched = when (selection) {
+                is Phase2CandidateSelection.Matched -> selection
+                Phase2CandidateSelection.MalformedPayload -> {
+                    Log.e(TAG, "Authenticated Phase 2 ContactCard had a malformed friend-request onion")
+                    return false
+                }
+                Phase2CandidateSelection.NoMatch -> {
+                    Log.e(TAG, "Authenticated Phase 2 identity did not match an eligible outgoing request")
+                    return false
+                }
+                Phase2CandidateSelection.AmbiguousMatch -> {
+                    Log.e(TAG, "Authenticated Phase 2 identity matched multiple eligible outgoing requests")
+                    return false
+                }
+            }
+            val matchedRequest = matched.value
+            Log.d(TAG, "Matched Phase 2 response to pending request: ${matchedRequest.displayName}")
+
+            Log.i(TAG, "Phase 2 decrypted successfully")
 
             Log.i(TAG, "Friend request accepted by: ${contactCard.displayName}")
 

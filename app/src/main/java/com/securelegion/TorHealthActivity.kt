@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -13,11 +14,16 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.RustBridge
 import com.securelegion.services.TorService
 import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
@@ -81,16 +87,34 @@ class TorHealthActivity : AppCompatActivity() {
         // (Arti: isolated_client swap; C Tor: SIGNAL NEWNYM).
         findViewById<View>(R.id.newCircuitButton).setOnClickListener { v ->
             v.isEnabled = false
-            Thread {
-                val ok = try { RustBridge.sendNewnym() } catch (_: Throwable) { false }
-                runOnUiThread {
-                    ThemedToast.show(
-                        this,
-                        if (ok) "New circuit requested" else "Unable to rotate circuits right now"
-                    )
-                    v.isEnabled = true
+            lifecycleScope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    try { RustBridge.sendNewnym() } catch (_: Throwable) { false }
                 }
-            }.start()
+                ThemedToast.show(
+                    this@TorHealthActivity,
+                    if (ok) "New circuit requested; retrying queued messages" else "Unable to rotate circuits right now"
+                )
+                v.isEnabled = true
+
+                if (ok) {
+                    // Failure streaks describe the old circuit graph. A manual rotation should
+                    // not leave those process-local gates suppressing the first fresh attempt.
+                    com.securelegion.services.MessageService.clearAllRetryableFailureState()
+                    com.securelegion.network.ArtiPeerHealthGate.resetAll()
+
+                    withContext(Dispatchers.IO) {
+                        delay(1_500L)
+                        val result = com.securelegion.services.MessageService(applicationContext)
+                            .flushNow(aggressive = true, reason = "manual-new-circuit")
+                        if (result.isSuccess) {
+                            Log.i(TAG, "New Circuit queued-message retry sent=${result.getOrDefault(0)}")
+                        } else {
+                            Log.w(TAG, "New Circuit queued-message retry failed: ${result.exceptionOrNull()?.message}")
+                        }
+                    }
+                }
+            }
         }
 
         // Reset Tor State button — escalation above NEWNYM. Wipes Arti's

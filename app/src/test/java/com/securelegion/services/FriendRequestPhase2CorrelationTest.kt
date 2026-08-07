@@ -1,98 +1,106 @@
 package com.securelegion.services
 
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
 
 class FriendRequestPhase2CorrelationTest {
     @Test
-    fun twoPendingKeys_matchingSecondCandidate_isSelectedInsteadOfListOrder() {
-        val wrongKey = key(0x11)
-        val senderKey = key(0x22)
+    fun androidPhase2_responderKeyDiffersFromInitiator_matchesQrDestination() {
         val result = selectExactPhase2Candidate(
-            encryptedPayload = wirePayload(senderKey),
+            authenticatedFriendRequestOnion = PEER_ONION,
+            authenticatedInviteToken = PEER_TOKEN,
             eligibleCandidates = listOf(
-                Phase2PendingCandidate("wrong-first", wrongKey),
-                Phase2PendingCandidate("correct-second", senderKey)
+                candidate("other", OTHER_ONION, OTHER_TOKEN),
+                candidate("peer", PEER_ONION, PEER_TOKEN)
             )
         )
 
         val match = result as Phase2CandidateSelection.Matched
-        assertEquals("correct-second", match.value)
-        assertArrayEquals(senderKey, match.senderX25519PublicKey)
+        assertEquals("peer", match.value)
     }
 
     @Test
-    fun candidateOrder_doesNotChangeExactSelection() {
-        val senderKey = key(0x33)
-        val otherKey = key(0x44)
-        val payload = wirePayload(senderKey)
-
-        listOf(
-            listOf(
-                Phase2PendingCandidate("sender", senderKey),
-                Phase2PendingCandidate("other", otherKey)
-            ),
-            listOf(
-                Phase2PendingCandidate("other", otherKey),
-                Phase2PendingCandidate("sender", senderKey)
-            )
-        ).forEach { candidates ->
-            val match = selectExactPhase2Candidate(payload, candidates)
-                as Phase2CandidateSelection.Matched
-            assertEquals("sender", match.value)
-        }
-    }
-
-    @Test
-    fun payloadShorterThanNativeWireMinimum_isRejectedAsMalformed() {
-        val payload = ByteArray(PHASE2_MIN_ENCRYPTED_PAYLOAD_BYTES - 1)
-
+    fun iosCompatibleCard_sameExistingOnionAndTokenFormat_matches() {
         val result = selectExactPhase2Candidate(
-            payload,
-            listOf(Phase2PendingCandidate("sender", key(0x55)))
+            authenticatedFriendRequestOnion = PEER_ONION.removeSuffix(".onion").uppercase(),
+            authenticatedInviteToken = PEER_TOKEN,
+            eligibleCandidates = listOf(candidate("ios-peer", PEER_ONION, PEER_TOKEN))
         )
 
-        assertSame(Phase2CandidateSelection.MalformedPayload, result)
+        val match = result as Phase2CandidateSelection.Matched
+        assertEquals("ios-peer", match.value)
     }
 
     @Test
-    fun malformedPendingKey_isRejectedBeforeMatching() {
+    fun authenticatedCardWithWrongInviteToken_isRejected() {
         val result = selectExactPhase2Candidate(
-            wirePayload(key(0x66)),
-            listOf(Phase2PendingCandidate("sender", ByteArray(31)))
-        )
-
-        assertSame(Phase2CandidateSelection.MalformedCandidate, result)
-    }
-
-    @Test
-    fun embeddedKeyWithNoEligibleCandidate_failsClosed() {
-        val result = selectExactPhase2Candidate(
-            wirePayload(key(0x77)),
-            listOf(Phase2PendingCandidate("other", key(0x78)))
+            authenticatedFriendRequestOnion = PEER_ONION,
+            authenticatedInviteToken = OTHER_TOKEN,
+            eligibleCandidates = listOf(candidate("peer", PEER_ONION, PEER_TOKEN))
         )
 
         assertSame(Phase2CandidateSelection.NoMatch, result)
     }
 
     @Test
-    fun duplicateEligibleCandidatesForEmbeddedKey_failClosedAsAmbiguous() {
-        val senderKey = key(0x7f)
+    fun legacyZeroToken_uniqueOnionMatch_isAcceptedWithoutDowngradingModernRows() {
         val result = selectExactPhase2Candidate(
-            wirePayload(senderKey),
-            listOf(
-                Phase2PendingCandidate("first", senderKey),
-                Phase2PendingCandidate("second", senderKey.copyOf())
+            authenticatedFriendRequestOnion = PEER_ONION,
+            authenticatedInviteToken = PEER_TOKEN,
+            eligibleCandidates = listOf(candidate("legacy", PEER_ONION, "0".repeat(32)))
+        )
+
+        val match = result as Phase2CandidateSelection.Matched
+        assertEquals("legacy", match.value)
+    }
+
+    @Test
+    fun modernTokenMismatch_doesNotDowngradeToLegacyCandidate() {
+        val result = selectExactPhase2Candidate(
+            authenticatedFriendRequestOnion = PEER_ONION,
+            authenticatedInviteToken = OTHER_TOKEN,
+            eligibleCandidates = listOf(
+                candidate("modern", PEER_ONION, PEER_TOKEN),
+                candidate("legacy", PEER_ONION, "0".repeat(32))
+            )
+        )
+
+        assertSame(Phase2CandidateSelection.NoMatch, result)
+    }
+
+    @Test
+    fun duplicateEligibleCandidatesForIdentity_failClosedAsAmbiguous() {
+        val result = selectExactPhase2Candidate(
+            authenticatedFriendRequestOnion = PEER_ONION,
+            authenticatedInviteToken = PEER_TOKEN,
+            eligibleCandidates = listOf(
+                candidate("first", PEER_ONION, PEER_TOKEN),
+                candidate("second", PEER_ONION, PEER_TOKEN)
             )
         )
 
         assertSame(Phase2CandidateSelection.AmbiguousMatch, result)
     }
 
-    private fun wirePayload(senderKey: ByteArray): ByteArray =
-        senderKey + ByteArray(PHASE2_MIN_ENCRYPTED_PAYLOAD_BYTES - senderKey.size) { 0x5a }
+    @Test
+    fun malformedAuthenticatedOnion_isRejected() {
+        val result = selectExactPhase2Candidate(
+            authenticatedFriendRequestOnion = "   ",
+            authenticatedInviteToken = PEER_TOKEN,
+            eligibleCandidates = listOf(candidate("peer", PEER_ONION, PEER_TOKEN))
+        )
 
-    private fun key(value: Int): ByteArray = ByteArray(32) { value.toByte() }
+        assertSame(Phase2CandidateSelection.MalformedPayload, result)
+    }
+
+    private fun candidate(value: String, onion: String, token: String?) =
+        Phase2PendingCandidate(value, onion, token)
+
+    private companion object {
+        const val PEER_ONION = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion"
+        const val OTHER_ONION = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion"
+        const val PEER_TOKEN = "0123456789abcdef0123456789abcdef"
+        const val OTHER_TOKEN = "fedcba9876543210fedcba9876543210"
+    }
 }
