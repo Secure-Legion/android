@@ -2,6 +2,8 @@
 pub mod android;
 #[cfg(target_os = "ios")]
 pub mod ios;
+#[cfg(target_os = "ios")]
+pub mod device_authorization;
 #[cfg(target_os = "windows")]
 pub mod desktop;
 #[cfg(target_os = "android")]
@@ -13,6 +15,8 @@ pub mod crdt;
 pub use android::*;
 #[cfg(target_os = "ios")]
 pub use ios::*;
+#[cfg(target_os = "ios")]
+pub use device_authorization::*;
 #[cfg(target_os = "windows")]
 pub use desktop::*;
 #[cfg(target_os = "android")]

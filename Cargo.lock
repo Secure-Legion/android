@@ -3485,6 +3485,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "secure-device-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64 0.21.7",
+ "data-encoding",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3 0.10.9",
+ "thiserror 1.0.69",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "securelegion"
 version = "1.0.0"
 dependencies = [
@@ -3521,6 +3536,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "reqwest",
+ "secure-device-protocol",
  "securelegion-crypto",
  "serde",
  "serde-big-array",
