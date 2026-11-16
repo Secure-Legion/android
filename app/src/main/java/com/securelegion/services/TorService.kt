@@ -6525,6 +6525,14 @@ class TorService : Service() {
 
     private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray, incomingConnectionId: Long = -1L) {
         try {
+            // Device enrollment and own-device sync have separate authentication and dispatch.
+            // Until those handlers are enabled, reject the namespace before legacy parsing.
+            if (encryptedMessageWire.isNotEmpty() &&
+                OwnDeviceSyncPolicy.isReservedNetworkType(encryptedMessageWire[0].toInt() and 0xFF)
+            ) {
+                Log.w(TAG, "Reserved device protocol frame rejected by legacy message path")
+                return
+            }
             // Wire format: [Type byte][Sender X25519 - 32 bytes][Encrypted Message]
             // Type byte is kept by Rust listener (not stripped) to prevent offset mismatch
 

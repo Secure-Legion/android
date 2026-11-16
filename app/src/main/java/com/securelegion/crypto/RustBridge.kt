@@ -62,6 +62,9 @@ object RustBridge {
 
     // ==================== CRYPTOGRAPHY ====================
 
+    /** Bounded portable device authorization API. The account seed is required only for issuance. */
+    external fun deviceAuthorization(request: ByteArray, accountSeed: ByteArray?): ByteArray
+
     /**
      * Encrypt a message using XChaCha20-Poly1305 with X25519 ECDH
      * Uses proper ECDH to derive shared secret for encryption
