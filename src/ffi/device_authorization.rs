@@ -1,4 +1,4 @@
-//! iOS binding for the portable independent-device authorization protocol.
+//! Platform bindings for the portable independent-device authorization protocol.
 //!
 //! Trust state stays in the encrypted application database. This entry point
 //! only validates or issues bounded public protocol objects against an explicit
@@ -79,6 +79,48 @@ pub unsafe extern "C" fn securelegion_device_authorization(
         0
     }))
     .unwrap_or(-1)
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deviceAuthorization(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    request: jni::objects::JByteArray,
+    account_seed: jni::objects::JByteArray,
+) -> jni::sys::jbyteArray {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let request = env.convert_byte_array(request).map_err(|_| "invalid request")?;
+        if request.is_empty() || request.len() > MAX_API_LEN {
+            return Err("invalid request");
+        }
+        let seed = if account_seed.is_null() {
+            None
+        } else {
+            let bytes = Zeroizing::new(
+                env.convert_byte_array(account_seed).map_err(|_| "invalid seed")?,
+            );
+            let array: [u8; 32] = bytes.as_slice().try_into().map_err(|_| "invalid seed")?;
+            Some(Zeroizing::new(array))
+        };
+        let output = execute(&request, seed.as_deref()).map_err(|_| "authorization rejected")?;
+        if output.len() > MAX_API_LEN {
+            return Err("output exceeds limit");
+        }
+        let bytes = env.byte_array_from_slice(&output).map_err(|_| "output allocation failed")?;
+        Ok(bytes.into_raw())
+    }));
+    match result {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(message)) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", message);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", "authorization failed");
+            ptr::null_mut()
+        }
+    }
 }
 
 #[cfg(test)]
