@@ -731,7 +731,9 @@ class ChatActivity : BaseActivity() {
 
             // PHASE 1.1/1.2: Stable IDs now working, re-enable animations
             // DiffUtil with stable messageIds = smooth item transitions
-            itemAnimator = androidx.recyclerview.widget.DefaultItemAnimator()
+            itemAnimator = androidx.recyclerview.widget.DefaultItemAnimator().apply {
+                supportsChangeAnimations = false
+            }
 
             // Add scroll listener to hide revealed timestamps when scrolling
             addOnScrollListener(object : RecyclerView.OnScrollListener() {

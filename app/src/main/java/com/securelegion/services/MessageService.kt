@@ -640,14 +640,18 @@ class MessageService(private val context: Context) {
             withContactImmediateDeliveryLock(savedMessage.contactId) {
                 if (isFastMode) {
                     Log.i(TAG, "[FAST_MODE] Sending directly: ${savedMessage.messageId}")
-                    val fastSucceeded = applyFastSendResult(
-                        database = database,
-                        savedMessage = savedMessage,
-                        contact = contact,
-                        encryptedBytes = encryptedBytes,
-                        wireType = 0x03.toByte(),
-                        label = "FAST_MODE text"
-                    )
+                    if (!blobSendInFlight.add(savedMessage.id))
+                        return@withContactImmediateDeliveryLock
+                    val fastSucceeded = try {
+                        applyFastSendResult(
+                            database = database,
+                            savedMessage = savedMessage,
+                            contact = contact,
+                            encryptedBytes = encryptedBytes,
+                            wireType = 0x03.toByte(),
+                            label = "FAST_MODE text"
+                        )
+                    } finally { blobSendInFlight.remove(savedMessage.id) }
                     if (!fastSucceeded) {
                         sendFallbackPingAfterFastFailure(savedMessage, "FAST_MODE text")
                     }
@@ -4779,6 +4783,7 @@ class MessageService(private val context: Context) {
             var resentPings = 0
 
             for (msg in awaiting) {
+                if (blobSendInFlight.contains(msg.id)) continue
                 val pingId = msg.pingId ?: continue
                 if (RustBridge.pollForPong(pingId)) {
                     // Guard: re-check status — instant mode may have already set STATUS_SENT
@@ -4816,6 +4821,7 @@ class MessageService(private val context: Context) {
             }.take(10)
 
             for (msg in pendingPingCandidates) {
+                if (blobSendInFlight.contains(msg.id)) continue
                 val fresh = database.messageDao().getMessageById(msg.id) ?: continue
                 if (fresh.messageDelivered || fresh.status == Message.STATUS_SENT || fresh.status == Message.STATUS_DELIVERED) {
                     continue

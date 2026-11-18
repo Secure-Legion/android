@@ -44,8 +44,9 @@ import java.util.Locale
  * DiffUtil will efficiently compute changes between lists of these items
  */
 sealed class ChatListItem {
-    data class MessageItem(val message: Message, val reactionSummary: String? = null) : ChatListItem() {
-        override fun getStableId() = "msg_${message.messageId}".hashCode().toLong() and 0x7FFFFFFFL
+    data class MessageItem(val message: Message, val reactionSummary: String? = null,
+                           val stableKey: String = message.messageId) : ChatListItem() {
+        override fun getStableId() = "msg_$stableKey".hashCode().toLong() and 0x7FFFFFFFL
     }
 
     data class PendingPingItem(
@@ -66,7 +67,7 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
         // Items are the same if they have the same stable ID (message ID or ping ID)
         return when {
             oldItem is ChatListItem.MessageItem && newItem is ChatListItem.MessageItem ->
-                oldItem.message.messageId == newItem.message.messageId
+                oldItem.stableKey == newItem.stableKey
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
                 oldItem.pingInbox.pingId == newItem.pingInbox.pingId
             else -> false
@@ -101,6 +102,7 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
         // Return payload to enable partial updates (only update changed fields)
         return when {
             oldItem is ChatListItem.MessageItem && newItem is ChatListItem.MessageItem -> {
+                if (oldItem.message.messageId != newItem.message.messageId) return null
                 if (oldItem.message.status != newItem.message.status ||
                     oldItem.message.pingDelivered != newItem.message.pingDelivered ||
                     oldItem.message.messageDelivered != newItem.message.messageDelivered) {
@@ -176,7 +178,7 @@ class MessageAdapter(
 
         // Determine quoted text: inline wire text > local lookup > fallback
         val displayText = inlineText
-            ?: originalMsg?.let { resolveContent(it.message.encryptedContent) }?.take(100)
+            ?: originalMsg?.let { resolveMessageContent(it.message) }?.take(100)
             ?: ""
 
         // Determine if the quoted message is from "me" (current user)
@@ -248,6 +250,10 @@ class MessageAdapter(
         }
     }
 
+    private fun resolveMessageContent(message: Message): String =
+        if (message.messageId.startsWith("pending_ui_")) message.encryptedContent
+        else resolveContent(message.encryptedContent)
+
     companion object {
         private const val TAG = "MessageAdapter"
         private const val VIEW_TYPE_SENT = 1
@@ -287,6 +293,7 @@ class MessageAdapter(
         }
     }
     private var reactionSummaries: Map<String, String> = emptyMap()
+    private val localStableKeys = HashMap<String, String>()
 
     fun setReactionSummaries(summaries: Map<String, String>) {
         reactionSummaries = summaries
@@ -750,7 +757,7 @@ class MessageAdapter(
     }
 
     private fun bindSentMessage(holder: SentMessageViewHolder, message: Message, position: Int) {
-        holder.messageText.text = resolveContent(message.encryptedContent)
+        holder.messageText.text = resolveMessageContent(message)
         holder.messageStatus.setText(getStatusText(holder.itemView.context, message))
         holder.pinIndicator.visibility = if (message.isPinned) View.VISIBLE else View.GONE
         val reaction = reactionSummaries[message.messageId]
@@ -821,7 +828,7 @@ class MessageAdapter(
     }
 
     private fun bindReceivedMessage(holder: ReceivedMessageViewHolder, message: Message, position: Int) {
-        holder.messageText.text = resolveContent(message.encryptedContent)
+        holder.messageText.text = resolveMessageContent(message)
         holder.pinIndicator.visibility = if (message.isPinned) View.VISIBLE else View.GONE
         val reaction = reactionSummaries[message.messageId]
         holder.reactionSummary.text = reaction ?: ""
@@ -2001,7 +2008,11 @@ class MessageAdapter(
         val combinedList = mutableListOf<ChatListItem>()
 
         // Add all messages (include reaction summary so DiffUtil detects reaction changes)
-        combinedList.addAll(newMessages.map { ChatListItem.MessageItem(it, reactionSummaries[it.messageId]) })
+        combinedList.addAll(newMessages.map {
+            ChatListItem.MessageItem(it, reactionSummaries[it.messageId],
+                localStableKeys[it.messageId] ?: it.messageId)
+        })
+        localStableKeys.keys.retainAll(newMessages.mapTo(HashSet()) { it.messageId })
 
         // Add pending pings (ChatActivity pre-filters: only DOWNLOADING or PAUSED items)
         combinedList.addAll(newPendingPings.map { pingInbox ->
@@ -2021,6 +2032,12 @@ class MessageAdapter(
     /** Keep the sent bubble visible while the full chat query is still running. */
     fun upsertLocalMessage(message: Message, replaceMessageId: String? = null,
                            onCommitted: (() -> Unit)? = null) {
+        val stableKey = replaceMessageId?.let { replaced ->
+            (currentList.firstOrNull {
+                it is ChatListItem.MessageItem && it.message.messageId == replaced
+            } as? ChatListItem.MessageItem)?.stableKey ?: replaced
+        } ?: localStableKeys[message.messageId] ?: message.messageId
+        if (replaceMessageId != null) localStableKeys[message.messageId] = stableKey
         val updated = currentList.filterNot {
             it is ChatListItem.MessageItem &&
                 (it.message.messageId == message.messageId ||
@@ -2028,7 +2045,7 @@ class MessageAdapter(
         }.toMutableList()
         val firstPing = updated.indexOfFirst { it is ChatListItem.PendingPingItem }
         updated.add(if (firstPing < 0) updated.size else firstPing,
-            ChatListItem.MessageItem(message, reactionSummaries[message.messageId]))
+            ChatListItem.MessageItem(message, reactionSummaries[message.messageId], stableKey))
         submitList(updated) {
             scheduleDeliveryStatusRefresh()
             onCommitted?.invoke()
@@ -2125,7 +2142,7 @@ class MessageAdapter(
                 R.id.action_copy -> {
                     // Copy message text
                     val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("Message", resolveContent(message.encryptedContent))
+                    val clip = ClipData.newPlainText("Message", resolveMessageContent(message))
                     clipboard.setPrimaryClip(clip)
                     ThemedToast.show(view.context, "Message copied")
                     true
