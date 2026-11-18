@@ -65,6 +65,11 @@ object RustBridge {
     /** Bounded portable device authorization API. The account seed is required only for issuance. */
     external fun deviceAuthorization(request: ByteArray, accountSeed: ByteArray?): ByteArray
 
+    /** Opaque memory-only Noise engine. Host code must recheck roster authority on every use. */
+    external fun syncFsNew(account: ByteArray, deviceEdSeed: ByteArray, deviceXSecret: ByteArray): Long
+    external fun syncFsCall(handle: Long, request: ByteArray): ByteArray
+    external fun syncFsFree(handle: Long)
+
     /**
      * Encrypt a message using XChaCha20-Poly1305 with X25519 ECDH
      * Uses proper ECDH to derive shared secret for encryption
