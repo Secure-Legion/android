@@ -501,20 +501,19 @@ class MainActivity : BaseActivity() {
                                 android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
                             ) == true
 
-                            val lastProofMs = try { com.securelegion.crypto.RustBridge.getLastTorProofMs() } catch (_: Exception) { 0L }
-                            val lastNetworkChangeMs = TorService.getLastNetworkChangeMs()
-                            val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
-
-                            // Strict: "Connected" requires a fresh HS self-test proof, not just
-                            // "transport looks ready." Matches the Secure Network page so the two
-                            // screens never disagree. Transport-ready alone was masking a bug
-                            // where the self-test never re-fires after a network toggle.
+                            val bootstrap = TorService.getBootstrapPercent()
+                            val circuits = try { com.securelegion.crypto.RustBridge.getCircuitEstablished() }
+                                catch (_: Exception) { 0 }
+                            val transportConnected = com.securelegion.services.TorConnectionUiStatus.isConnected(
+                                state, hasValidatedInternet, bootstrap, circuits,
+                                TorService.getTransportGate()?.isOpenNow() == true
+                            )
                             baseLabel = when {
                                 !hasValidatedInternet -> {
                                     statusDot?.setBackgroundResource(R.drawable.status_dot_red)
                                     "Offline"
                                 }
-                                hasFreshProof -> {
+                                transportConnected -> {
                                     statusDot?.setBackgroundResource(R.drawable.status_dot_green)
                                     "Connected"
                                 }
@@ -576,11 +575,14 @@ class MainActivity : BaseActivity() {
                 val lastNetworkChangeMs = TorService.getLastNetworkChangeMs()
                 val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
                 val circuitsEstablished = try { com.securelegion.crypto.RustBridge.getCircuitEstablished() } catch (_: Exception) { 0 }
-                val hasTransportReady = bootstrapPercent >= 100 && circuitsEstablished == 1
+                val hasTransportReady = com.securelegion.services.TorConnectionUiStatus.isConnected(
+                    state, hasValidatedInternet, bootstrapPercent, circuitsEstablished,
+                    TorService.getTransportGate()?.isOpenNow() == true
+                )
 
                 when {
                     !hasValidatedInternet -> "Tor offline"
-                    hasFreshProof -> if (usingBridges) "Tor receivable via bridges" else "Tor receivable"
+                    hasTransportReady && hasFreshProof -> if (usingBridges) "Tor receivable via bridges" else "Tor receivable"
                     hasTransportReady -> if (usingBridges) "Tor connected via bridges" else "Tor connected"
                     else -> "Connecting to Tor..."
                 }

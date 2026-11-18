@@ -264,12 +264,14 @@ class TorHealthActivity : AppCompatActivity() {
             val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
             val hasInternet = capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
 
-            val lastProofMs = try { RustBridge.getLastTorProofMs() } catch (_: Throwable) { 0L }
-            val lastNetworkChangeMs = com.securelegion.services.TorService.getLastNetworkChangeMs()
-            val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
-
-            val isLive = hasInternet && bootstrapPercent >= 100 && hasFreshProof
-            val isConnecting = hasInternet && (bootstrapPercent < 100 || circuitsEstablished != 1 || !hasFreshProof)
+            // The own-onion self-test proves inbound reachability, which is separate
+            // from whether the Tor transport is connected. The gate closes on a
+            // network change and reopens after the live transport health check.
+            val isLive = com.securelegion.services.TorConnectionUiStatus.isConnected(
+                TorService.getCurrentTorState(), hasInternet, bootstrapPercent,
+                circuitsEstablished, TorService.getTransportGate()?.isOpenNow() == true
+            )
+            val isConnecting = hasInternet && !isLive
 
             // Populate the three diagnostic rows — shows the user exactly which component
             // is lagging when the "Connected" indicator disagrees with perceived reachability.
