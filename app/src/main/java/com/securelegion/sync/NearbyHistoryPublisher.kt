@@ -5,20 +5,53 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
+import com.securelegion.database.DeviceSyncContactWorkStore
 import com.securelegion.database.DeviceSyncOutboxStore
 import com.securelegion.database.SecureLegionDatabase
 import org.json.JSONObject
+import org.json.JSONArray
+import java.io.ByteArrayOutputStream
+import java.util.Base64
 
 /** Captures the owner's archive in bounded ID pages before a Nearby transfer. */
-internal class NearbyHistoryPublisher(context: Context,
+internal class NearbyHistoryPublisher(private val context: Context,
                                       private val database: SecureLegionDatabase,
                                       private val roster: DeviceRosterStore,
-                                      keys: KeyManager) {
+                                      private val keys: KeyManager) {
     private val messageExporter = DeviceSyncLivePublisher(context, database, roster, keys)
     private val outbox = DeviceSyncOutboxStore(database, roster)
 
     fun prepare(account: ByteArray, local: String, peer: String,
-                progress: (String) -> Unit, checkActive: () -> Unit) {
+                peerCapabilities: Set<String>, progress: (String) -> Unit,
+                checkActive: () -> Unit) {
+        val contacts = DeviceSyncContactPublisher(database, roster)
+        val contactWork = DeviceSyncContactWorkStore(database, roster)
+        // A contact is a dependency of message import. Finish the bounded
+        // contact seed before sending message history over this session.
+        for (attempt in 0 until 100_000) {
+            checkActive()
+            val beforeSeed = contactWork.nextSeed(peer)
+            val beforeDeletion = contactWork.nextDeletionSeed(peer)
+            contacts.prepareBatch(account, local, peer)
+            val afterSeed = contactWork.nextSeed(peer)
+            val afterDeletion = contactWork.nextDeletionSeed(peer)
+            if (afterSeed == null && afterDeletion == null) break
+            check(beforeSeed != afterSeed || beforeDeletion != afterDeletion) {
+                "Contact history needs repair before transfer"
+            }
+        }
+        check(contactWork.nextSeed(peer) == null &&
+            contactWork.nextDeletionSeed(peer) == null) {
+            "Contact history exceeds the transfer preparation limit"
+        }
+        val settings = DeviceSyncAccountSettingsPublisher(database, roster)
+        settings.capturePrimary(context, keys)
+        settings.enqueueForPeer(account, local, peer)
+        if ("group_snapshots_v1" in peerCapabilities &&
+            roster.isLocalAuthorized(account, local, 0x06) &&
+            roster.isAuthorized(account, peer, 0x06)) {
+            prepareGroups(account, local, peer, checkActive)
+        }
         var lastId = ""
         var scanned = 0
         val db = database.openHelper.readableDatabase
@@ -49,6 +82,61 @@ internal class NearbyHistoryPublisher(context: Context,
                 if (scanned % 100 == 0) progress("Prepared $scanned messages")
             }
             lastId = ids.last()
+        }
+    }
+
+    private fun prepareGroups(account: ByteArray, local: String, peer: String,
+                              checkActive: () -> Unit) {
+        val db = database.openHelper.readableDatabase
+        val groups = db.query(SimpleSQLiteQuery(
+            "SELECT groupId,groupSecretB64 FROM groups ORDER BY groupId"
+        )).use { c -> buildList {
+            while (c.moveToNext()) add(c.getString(0) to c.getString(1))
+        } }
+        for ((groupId, secret64) in groups) {
+            checkActive()
+            if (!groupId.matches(Regex("[0-9a-f]{64}"))) continue
+            val secret = runCatching { Base64.getDecoder().decode(secret64) }.getOrNull()
+                ?: continue
+            if (secret.size != 32 || Base64.getEncoder().encodeToString(secret) != secret64)
+                continue
+            val stream = ByteArrayOutputStream()
+            db.query(SimpleSQLiteQuery("SELECT opBytes FROM crdt_op_log " +
+                "WHERE groupId=? ORDER BY lamport,opId", arrayOf(groupId))).use { c ->
+                var count = 0
+                while (c.moveToNext()) {
+                    val op = c.getBlob(0)
+                    require(op.size in 1..66_560 && ++count <= 500_000 &&
+                        stream.size() + 4L + op.size <= 23L * 1024 * 1024)
+                    val size = op.size
+                    stream.write(byteArrayOf((size ushr 24).toByte(),
+                        (size ushr 16).toByte(), (size ushr 8).toByte(), size.toByte()))
+                    stream.write(op)
+                }
+            }
+            val packed = stream.toByteArray()
+            if (packed.isEmpty() || !DeviceSyncGroupDelta.validFraming(packed) ||
+                !RustBridge.crdtLoadGroup(groupId, packed)) continue
+            val members = JSONArray(RustBridge.crdtQuery(groupId, "members", "{}"))
+            val ownAccount = account.toHex()
+            val authorizedMember = (0 until members.length()).any { index ->
+                val member = members.getJSONObject(index)
+                member.optString("pubkey_hex").lowercase() == ownAccount &&
+                    !member.optBoolean("removed")
+            }
+            if (!authorizedMember) continue
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(packed).toHex()
+            val id = "$groupId:$digest"
+            if (hasPending(peer, "groups", id)) continue
+            val delta = JSONObject().put("group_snapshot_id", id)
+                .put("group_id", groupId)
+                .put("packed_ops", Base64.getEncoder().encodeToString(packed))
+                .put("group_secret", secret64)
+            DeviceSyncGroupDelta.parse(delta, "groups", id)
+            queue(account, local, peer, "groups", id, delta, System.currentTimeMillis())
+            packed.fill(0)
+            secret.fill(0)
         }
     }
 

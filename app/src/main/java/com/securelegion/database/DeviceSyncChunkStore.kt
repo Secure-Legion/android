@@ -15,7 +15,7 @@ class DeviceSyncChunkStore(
 
     enum class Result { PENDING, DEFERRED, COMMITTED }
 
-    private val topics = setOf("messages", "receipts", "contacts", "settings", "groups")
+    private val topics = setOf("messages", "receipts", "contacts", "settings", "groups", "group_links")
     private val hex64 = Regex("[0-9a-f]{64}")
 
     /**
@@ -38,7 +38,7 @@ class DeviceSyncChunkStore(
         require(part.total in 1..maxParts && part.index in 0 until part.total)
         require(part.bytes.isNotEmpty() && part.bytes.size <= 128 * 1024)
         require(accountEd.size == 32 && localDeviceId != part.peerDeviceId)
-        val capability = if (isGroup) 0x06 else 0x02
+        val capability = if (isGroup || part.topic == "group_links") 0x06 else 0x02
         require(roster.isLocalAuthorized(accountEd, localDeviceId, capability, nowMs) &&
             roster.isAuthorized(accountEd, part.peerDeviceId, capability, nowMs))
         val chunkId = "hist:${part.eventId}"

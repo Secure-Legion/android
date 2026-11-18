@@ -108,9 +108,9 @@ object RustBridge {
 
     /**
      * Generate a new Ed25519 keypair
-     * @return Keypair as ByteArray (first 32 bytes = private key, next 32 bytes = public key)
+     * @return Two arrays: public key, then private key (32 bytes each).
      */
-    external fun generateKeypair(): ByteArray
+    external fun generateKeypair(): Array<Any>
 
     /**
      * Sign data with Ed25519 private key

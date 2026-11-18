@@ -89,7 +89,8 @@ internal class NearbyHistoryClient(private val context: Context,
                 check("durable_history_v2" in peerHello.capabilities)
                 progress("Preparing history…")
                 NearbyHistoryPublisher(context, database, roster, keys).prepare(
-                    account, identity.deviceId, offer.peerDeviceId, progress) { peer(); Unit }
+                    account, identity.deviceId, offer.peerDeviceId,
+                    peerHello.capabilities, progress) { peer(); Unit }
                 var afterTopic = ""
                 var afterObject = ""
                 var index = 0

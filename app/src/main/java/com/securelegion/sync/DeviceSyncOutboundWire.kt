@@ -12,7 +12,8 @@ internal object DeviceSyncOutboundWire {
         require(event.eventId.matches(Regex("[0-9a-f]{64}")) &&
             event.digest.size == 32 && event.objectId.isNotEmpty() &&
             event.objectId.length <= 256 && event.sequence > 0 &&
-            event.eventTimeMs > 0 && event.canonicalDelta.size in 2..8 * 1024 * 1024)
+            event.eventTimeMs > 0 && event.canonicalDelta.size in
+            2..((if (event.topic == "groups") 32 else 8) * 1024 * 1024))
         val base = { JSONObject().put("history_v", 2).put("event_id", event.eventId)
             .put("digest", event.digest.toHex()).put("topic", event.topic)
             .put("object_id", event.objectId).put("event_ts", event.eventTimeMs)
@@ -24,7 +25,7 @@ internal object DeviceSyncOutboundWire {
                 event.canonicalDelta.toString(Charsets.UTF_8))))
         }
         val count = (event.canonicalDelta.size + CHUNK_BYTES - 1) / CHUNK_BYTES
-        require(count in 2..64)
+        require(count in 2..(if (event.topic == "groups") 256 else 64))
         return (0 until count).map { index ->
             val start = index * CHUNK_BYTES
             val end = minOf(event.canonicalDelta.size, start + CHUNK_BYTES)

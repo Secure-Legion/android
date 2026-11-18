@@ -18,7 +18,7 @@ internal object DeviceSyncPushWire {
         val payload = frame.payload
         val topic = payload.getString("topic")
         val live = topic in DeviceSyncTorPolicy.liveTopics
-        require(topic in DeviceSyncTorPolicy.metadataTopics || live)
+        require(topic in DeviceSyncTorPolicy.metadataTopics || topic == "group_links" || live)
         require(!live || liveNegotiated)
         val fields = payload.keys().asSequence().toSet()
         val expected = if (payload.has("chunk_id")) chunk else single

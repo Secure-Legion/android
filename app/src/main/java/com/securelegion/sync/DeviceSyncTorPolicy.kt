@@ -6,7 +6,7 @@ import org.json.JSONObject
 internal object DeviceSyncTorPolicy {
     const val LIVE_CAPABILITY = "live_message_sync_v1"
     const val LIVE_MODE = "live_v1"
-    val metadataTopics = setOf("contacts", "settings")
+    val metadataTopics = setOf("contacts", "settings", "group_links")
     val liveTopics = setOf("messages", "receipts")
 
     fun allows(kind: DeviceSyncFrameV2.Kind, payload: JSONObject,

@@ -28,6 +28,10 @@ class DeviceSyncTorPolicyTest {
             push("contacts").put("group_action_v", 1), true))
         assertTrue(DeviceSyncTorPolicy.allows(DeviceSyncFrameV2.Kind.PUSH,
             push("contacts"), false))
+        assertTrue(DeviceSyncTorPolicy.allows(DeviceSyncFrameV2.Kind.PUSH,
+            push("group_links"), false))
+        assertFalse(DeviceSyncTorPolicy.allows(DeviceSyncFrameV2.Kind.PUSH,
+            push("group_links").put("sync_mode", "live_v1"), true))
         assertFalse(DeviceSyncTorPolicy.allows(DeviceSyncFrameV2.Kind.PUSH,
             push("contacts").put("sync_mode", "live_v1"), true))
     }

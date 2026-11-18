@@ -29,6 +29,8 @@ import com.securelegion.sync.DeviceSyncAccountSettingsPublisher
 import com.securelegion.sync.DeviceSyncOutboundWire
 import com.securelegion.sync.DeviceSyncContactReceiver
 import com.securelegion.sync.DeviceSyncContactPublisher
+import com.securelegion.sync.DeviceSyncGroupReceiver
+import com.securelegion.sync.DeviceSyncGroupLinkPublisher
 import com.securelegion.sync.DeviceSyncLiveMessageReceiver
 import com.securelegion.sync.DeviceSyncLiveReceiptReceiver
 import com.securelegion.sync.DeviceSyncMediaFiles
@@ -91,7 +93,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
         val linkedCrypto = if (primary) null else LinkedProfileContentCrypto(context)
         val localCapabilities = setOf(
             "tor_metadata_only_v1", "contact_roster_v1", "durable_history_v2",
-            "account_profile_v1", DeviceSyncTorPolicy.LIVE_CAPABILITY)
+            "account_profile_v1", "group_links_v1", DeviceSyncTorPolicy.LIVE_CAPABILITY)
         try {
             val databaseKey = if (primary) keyManager.getDatabasePassphrase()
                 else linkedStore!!.activeDatabaseKey()
@@ -120,6 +122,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 mediaFiles::store, linkedChat)
             val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster,
                 linkedChat)
+            val groupReceiver = DeviceSyncGroupReceiver(database, roster)
             val contactPublisher = DeviceSyncContactPublisher(database, roster,
                 linked = !primary)
             val livePublisher = if (primary)
@@ -129,6 +132,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     linkedCrypto::decryptVoice, linked = true,
                     linkedStore = linkedChat)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
+            val groupPublisher = DeviceSyncGroupLinkPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
             val transport = DeviceTransportSessionStore(database, roster)
             val chatPayloads = DeviceChatPayloadStore(
@@ -136,6 +140,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 mediaFiles::storeRaw, linkedChat)
             val peerCapabilities = HashMap<String, Set<String>>()
             val lastHelloMs = HashMap<String, Long>()
+            val lastGroupPrepareMs = HashMap<String, Long>()
             val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)
             val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
             check(onion == identity.onionAddress)
@@ -270,6 +275,19 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                             if (primary) settingsReceiver.materializePrimary(
                                                                 context, keyManager)
                                                         }
+                                                    } else if (topic == "group_links" &&
+                                                        peerCapabilities[peerId]
+                                                            ?.contains("group_links_v1") == true) {
+                                                        val part = DeviceSyncPushWire.parse(inner,
+                                                            liveNegotiated = false)
+                                                        if (groupReceiver.receive(account,
+                                                                identity.deviceId, part) ==
+                                                            DeviceSyncChunkStore.Result.COMMITTED) {
+                                                            sendSyncApplication(syncHost, roster, account,
+                                                                identity.deviceId, peerId, peer.onion,
+                                                                DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                                                DeviceSyncPushWire.settled(part))
+                                                        }
                                                     } else if (topic == "messages" &&
                                                         syncHost.liveNegotiated(peerId)) {
                                                         val part = DeviceSyncPushWire.parse(inner,
@@ -316,8 +334,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                             }
                                         }
                                     } finally {
-                                        // Topic data remains unacknowledged until its transactional
-                                        // importer is wired. Clear decrypted application bytes.
+                                        // Clear decrypted application bytes after the
+                                        // authenticated topic importer returns.
                                         outcome.message?.fill(0)
                                     }
                                 }
@@ -454,6 +472,15 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                         settingsPublisher.enqueueForPeer(account, identity.deviceId,
                                             peer.deviceId, now)
                                     }
+                                    if (peerCapabilities[peer.deviceId]
+                                            ?.contains("group_links_v1") == true &&
+                                        now - (lastGroupPrepareMs[peer.deviceId] ?: 0L) >= 60_000L &&
+                                        roster.isLocalAuthorized(account, identity.deviceId, 0x06, now) &&
+                                        roster.isAuthorized(account, peer.deviceId, 0x06, now)) {
+                                        groupPublisher.prepare(account, identity.deviceId,
+                                            peer.deviceId, now)
+                                        lastGroupPrepareMs[peer.deviceId] = now
+                                    }
                                     for (event in outbox.dueTor(account, identity.deviceId,
                                             peer.deviceId, now,
                                             liveNegotiated = syncHost.liveNegotiated(peer.deviceId))) {
@@ -511,17 +538,19 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     account: ByteArray, localId: String, peerId: String,
                                     onion: String, kind: DeviceSyncFrameV2.Kind,
                                     payload: org.json.JSONObject): Boolean {
+        val capability = if (payload.optString("topic") == "group_links" ||
+            payload.optString("topic") == "groups") 0x06 else 0x02
         if (!SessionManager.isUnlocked(context) ||
-            !roster.isLocalAuthorized(account, localId, 0x02) ||
-            roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) return false
+            !roster.isLocalAuthorized(account, localId, capability) ||
+            roster.authorizedPeer(account, peerId, capability)?.onion != onion) return false
         val plaintext = DeviceSyncFrameV2.encode(kind, localId, peerId, payload)
         try {
             val sealed = host.seal(peerId, plaintext)
             if (!sealed.ready || sealed.outgoing.isEmpty()) return false
             for (wire in sealed.outgoing) {
                 if (!SessionManager.isUnlocked(context) ||
-                    !roster.isLocalAuthorized(account, localId, 0x02) ||
-                    roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) return false
+                    !roster.isLocalAuthorized(account, localId, capability) ||
+                    roster.authorizedPeer(account, peerId, capability)?.onion != onion) return false
                 if (!RustBridge.sendDeviceOnionFrame(onion, wire)) return false
             }
             return true

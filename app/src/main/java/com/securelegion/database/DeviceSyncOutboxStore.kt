@@ -67,7 +67,7 @@ class DeviceSyncOutboxStore(
                 "SELECT topic,object_id,event_id,event_time_ms,digest,sequence,delta_json," +
                     "attempts,is_live FROM device_sync_outbox WHERE peer_device_id=? " +
                     "AND transport='TOR' AND next_try_at_ms<=? " +
-                    "AND (topic IN ('contacts','settings') OR " +
+                    "AND (topic IN ('contacts','settings','group_links') OR " +
                     "(?=1 AND is_live=1 AND topic IN ('messages','receipts'))) " +
                     "ORDER BY $order LIMIT ?",
                 arrayOf(peerDeviceId, nowMs, if (liveNegotiated) 1 else 0, count)
@@ -87,7 +87,9 @@ class DeviceSyncOutboxStore(
         if (selected.size < limit) append("CASE topic WHEN 'contacts' THEN 0 " +
             "WHEN 'messages' THEN 1 WHEN 'receipts' THEN 2 ELSE 3 END, " +
             "created_at_ms DESC, rowid DESC", limit)
-        return selected.values.toList()
+        return selected.values.filter { it.topic != "group_links" ||
+            authorized(accountEd, localDeviceId, peerDeviceId,
+                "group_links", nowMs) }
     }
 
     /** A retry is charged to the exact revision even if a newer one replaced it. */
@@ -140,7 +142,7 @@ class DeviceSyncOutboxStore(
         }
     }
 
-    private val torTopics = setOf("contacts", "settings")
+    private val torTopics = setOf("contacts", "settings", "group_links")
     private val nearbyTopics = setOf("messages", "receipts", "contacts", "settings", "groups")
 
     /** Group links require a separate signed-operation validator before enqueue. */
@@ -324,7 +326,7 @@ class DeviceSyncOutboxStore(
     private fun validSettlementShape(eventId: String, digest: String, topic: String,
                                      objectId: String, eventTimeMs: Long): Boolean =
         eventId.matches(Regex("[0-9a-f]{64}")) && digest.matches(Regex("[0-9a-f]{64}")) &&
-            topic in nearbyTopics && objectId.isNotEmpty() && objectId.length <= 512 &&
+            topic in (nearbyTopics + "group_links") && objectId.isNotEmpty() && objectId.length <= 512 &&
             eventTimeMs in 1..9_007_199_254_740_991L
 
     private fun currentEvent(db: androidx.sqlite.db.SupportSQLiteDatabase, peer: String,
