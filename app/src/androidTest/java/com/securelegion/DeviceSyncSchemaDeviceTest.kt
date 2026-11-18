@@ -18,7 +18,7 @@ class DeviceSyncSchemaDeviceTest {
         val db = database.openHelper.writableDatabase
         db.query("PRAGMA user_version").use { cursor ->
             assertTrue(cursor.moveToFirst())
-            assertEquals(64, cursor.getInt(0))
+            assertEquals(65, cursor.getInt(0))
         }
         db.query("SELECT name FROM sqlite_master WHERE type='trigger' AND " +
             "name LIKE 'device_sync_capture_contact_%'").use { cursor ->
@@ -34,6 +34,10 @@ class DeviceSyncSchemaDeviceTest {
                 if (cursor.getString(nameIndex) == "isDeviceSyncImported") importedColumn = true
             }
             assertTrue(importedColumn)
+        }
+        db.query("SELECT name FROM sqlite_master WHERE type='table' " +
+            "AND name='device_sync_contact_profiles'").use { cursor ->
+            assertTrue(cursor.moveToFirst())
         }
     }
 }

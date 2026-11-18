@@ -63,7 +63,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class, DeviceRoster::class, AuthorizedDevice::class],
-    version = 64,
+    version = 65,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1272,6 +1272,14 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_64_65 = object : Migration(64, 65) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_contact_profiles " +
+                    "(contact_id INTEGER NOT NULL PRIMARY KEY, timestamp_ms INTEGER NOT NULL, " +
+                    "event_id TEXT NOT NULL)")
+            }
+        }
+
         /** Room owns the roster entities; these bounded protocol queues are managed by SQL. */
         private fun createDeviceSyncTables(db: SupportSQLiteDatabase) {
             val statements = arrayOf(
@@ -1302,6 +1310,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             createDeviceLiveCaptureTables(db)
             createDeviceLivePeerTables(db)
             createDeviceContactCaptureTriggers(db)
+            db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_contact_profiles " +
+                "(contact_id INTEGER NOT NULL PRIMARY KEY, timestamp_ms INTEGER NOT NULL, " +
+                "event_id TEXT NOT NULL)")
         }
 
         private fun createDeviceContactCaptureTriggers(db: SupportSQLiteDatabase) {
@@ -1400,7 +1411,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
             MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58, MIGRATION_58_59,
             MIGRATION_59_60, MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63,
-            MIGRATION_63_64
+            MIGRATION_63_64, MIGRATION_64_65
         )
 
         /**
@@ -1497,7 +1508,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 64) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 65) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

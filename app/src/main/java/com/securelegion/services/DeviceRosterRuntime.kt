@@ -23,6 +23,7 @@ import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.DeviceSyncOutboxStore
 import com.securelegion.sync.DeviceSyncAccountSettingsPublisher
 import com.securelegion.sync.DeviceSyncOutboundWire
+import com.securelegion.sync.DeviceSyncContactReceiver
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +75,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val exchange = DeviceRosterExchange(database, roster)
             val syncHost = DeviceSyncFsHost(account, identity, roster)
             val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
+            val contactReceiver = DeviceSyncContactReceiver(database, roster)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
             val peerCapabilities = HashMap<String, Set<String>>()
@@ -153,7 +155,18 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                 }
                                                 DeviceSyncFrameV2.Kind.PUSH -> {
                                                     val topic = inner.payload.optString("topic")
-                                                    if (topic == "settings") {
+                                                    if (topic == "contacts") {
+                                                        val part = DeviceSyncPushWire.parse(inner,
+                                                            liveNegotiated = false)
+                                                        if (contactReceiver.receive(account,
+                                                                identity.deviceId, part) ==
+                                                            DeviceSyncChunkStore.Result.COMMITTED) {
+                                                            sendSyncApplication(syncHost, roster, account,
+                                                                identity.deviceId, peerId, peer.onion,
+                                                                DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                                                DeviceSyncPushWire.settled(part))
+                                                        }
+                                                    } else if (topic == "settings") {
                                                         settingsPublisher.capturePrimary(context,
                                                             keyManager)
                                                         val part = DeviceSyncPushWire.parse(inner,
@@ -226,6 +239,17 @@ internal class DeviceRosterRuntime(private val context: Context) {
                             settingsMaterialized = runCatching {
                                 settingsReceiver.materializePrimary(context, keyManager)
                             }.isSuccess
+                        }
+                        for (applied in contactReceiver.drainPending(account,
+                                identity.deviceId, now)) {
+                            val peer = roster.authorizedPeer(account, applied.peerDeviceId, 0x02)
+                                ?: continue
+                            runCatching {
+                                sendSyncApplication(syncHost, roster, account,
+                                    identity.deviceId, peer.deviceId, peer.onion,
+                                    DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                    DeviceSyncPushWire.settled(applied))
+                            }
                         }
                         for (device in roster.listAuthorizedDevices(account)) {
                             if (device.isSelf || device.capabilities and 0x02 == 0 ||
