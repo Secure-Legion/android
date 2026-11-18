@@ -454,11 +454,18 @@ class LinkedMessengerActivity : AppCompatActivity() {
                 return@launch
             }
             historyServer = server
+            val bitmap = BrandedQrGenerator.generate(this@LinkedMessengerActivity,
+                BrandedQrGenerator.QrOptions(server.offer, size = 640,
+                    showLogo = false, showWebsite = false))
+            if (bitmap == null) {
+                server.close()
+                historyServer = null
+                status.text = "Could not show transfer code"
+                return@launch
+            }
             val qr = ImageView(this@LinkedMessengerActivity).apply {
                 setPadding(24, 24, 24, 24)
-                setImageBitmap(BrandedQrGenerator.generate(this@LinkedMessengerActivity,
-                    BrandedQrGenerator.QrOptions(server.offer, size = 640,
-                        showLogo = false)))
+                setImageBitmap(bitmap)
                 contentDescription = "Secure Nearby history QR"
             }
             historyDialog = AlertDialog.Builder(this@LinkedMessengerActivity)

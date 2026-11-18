@@ -68,7 +68,7 @@ internal class NearbyHistoryClient(private val context: Context,
                     challenge.optString("session") == offer.session &&
                     noncePattern.matches(challenge.getString("challenge")))
                 val nonce = challenge.getString("challenge")
-                val hello = localHello(offer.peerDeviceId)
+                val hello = localHello(offer.peerDeviceId, identity.deviceId, account)
                     .put("nearby_v", 1).put("session", offer.session)
                     .put("challenge", nonce)
                 peer()
@@ -146,15 +146,22 @@ internal class NearbyHistoryClient(private val context: Context,
         }
     }
 
-    private fun localHello(peerId: String): JSONObject {
+    private fun localHello(peerId: String, localId: String,
+                           account: ByteArray): JSONObject {
         val db = database.openHelper.readableDatabase
         val cursors = HashMap<String, Pair<Long, Long>>()
         db.query(SimpleSQLiteQuery("SELECT topic,pushed_seq,received_seq " +
             "FROM device_sync_cursors WHERE peer_device_id=?", arrayOf(peerId))).use { c ->
             while (c.moveToNext()) cursors[c.getString(0)] = c.getLong(1) to c.getLong(2)
         }
-        return DeviceSyncHelloWire.payload(setOf("durable_history_v2",
+        val capabilities = mutableSetOf("durable_history_v2",
             "contact_roster_v1", "account_profile_v1", "tor_metadata_only_v1",
-            DeviceSyncTorPolicy.LIVE_CAPABILITY), cursors)
+            DeviceSyncTorPolicy.LIVE_CAPABILITY)
+        if (roster.isLocalAuthorized(account, localId, 0x06) &&
+            roster.isAuthorized(account, peerId, 0x06)) {
+            capabilities.add("group_snapshots_v1")
+            capabilities.add("group_links_v1")
+        }
+        return DeviceSyncHelloWire.payload(capabilities, cursors)
     }
 }

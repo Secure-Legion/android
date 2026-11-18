@@ -185,11 +185,20 @@ class DevicesActivity : BaseActivity() {
             }
             val server = opened.getOrThrow()
             historyServer = server
+            val bitmap = BrandedQrGenerator.generate(this@DevicesActivity,
+                BrandedQrGenerator.QrOptions(server.offer, size = 640,
+                    showLogo = false, showWebsite = false))
+            if (bitmap == null) {
+                server.close()
+                historyServer = null
+                busy = false
+                button.text = "Receive history over Wi-Fi"
+                ThemedToast.show(this@DevicesActivity, "Could not show transfer code")
+                return@launch
+            }
             val qr = ImageView(this@DevicesActivity).apply {
                 setPadding(24.dp, 24.dp, 24.dp, 24.dp)
-                setImageBitmap(BrandedQrGenerator.generate(this@DevicesActivity,
-                    BrandedQrGenerator.QrOptions(server.offer, size = 640,
-                        showLogo = false)))
+                setImageBitmap(bitmap)
                 contentDescription = "Secure Nearby history QR"
             }
             historyDialog = AlertDialog.Builder(this@DevicesActivity)

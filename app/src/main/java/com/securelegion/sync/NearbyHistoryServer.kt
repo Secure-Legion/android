@@ -34,6 +34,7 @@ internal class NearbyHistoryServer private constructor(
     private val session: String,
     private val expires: Long
 ) : Closeable {
+    private val linkedCredentials = if (primary) null else LinkedProfileCredentialStore(context)
     @Volatile private var cancelled = false
     @Volatile private var socket: SSLSocket? = null
 
@@ -70,9 +71,14 @@ internal class NearbyHistoryServer private constructor(
                     "WHERE peer_device_id=?", arrayOf(peerId))).use { c ->
                 while (c.moveToNext()) cursors[c.getString(0)] = c.getLong(1) to c.getLong(2)
             }
-            val ack = DeviceSyncHelloWire.payload(setOf("durable_history_v2",
-                "contact_roster_v1", "account_profile_v1", "group_links_v1",
-                "tor_metadata_only_v1"), cursors)
+            val capabilities = mutableSetOf("durable_history_v2",
+                "contact_roster_v1", "account_profile_v1", "tor_metadata_only_v1")
+            if (roster.isLocalAuthorized(account, identity.deviceId, 0x06) &&
+                roster.isAuthorized(account, peerId, 0x06)) {
+                capabilities.add("group_snapshots_v1")
+                capabilities.add("group_links_v1")
+            }
+            val ack = DeviceSyncHelloWire.payload(capabilities, cursors)
                 .put("nearby_v", 1).put("session", session).put("challenge", nonce)
             write(connected, JSONObject().put("type", "hello_ack")
                 .put("wire", encode(DeviceSyncFrameV2.Kind.HELLO_ACK, ack)))
@@ -159,6 +165,12 @@ internal class NearbyHistoryServer private constructor(
 
     private fun peer(capability: Int = 0x02): DeviceRosterStore.PeerKeys {
         check(!cancelled && SessionManager.isUnlocked(context))
+        val currentAccount = if (primary) KeyManager.getInstance(context)
+            .takeIf { it.isInitialized() }?.getSigningPublicKey()
+            else linkedCredentials?.activeProfile()?.accountEd
+        check(currentAccount != null && currentAccount.contentEquals(account)) {
+            "Nearby profile changed"
+        }
         val now = System.currentTimeMillis()
         check(now < expires && roster.isLocalAuthorized(account, identity.deviceId,
             capability, now))
