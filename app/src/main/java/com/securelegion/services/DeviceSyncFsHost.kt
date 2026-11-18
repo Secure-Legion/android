@@ -4,6 +4,7 @@ import android.util.Base64
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
+import com.securelegion.sync.DeviceSyncFrameV2
 import org.json.JSONObject
 import java.io.Closeable
 
@@ -83,6 +84,9 @@ class DeviceSyncFsHost(
         val plaintext = if (response.isNull("message")) null else
             Base64.decode(response.getString("message"), Base64.DEFAULT).also {
                 validateTorPlaintext(it)
+                if (operation == "receive" && wire != null) {
+                    DeviceSyncFrameV2.decode(it, peerId, identity.deviceId, wire, nowMs)
+                }
             }
         // A revocation during Noise work invalidates the result before dispatch or send.
         if (!roster.isLocalAuthorized(accountEd, identity.deviceId, 0x02, nowMs) ||
