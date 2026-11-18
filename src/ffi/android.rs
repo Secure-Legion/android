@@ -1670,7 +1670,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopDeviceOnionListene
 }
 
 fn valid_device_outbound_frame(bytes: &[u8]) -> bool {
-    if bytes.len() < 6 || bytes.len() > 512 * 1024 + 8 { return false; }
+    const C0_MAX: usize = 211 + 5 * 1024 * 1024 + 2048 + 64;
+    if bytes.len() < 6 || bytes.len() > C0_MAX { return false; }
     let length = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
     if length != bytes.len() - 5 { return false; }
     match bytes[0] {
@@ -1679,6 +1680,7 @@ fn valid_device_outbound_frame(bytes: &[u8]) -> bool {
         0xA5 => bytes.len() == 198 && bytes[5] == 1,
         0xB6 => bytes.len() <= 8192,
         0xB7 => bytes.len() <= 512 * 1024,
+        0xC0 => bytes.len() >= 275 && bytes[5] == 2 && bytes.len() <= C0_MAX,
         _ => false,
     }
 }
@@ -1698,6 +1700,8 @@ mod device_outbound_frame_tests {
         raw_legacy[0] = 0xB0;
         assert!(!valid_device_outbound_frame(&raw_legacy));
         assert!(!valid_device_outbound_frame(&[0xB6, 0, 0, 0, 8, 1]));
+        let c0 = [vec![0xC0, 0, 0, 1, 19, 2], vec![0; 274]].concat();
+        assert!(valid_device_outbound_frame(&c0));
     }
 }
 
