@@ -39,7 +39,8 @@ bulk history and full groups remain Nearby-only.
   until capability exchange is implemented. SQLCipher v62 records `is_live`
   on outbox and deferred rows, defaulting preexisting work to false; Tor ACKs
   still cannot clear Wi-Fi-only revisions. The live outbox enforces 256 revision
-  and 16 MiB serialized delta caps without deleting the source change.
+  and 16 MiB serialized delta caps without deleting the source change. Live
+  enqueue cannot replace an outstanding Wi-Fi archive row for the same object.
 - SQLCipher message triggers capture inserts, body edits, status/read changes,
   and deletes in the same transaction as the local write. The sequence-based
   capture reader loads at most 25 IDs, and a transaction-scoped import guard is

@@ -91,6 +91,15 @@ class DeviceSyncOutboxStore(
             // Revocation can race with canonicalization; check again under the write transaction.
             require(roster.isLocalAuthorized(accountEd, localDeviceId, capability, nowMs))
             require(roster.isAuthorized(accountEd, peerDeviceId, capability, nowMs))
+            val existingLane = db.query(SimpleSQLiteQuery(
+                "SELECT is_live FROM device_sync_outbox WHERE peer_device_id=? " +
+                    "AND topic=? AND object_id=?", arrayOf(peerDeviceId, topic, objectId)
+            )).use { if (it.moveToFirst()) it.getInt(0) == 1 else null }
+            // The shared object key cannot represent a live and archive revision
+            // simultaneously. Retain the older work and retry the captured source.
+            require(existingLane == null || existingLane == isLive) {
+                "Archive and live work must not replace each other"
+            }
             if (isLive) requireLiveCapacity(db, peerDeviceId, topic, objectId, canonical.size)
             db.query(SimpleSQLiteQuery(
                 "SELECT event_time_ms,sequence,digest FROM device_sync_local_events WHERE topic=? AND object_id=?",
