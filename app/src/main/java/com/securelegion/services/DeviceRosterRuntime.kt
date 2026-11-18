@@ -1,6 +1,7 @@
 package com.securelegion.services
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.LocalDeviceIdentity
@@ -8,6 +9,7 @@ import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterExchange
+import com.securelegion.sync.DeviceRosterAuthority
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,11 +45,17 @@ internal class DeviceRosterRuntime(private val context: Context) {
         if (!keyManager.isInitialized()) return
         val account = keyManager.getSigningPublicKey()
         if (account.size != 32) return
-        val identity = try { LocalDeviceIdentity.loadExisting(context) }
-            catch (_: Exception) { return }
+        // A completed primary profile needs an independent installation identity
+        // and an account-signed initial roster before it can receive device frames.
+        val identity = LocalDeviceIdentity.loadOrCreate(context)
         try {
             val database = SecureLegionDatabase.getInstance(context, keyManager.getDatabasePassphrase())
             val roster = DeviceRosterStore(database)
+            if (roster.fetchSignedRoster(account) == null) {
+                val model = Build.MODEL.orEmpty().filter { it.code >= 32 && it.code !in 127..159 }
+                    .trim().take(64).ifBlank { "Android" }
+                DeviceRosterAuthority(roster).ensurePrimaryRoster(keyManager, identity, model)
+            }
             if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) return
             val exchange = DeviceRosterExchange(database, roster)
             val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
