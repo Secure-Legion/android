@@ -1597,6 +1597,78 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startHiddenServiceList
     }, 0 as jboolean)
 }
 
+/// Independent-device onion; the seed must come from LocalDeviceIdentity.
+/// It is never derived from or replaced by the account root.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createDeviceOnionService(
+    mut env: JNIEnv,
+    _class: JClass,
+    seed: JByteArray,
+) -> jstring {
+    catch_panic!(env, {
+        let mut bytes = match env.convert_byte_array(seed) {
+            Ok(value) if value.len() == 32 => value,
+            _ => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid device onion seed");
+                return std::ptr::null_mut();
+            }
+        };
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        bytes.zeroize();
+        let result = GLOBAL_RUNTIME.block_on(crate::network::arti::create_device_onion_service(&key));
+        key.zeroize();
+        match result {
+            Ok(address) => match string_to_jstring(&mut env, &address) {
+                Ok(value) => value.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
+            Err(_) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", "Device onion unavailable");
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startDeviceOnionListener(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    catch_panic!(env, {
+        match crate::network::arti::start_device_listener() {
+            Ok(()) => JNI_TRUE,
+            Err(_) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", "Device listener unavailable");
+                JNI_FALSE
+            }
+        }
+    }, JNI_FALSE)
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollDeviceOnionFrame(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match crate::network::arti::poll_device_frame() {
+            Some(frame) => env.byte_array_from_slice(&frame)
+                .map(|array| array.into_raw()).unwrap_or(std::ptr::null_mut()),
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopDeviceOnionListener(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    crate::network::arti::stop_device_listener();
+}
+
 /// Stop the hidden service listener
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopHiddenServiceListener(
