@@ -43,6 +43,8 @@ import com.securelegion.database.entities.ReceivedId
 import com.securelegion.database.entities.SkippedMessageKey
 import com.securelegion.database.entities.UsedSignature
 import com.securelegion.database.entities.Wallet
+import com.securelegion.database.entities.DeviceRoster
+import com.securelegion.database.entities.AuthorizedDevice
 import com.securelegion.database.PendingPingStore
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -60,8 +62,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class],
-    version = 57,
+    entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class, DeviceRoster::class, AuthorizedDevice::class],
+    version = 58,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1230,6 +1232,14 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_57_58 = object : Migration(57, 58) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `device_rosters` (`accountEd` TEXT NOT NULL, `epoch` INTEGER NOT NULL, `issuedAtMs` INTEGER NOT NULL, `primaryDeviceId` TEXT NOT NULL, `signedRoster` BLOB NOT NULL, `acceptedAtMs` INTEGER NOT NULL, PRIMARY KEY(`accountEd`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `authorized_devices` (`deviceId` TEXT NOT NULL, `accountEd` TEXT NOT NULL, `displayName` TEXT NOT NULL, `syncOnion` TEXT NOT NULL, `deviceEd` BLOB NOT NULL, `deviceX` BLOB NOT NULL, `mlKemPublic` BLOB NOT NULL, `certificate` BLOB NOT NULL, `capabilities` INTEGER NOT NULL, `issuedAtMs` INTEGER NOT NULL, `expiresAtMs` INTEGER NOT NULL, `rosterEpoch` INTEGER NOT NULL, `isSelf` INTEGER NOT NULL, PRIMARY KEY(`deviceId`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_authorized_devices_accountEd` ON `authorized_devices` (`accountEd`)")
+            }
+        }
+
         /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
@@ -1249,7 +1259,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48,
             MIGRATION_48_49, MIGRATION_49_50,
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
-            MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57
+            MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58
         )
 
         /**
@@ -1346,7 +1356,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 57) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 58) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
