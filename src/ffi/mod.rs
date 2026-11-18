@@ -4,6 +4,8 @@ pub mod android;
 pub mod device_sync_fs;
 #[cfg(target_os = "android")]
 pub mod device_history;
+#[cfg(target_os = "android")]
+pub mod device_group_link;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub mod device_authorization;
 #[cfg(target_os = "ios")]

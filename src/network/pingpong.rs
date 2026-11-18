@@ -805,7 +805,7 @@ mod tests {
         let (sender, recipient, sx, rx) = test_keys();
 
         let ping = PingToken::new(&sender, &recipient.verifying_key(), &sx, &rx).unwrap();
-        let pong = PongToken::new(&ping, &recipient, true).unwrap();
+        let pong = PongToken::new(&ping, &recipient, true, false).unwrap();
 
         // Verify protocol version echoed from Ping
         assert_eq!(pong.protocol_version, ping.protocol_version);
