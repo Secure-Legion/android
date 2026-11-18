@@ -70,6 +70,12 @@ object RustBridge {
     external fun syncFsCall(handle: Long, request: ByteArray): ByteArray
     external fun syncFsFree(handle: Long)
 
+    /** Isolated installation onion; route only A3-A5 and B6-B7 here. */
+    external fun createDeviceOnionService(serviceSeed: ByteArray): String
+    external fun startDeviceOnionListener(): Boolean
+    external fun pollDeviceOnionFrame(): ByteArray?
+    external fun stopDeviceOnionListener()
+
     /**
      * Encrypt a message using XChaCha20-Poly1305 with X25519 ECDH
      * Uses proper ECDH to derive shared secret for encryption
