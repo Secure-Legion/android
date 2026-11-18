@@ -19,6 +19,46 @@ import org.junit.runner.RunWith
 /** Verifies fresh-first and old-turn selection in a real SQLCipher profile. */
 @RunWith(AndroidJUnit4::class)
 class DeviceSyncContactWorkDeviceTest {
+    @Test fun torBatchGivesFreshContactsAndOldWorkATurn() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = SecureLegionDatabase.getInstance(context, ByteArray(32) { 0x53 })
+        val db = database.openHelper.writableDatabase
+        val account = ByteArray(32) { 0x64 }
+        val accountB64 = Base64.encodeToString(account, Base64.NO_WRAP)
+        val local = "N".repeat(43)
+        val peer = "R".repeat(43)
+        val now = System.currentTimeMillis()
+        try {
+            for ((id, self) in listOf(local to 1, peer to 0)) {
+                db.execSQL("INSERT OR REPLACE INTO authorized_devices " +
+                    "(deviceId,accountEd,displayName,syncOnion,deviceEd,deviceX,mlKemPublic," +
+                    "certificate,capabilities,issuedAtMs,expiresAtMs,rosterEpoch,isSelf) " +
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    arrayOf(id, accountB64, "test", "a".repeat(56) + ".onion",
+                        ByteArray(32), ByteArray(32), ByteArray(1), ByteArray(1),
+                        2, now - 1_000, now + 60_000, 1, self))
+            }
+            for ((ordinal, topic) in listOf("settings", "contacts", "contacts", "contacts")
+                    .withIndex()) {
+                db.execSQL("INSERT INTO device_sync_outbox " +
+                    "(peer_device_id,topic,object_id,event_id,event_time_ms,digest,sequence," +
+                    "delta_json,transport,next_try_at_ms,attempts,created_at_ms,is_live) " +
+                    "VALUES (?,?,?,?,?,?,?,?,?,0,0,?,0)",
+                    arrayOf(peer, topic, "batch_$ordinal", "%064x".format(ordinal + 1),
+                        now, ByteArray(32) { ordinal.toByte() }, 1,
+                        "{}".toByteArray(), "TOR", now - 4_000 + ordinal))
+            }
+            val selected = DeviceSyncOutboxStore(database, DeviceRosterStore(database))
+                .dueTor(account, local, peer, now)
+            assertEquals(listOf("batch_0", "batch_3", "batch_2"),
+                selected.map { it.objectId })
+        } finally {
+            db.execSQL("DELETE FROM device_sync_outbox WHERE peer_device_id=?", arrayOf(peer))
+            db.execSQL("DELETE FROM authorized_devices WHERE deviceId IN (?,?)",
+                arrayOf(local, peer))
+        }
+    }
+
     @Test fun confirmedContactSeedsAnExactDurableOutboxEvent() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = SecureLegionDatabase.getInstance(context, ByteArray(32) { 0x53 })

@@ -35,21 +35,31 @@ class DeviceSyncOutboxStore(
             peerDeviceId.length == 43 && localDeviceId != peerDeviceId)
         require(roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) &&
             roster.isAuthorized(accountEd, peerDeviceId, 0x02, nowMs))
-        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
-            "SELECT topic,object_id,event_id,event_time_ms,digest,sequence,delta_json," +
-                "attempts,is_live FROM device_sync_outbox WHERE peer_device_id=? " +
-                "AND transport='TOR' AND next_try_at_ms<=? " +
-                "AND topic IN ('contacts','settings') " +
-                "ORDER BY next_try_at_ms,created_at_ms LIMIT ?",
-            arrayOf(peerDeviceId, nowMs, limit)
-        )).use { cursor ->
-            buildList {
-                while (cursor.moveToNext()) add(Event(peerDeviceId, cursor.getString(0),
-                    cursor.getString(1), cursor.getString(2), cursor.getLong(3),
-                    cursor.getBlob(4), cursor.getLong(5), cursor.getBlob(6), Transport.TOR,
-                    cursor.getInt(7), cursor.getInt(8) == 1))
+        val db = database.openHelper.readableDatabase
+        val selected = LinkedHashMap<Pair<String, String>, Event>()
+        fun append(order: String, count: Int) {
+            db.query(SimpleSQLiteQuery(
+                "SELECT topic,object_id,event_id,event_time_ms,digest,sequence,delta_json," +
+                    "attempts,is_live FROM device_sync_outbox WHERE peer_device_id=? " +
+                    "AND transport='TOR' AND next_try_at_ms<=? " +
+                    "AND topic IN ('contacts','settings') ORDER BY $order LIMIT ?",
+                arrayOf(peerDeviceId, nowMs, count)
+            )).use { cursor ->
+                while (cursor.moveToNext() && selected.size < limit) {
+                    val event = Event(peerDeviceId, cursor.getString(0),
+                        cursor.getString(1), cursor.getString(2), cursor.getLong(3),
+                        cursor.getBlob(4), cursor.getLong(5), cursor.getBlob(6), Transport.TOR,
+                        cursor.getInt(7), cursor.getInt(8) == 1)
+                    selected.putIfAbsent(event.topic to event.objectId, event)
+                }
             }
         }
+        // One old revision progresses in every batch. New contacts then use the
+        // remaining slots before a long seed or settings backlog can delay them.
+        append("created_at_ms ASC, rowid ASC", 1)
+        if (selected.size < limit) append("CASE WHEN topic='contacts' THEN 0 ELSE 1 END, " +
+            "created_at_ms DESC, rowid DESC", limit)
+        return selected.values.toList()
     }
 
     /** A retry is charged to the exact revision even if a newer one replaced it. */
