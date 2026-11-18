@@ -21,14 +21,16 @@ internal class DeviceSyncLiveReceiptReceiver(
 
     fun receive(accountEd: ByteArray, localDeviceId: String,
                 part: DeviceSyncChunkStore.Part, liveNegotiated: Boolean,
-                nowMs: Long = System.currentTimeMillis()): DeviceSyncChunkStore.Result {
-        require(liveNegotiated && part.topic == "receipts")
+                nowMs: Long = System.currentTimeMillis(),
+                archiveAuthenticated: Boolean = false): DeviceSyncChunkStore.Result {
+        require((liveNegotiated || archiveAuthenticated) && part.topic == "receipts")
         return chunks.receive(accountEd, localDeviceId, part, nowMs) { db, canonical ->
             require(canonical.size in 2..1024)
             val receipt = DeviceSyncReceiptDelta.parse(
                 JSONObject(canonical.toString(Charsets.UTF_8)))
             require(receipt.messageId == part.objectId)
-            applyVersioned(db, part, receipt, canonical, nowMs)
+            applyVersioned(db, part, receipt, canonical, nowMs,
+                isLive = !archiveAuthenticated)
         }
     }
 
@@ -93,7 +95,8 @@ internal class DeviceSyncLiveReceiptReceiver(
 
     private fun applyVersioned(db: SupportSQLiteDatabase, part: DeviceSyncChunkStore.Part,
                                receipt: DeviceSyncReceiptDelta.Receipt,
-                               canonical: ByteArray, nowMs: Long): Boolean {
+                               canonical: ByteArray, nowMs: Long,
+                               isLive: Boolean = true): Boolean {
         val digest = ByteArray(32) { i ->
             part.digestHex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         }
@@ -132,14 +135,16 @@ internal class DeviceSyncLiveReceiptReceiver(
             }
             val queued = db.query(SimpleSQLiteQuery(
                 "SELECT COUNT(*),COALESCE(SUM(length(delta_json)),0) FROM device_sync_pending " +
-                    "WHERE peer_device_id=? AND is_live=1", arrayOf(part.peerDeviceId)
+                "WHERE peer_device_id=? AND is_live=?",
+                arrayOf(part.peerDeviceId, if (isLive) 1 else 0)
             )).use { cursor -> check(cursor.moveToFirst()); cursor.getLong(0) to cursor.getLong(1) }
             require(queued.first < 256 && queued.second + canonical.size <= 16L * 1024 * 1024)
             db.execSQL("INSERT INTO device_sync_pending " +
                 "(peer_device_id,topic,object_id,sequence,event_time_ms,delta_json,reason," +
-                "created_at_ms,event_id,digest,is_live) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
+                "created_at_ms,event_id,digest,is_live) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 arrayOf(part.peerDeviceId, "receipts", part.objectId, part.sequence,
-                    part.eventTimeMs, canonical, "missing_message", nowMs, part.eventId, digest))
+                    part.eventTimeMs, canonical, "missing_message", nowMs, part.eventId,
+                    digest, if (isLive) 1 else 0))
             return false
         }
         val local = db.query(SimpleSQLiteQuery(

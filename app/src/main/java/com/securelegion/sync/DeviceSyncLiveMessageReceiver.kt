@@ -25,14 +25,16 @@ internal class DeviceSyncLiveMessageReceiver(
 
     fun receive(accountEd: ByteArray, localDeviceId: String,
                 part: DeviceSyncChunkStore.Part, liveNegotiated: Boolean,
-                nowMs: Long = System.currentTimeMillis()): DeviceSyncChunkStore.Result {
-        require(liveNegotiated && part.topic == "messages")
+                nowMs: Long = System.currentTimeMillis(),
+                archiveAuthenticated: Boolean = false): DeviceSyncChunkStore.Result {
+        require((liveNegotiated || archiveAuthenticated) && part.topic == "messages")
         return chunks.receive(accountEd, localDeviceId, part, nowMs) { db, canonical ->
             require(canonical.size in 2..8 * 1024 * 1024)
             val message = DeviceSyncMessageDelta.parse(
                 JSONObject(canonical.toString(Charsets.UTF_8)), nowMs)
             require(message.id == part.objectId)
-            applyVersioned(db, part, message, canonical, nowMs)
+            applyVersioned(db, part, message, canonical, nowMs,
+                isLive = !archiveAuthenticated)
         }
     }
 
@@ -107,7 +109,8 @@ internal class DeviceSyncLiveMessageReceiver(
 
     private fun applyVersioned(db: SupportSQLiteDatabase, part: DeviceSyncChunkStore.Part,
                                message: DeviceSyncMessageDelta.Message,
-                               canonical: ByteArray, nowMs: Long): Boolean {
+                               canonical: ByteArray, nowMs: Long,
+                               isLive: Boolean = true): Boolean {
         val digest = ByteArray(32) { index ->
             part.digestHex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
         }
@@ -131,7 +134,7 @@ internal class DeviceSyncLiveMessageReceiver(
         if (incomingWins && !(linked?.applyMessage(db, message) ?:
                 DeviceSyncDirectMessageStore.applyInTransaction(db, message,
                     encryptForLocalProfile, storeMedia))) {
-            defer(db, part, canonical, digest, nowMs)
+            defer(db, part, canonical, digest, nowMs, isLive)
             return false
         }
         if (incomingWins) {
@@ -156,7 +159,8 @@ internal class DeviceSyncLiveMessageReceiver(
     }
 
     private fun defer(db: SupportSQLiteDatabase, part: DeviceSyncChunkStore.Part,
-                      canonical: ByteArray, digest: ByteArray, nowMs: Long) {
+                      canonical: ByteArray, digest: ByteArray, nowMs: Long,
+                      isLive: Boolean) {
         val existing = db.query(SimpleSQLiteQuery(
             "SELECT event_id,digest,delta_json FROM device_sync_pending " +
                 "WHERE peer_device_id=? AND topic='messages' AND object_id=? " +
@@ -171,17 +175,17 @@ internal class DeviceSyncLiveMessageReceiver(
         }
         val queued = db.query(SimpleSQLiteQuery(
             "SELECT COUNT(*),COALESCE(SUM(length(delta_json)),0) " +
-                "FROM device_sync_pending WHERE peer_device_id=? AND is_live=1",
-            arrayOf(part.peerDeviceId)
+            "FROM device_sync_pending WHERE peer_device_id=? AND is_live=?",
+            arrayOf(part.peerDeviceId, if (isLive) 1 else 0)
         )).use { check(it.moveToFirst()); it.getLong(0) to it.getLong(1) }
         require(queued.first < 256 && queued.second + canonical.size <= 16L * 1024 * 1024)
         db.execSQL("INSERT INTO device_sync_pending " +
             "(peer_device_id,topic,object_id,sequence,event_time_ms,delta_json,reason," +
             "created_at_ms,event_id,digest,is_live) " +
-            "VALUES (?,'messages',?,?,?,?,?,?,?,?,1)",
+            "VALUES (?,'messages',?,?,?,?,?,?,?,?,?)",
             arrayOf(part.peerDeviceId, part.objectId, part.sequence,
                 part.eventTimeMs, canonical, "missing_contact", nowMs,
-                part.eventId, digest))
+                part.eventId, digest, if (isLive) 1 else 0))
     }
 
     private fun advanceCursor(db: SupportSQLiteDatabase,

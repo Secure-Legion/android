@@ -9,6 +9,7 @@ import android.util.Base64
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ImageView
 import androidx.lifecycle.lifecycleScope
 import androidx.activity.result.contract.ActivityResultContracts
 import com.securelegion.crypto.KeyManager
@@ -19,6 +20,8 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterAuthority
 import com.securelegion.sync.DeviceEnrollmentOwnerCoordinator
 import com.securelegion.sync.NearbyHistoryClient
+import com.securelegion.sync.NearbyHistoryServer
+import com.securelegion.utils.BrandedQrGenerator
 import com.securelegion.utils.SessionManager
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +36,8 @@ class DevicesActivity : BaseActivity() {
     private var busy = false
     private var shownCode: String? = null
     @Volatile private var historyClient: NearbyHistoryClient? = null
+    @Volatile private var historyServer: NearbyHistoryServer? = null
+    private var historyDialog: AlertDialog? = null
     private val scanHistory = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         result ->
         if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
@@ -78,6 +83,11 @@ class DevicesActivity : BaseActivity() {
             if (busy) {
                 historyClient?.cancel()
             } else scanHistory.launch(Intent(this, QRScannerActivity::class.java))
+        }
+        findViewById<View>(R.id.receiveHistoryButton).setOnClickListener {
+            if (busy) {
+                historyServer?.close()
+            } else chooseHistorySource()
         }
         lifecycleScope.launch {
             DeviceEnrollmentOwnerCoordinator.state.collect { renderEnrollment(it) }
@@ -138,7 +148,75 @@ class DevicesActivity : BaseActivity() {
 
     override fun onStop() {
         historyClient?.cancel()
+        historyServer?.close()
+        historyDialog?.dismiss()
+        historyDialog = null
         super.onStop()
+    }
+
+    private fun chooseHistorySource() {
+        val devices = currentRoster?.devices?.filter { !it.isSelf }.orEmpty()
+        if (devices.isEmpty()) {
+            ThemedToast.show(this, "Link another device before receiving history")
+            return
+        }
+        AlertDialog.Builder(this).setTitle("Receive history from")
+            .setItems(devices.map { it.displayName }.toTypedArray()) { _, which ->
+                receiveNearbyHistory(devices[which].deviceId)
+            }.show()
+    }
+
+    private fun receiveNearbyHistory(peerId: String) {
+        if (busy) return
+        busy = true
+        val button = findViewById<TextView>(R.id.receiveHistoryButton)
+        button.text = "Preparing secure QR…"
+        lifecycleScope.launch {
+            val opened = withContext(Dispatchers.IO) {
+                runCatching { NearbyHistoryServer.open(this@DevicesActivity, peerId) }
+            }
+            if (opened.isFailure || !SessionManager.isUnlocked(this@DevicesActivity)) {
+                opened.getOrNull()?.close()
+                busy = false
+                button.text = "Receive history over Wi-Fi"
+                ThemedToast.show(this@DevicesActivity,
+                    opened.exceptionOrNull()?.message?.take(100) ?: "Session locked")
+                return@launch
+            }
+            val server = opened.getOrThrow()
+            historyServer = server
+            val qr = ImageView(this@DevicesActivity).apply {
+                setPadding(24.dp, 24.dp, 24.dp, 24.dp)
+                setImageBitmap(BrandedQrGenerator.generate(this@DevicesActivity,
+                    BrandedQrGenerator.QrOptions(server.offer, size = 640,
+                        showLogo = false)))
+                contentDescription = "Secure Nearby history QR"
+            }
+            historyDialog = AlertDialog.Builder(this@DevicesActivity)
+                .setTitle("Scan on your other device")
+                .setView(qr)
+                .setMessage("Keep both devices on the same Wi-Fi network.")
+                .setNegativeButton("Stop") { _, _ -> server.close() }
+                .create().also { it.show() }
+            val result = withContext(Dispatchers.IO) {
+                runCatching { server.run { message ->
+                    runOnUiThread { button.text = "Stop transfer · $message" }
+                } }
+            }
+            historyServer = null
+            server.close()
+            historyDialog?.dismiss()
+            historyDialog = null
+            busy = false
+            button.text = "Receive history over Wi-Fi"
+            if (!isFinishing && !isDestroyed) {
+                val message = result.fold(
+                    onSuccess = { "Imported ${it.imported} updates; ${it.deferred} deferred." },
+                    onFailure = { it.message?.take(120) ?: "History transfer stopped" })
+                AlertDialog.Builder(this@DevicesActivity).setTitle("History transfer")
+                    .setMessage(message).setPositiveButton("OK", null).show()
+            }
+        }
     }
 
     private fun store(keys: KeyManager) = DeviceRosterStore(

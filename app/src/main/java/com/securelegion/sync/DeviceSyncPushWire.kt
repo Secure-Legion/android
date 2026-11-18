@@ -13,13 +13,16 @@ internal object DeviceSyncPushWire {
     private val hex64 = Regex("[0-9a-f]{64}")
 
     fun parse(frame: DeviceSyncFrameV2.Frame, liveNegotiated: Boolean,
-              nowMs: Long = System.currentTimeMillis()): DeviceSyncChunkStore.Part {
+              nowMs: Long = System.currentTimeMillis(),
+              nearby: Boolean = false): DeviceSyncChunkStore.Part {
         require(frame.kind == DeviceSyncFrameV2.Kind.PUSH)
         val payload = frame.payload
         val topic = payload.getString("topic")
-        val live = topic in DeviceSyncTorPolicy.liveTopics
-        require(topic in DeviceSyncTorPolicy.metadataTopics || topic == "group_links" || live)
+        val live = !nearby && topic in DeviceSyncTorPolicy.liveTopics
+        require(if (nearby) topic in setOf("messages", "receipts", "contacts",
+            "settings", "groups") else topic in DeviceSyncTorPolicy.metadataTopics || live)
         require(!live || liveNegotiated)
+        require(!nearby || !payload.has("sync_mode"))
         val fields = payload.keys().asSequence().toSet()
         val expected = if (payload.has("chunk_id")) chunk else single
         require(fields == if (live) expected + "sync_mode" else expected)
@@ -51,7 +54,8 @@ internal object DeviceSyncPushWire {
             data = payload.getJSONObject("delta").toString().toByteArray(Charsets.UTF_8)
             require(data.size in 2..128 * 1024)
         }
-        require(total in 1..64 && index in 0 until total)
+        require(total in 1..(if (nearby && topic == "groups") 256 else 64) &&
+            index in 0 until total)
         return DeviceSyncChunkStore.Part(frame.sender, topic, objectId, eventId, digest,
             eventTime, sequence, index, total, data)
     }

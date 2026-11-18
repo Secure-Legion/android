@@ -41,6 +41,20 @@ class DeviceSyncPushWireTest {
         }
     }
 
+    @Test fun nearbyArchiveAcceptsUnmarkedHistoryButNeverGroupLinks() {
+        val message = base("messages").put("delta",
+            JSONObject().put("message_id", "m1"))
+        assertEquals("messages", DeviceSyncPushWire.parse(frame(message),
+            liveNegotiated = false, nowMs = now, nearby = true).topic)
+        assertThrows(IllegalArgumentException::class.java) {
+            DeviceSyncPushWire.parse(frame(message), false, now)
+        }
+        val links = base("group_links").put("delta", JSONObject())
+        assertThrows(IllegalArgumentException::class.java) {
+            DeviceSyncPushWire.parse(frame(links), false, now, nearby = true)
+        }
+    }
+
     @Test fun oldPeerBridgeRequiresExactHistoryIdentity() {
         val payload = base("messages").put("delta", JSONObject().put("message_id", "m1"))
         val transcript = JSONArray().put("secure-sync-history-v2")

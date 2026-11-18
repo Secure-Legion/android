@@ -31,6 +31,8 @@ import com.securelegion.database.LinkedChatStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.LinkedDeviceService
 import com.securelegion.sync.DeviceSyncMediaFiles
+import com.securelegion.sync.NearbyHistoryServer
+import com.securelegion.utils.BrandedQrGenerator
 import com.securelegion.utils.SessionManager
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +46,8 @@ import java.io.File
 
 /** Seedless linked-device chat entry point. All sends use recipient device sessions. */
 class LinkedMessengerActivity : AppCompatActivity() {
+    @Volatile private var historyServer: NearbyHistoryServer? = null
+    private var historyDialog: AlertDialog? = null
     private lateinit var heading: TextView
     private lateinit var status: TextView
     private lateinit var list: LinearLayout
@@ -91,6 +95,10 @@ class LinkedMessengerActivity : AppCompatActivity() {
             setTextColor(Color.LTGRAY)
         }
         root.addView(status)
+        root.addView(Button(this).apply {
+            text = "Receive history over Wi-Fi"
+            setOnClickListener { chooseHistorySource() }
+        })
         val scroll = ScrollView(this)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(list)
@@ -406,5 +414,78 @@ class LinkedMessengerActivity : AppCompatActivity() {
             return count
         }
         override fun close() { bytes.fill(0) }
+    }
+
+    private fun chooseHistorySource() {
+        lifecycleScope.launch {
+            val devices = withContext(Dispatchers.IO) { runCatching {
+                val credentials = LinkedProfileCredentialStore(this@LinkedMessengerActivity)
+                val account = credentials.activeProfile()?.accountEd
+                    ?: error("Linked profile unavailable")
+                val key = credentials.activeDatabaseKey() ?: error("Linked database unavailable")
+                val db = try { SecureLegionDatabase.getInstance(this@LinkedMessengerActivity, key) }
+                    finally { key.fill(0) }
+                DeviceRosterStore(db).listAuthorizedDevices(account).filter { !it.isSelf }
+            } }
+            val choices = devices.getOrElse {
+                status.text = it.message ?: "Device list unavailable"
+                return@launch
+            }
+            if (choices.isEmpty()) {
+                status.text = "Link another device first"
+                return@launch
+            }
+            AlertDialog.Builder(this@LinkedMessengerActivity)
+                .setTitle("Receive history from")
+                .setItems(choices.map { it.displayName }.toTypedArray()) { _, which ->
+                    receiveHistory(choices[which].deviceId)
+                }.show()
+        }
+    }
+
+    private fun receiveHistory(peerId: String) {
+        if (historyServer != null) return
+        lifecycleScope.launch {
+            val opened = withContext(Dispatchers.IO) {
+                runCatching { NearbyHistoryServer.open(this@LinkedMessengerActivity, peerId) }
+            }
+            val server = opened.getOrElse {
+                status.text = it.message ?: "Could not start Nearby history"
+                return@launch
+            }
+            historyServer = server
+            val qr = ImageView(this@LinkedMessengerActivity).apply {
+                setPadding(24, 24, 24, 24)
+                setImageBitmap(BrandedQrGenerator.generate(this@LinkedMessengerActivity,
+                    BrandedQrGenerator.QrOptions(server.offer, size = 640,
+                        showLogo = false)))
+                contentDescription = "Secure Nearby history QR"
+            }
+            historyDialog = AlertDialog.Builder(this@LinkedMessengerActivity)
+                .setTitle("Scan on your other device")
+                .setView(qr)
+                .setMessage("Keep both devices on the same Wi-Fi network.")
+                .setNegativeButton("Stop") { _, _ -> server.close() }
+                .create().also { it.show() }
+            val result = withContext(Dispatchers.IO) {
+                runCatching { server.run { message ->
+                    runOnUiThread { status.text = message }
+                } }
+            }
+            historyServer = null
+            server.close()
+            historyDialog?.dismiss()
+            historyDialog = null
+            status.text = result.fold(
+                onSuccess = { "Imported ${it.imported} updates; ${it.deferred} deferred" },
+                onFailure = { it.message ?: "History transfer stopped" })
+        }
+    }
+
+    override fun onStop() {
+        historyServer?.close()
+        historyDialog?.dismiss()
+        historyDialog = null
+        super.onStop()
     }
 }
