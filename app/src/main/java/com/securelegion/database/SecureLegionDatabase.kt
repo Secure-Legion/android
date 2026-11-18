@@ -63,7 +63,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class, DeviceRoster::class, AuthorizedDevice::class],
-    version = 63,
+    version = 64,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1265,6 +1265,13 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) = createDeviceContactCaptureTriggers(db)
         }
 
+        private val MIGRATION_63_64 = object : Migration(63, 64) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN isDeviceSyncImported " +
+                    "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         /** Room owns the roster entities; these bounded protocol queues are managed by SQL. */
         private fun createDeviceSyncTables(db: SupportSQLiteDatabase) {
             val statements = arrayOf(
@@ -1392,7 +1399,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_48_49, MIGRATION_49_50,
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
             MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58, MIGRATION_58_59,
-            MIGRATION_59_60, MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63
+            MIGRATION_59_60, MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63,
+            MIGRATION_63_64
         )
 
         /**
@@ -1489,7 +1497,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 63) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 64) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

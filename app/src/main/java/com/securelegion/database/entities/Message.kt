@@ -1,6 +1,7 @@
 package com.securelegion.database.entities
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -343,7 +344,10 @@ data class Message(
      */
     val selfDestructTtl: Double? = null,
 
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+
+    /** Own-device history has no local contact-delivery ownership. */
+    @ColumnInfo(defaultValue = "0") val isDeviceSyncImported: Boolean = false
 ) {
     companion object {
         // Message type constants

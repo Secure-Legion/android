@@ -31,6 +31,14 @@ internal object DeviceSyncTorPolicy {
         }
     }
 
+    /** Inbound bulk PUSH may reach the authenticated non-commit skip handler. */
+    fun allowsInbound(kind: DeviceSyncFrameV2.Kind, payload: JSONObject,
+                      livePeer: Boolean): Boolean {
+        if (allows(kind, payload, livePeer)) return true
+        return kind == DeviceSyncFrameV2.Kind.PUSH && !payload.has("group_action_v") &&
+            payload.optString("topic") in setOf("messages", "receipts", "groups")
+    }
+
     /** Routing marker is never part of the canonical delta or its digest. */
     fun stripLiveMarker(payload: JSONObject): JSONObject {
         require(payload.optString("topic") in liveTopics &&

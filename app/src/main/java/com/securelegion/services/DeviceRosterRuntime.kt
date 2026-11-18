@@ -14,6 +14,10 @@ import com.securelegion.sync.DeviceEnrollmentReceiptVerifier
 import com.securelegion.sync.DeviceEnrollmentOwnerCoordinator
 import com.securelegion.sync.DeviceEnrollmentWire
 import com.securelegion.sync.DeviceSyncWireRoute
+import com.securelegion.sync.DeviceSyncFrameV2
+import com.securelegion.sync.DeviceSyncHelloWire
+import com.securelegion.sync.DeviceSyncPushWire
+import com.securelegion.sync.DeviceSyncTorPolicy
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +67,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
             if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) return
             val exchange = DeviceRosterExchange(database, roster)
             val syncHost = DeviceSyncFsHost(account, identity, roster)
+            val peerCapabilities = HashMap<String, Set<String>>()
             val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)
             val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
             check(onion == identity.onionAddress)
@@ -85,6 +90,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     } else DeviceEnrollmentOwnerCoordinator.receive(context, frame)
                                 }
                                 0xA4 -> exchange.acceptUpdate(frame, account, identity)?.let { reply ->
+                                    peerCapabilities.clear()
                                     // A removed endpoint may acknowledge the public
                                     // revocation before this listener shuts down.
                                     if (SessionManager.isUnlocked(context)) {
@@ -106,9 +112,45 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                 break
                                             RustBridge.sendDeviceOnionFrame(peer.onion, reply)
                                         }
+                                        outcome.message?.let { plaintext ->
+                                            val inner = DeviceSyncFrameV2.decode(plaintext, peerId,
+                                                identity.deviceId, frame)
+                                            when (inner.kind) {
+                                                DeviceSyncFrameV2.Kind.HELLO,
+                                                DeviceSyncFrameV2.Kind.HELLO_ACK -> {
+                                                    val hello = DeviceSyncHelloWire.parse(inner.payload)
+                                                    peerCapabilities[peerId] = hello.capabilities
+                                                    // Android advertises only the Tor skip policy until
+                                                    // its transactional topic importers are live.
+                                                    syncHost.noteCapabilities(peerId, hello.capabilities,
+                                                        setOf("tor_metadata_only_v1"))
+                                                    if (inner.kind == DeviceSyncFrameV2.Kind.HELLO) {
+                                                        sendSyncApplication(syncHost, roster, account,
+                                                            identity.deviceId, peerId, peer.onion,
+                                                            DeviceSyncFrameV2.Kind.HELLO_ACK,
+                                                            DeviceSyncHelloWire.payload(
+                                                                setOf("tor_metadata_only_v1"), emptyMap()))
+                                                    }
+                                                }
+                                                DeviceSyncFrameV2.Kind.PUSH -> {
+                                                    val topic = inner.payload.optString("topic")
+                                                    if (topic !in DeviceSyncTorPolicy.metadataTopics &&
+                                                        topic in setOf("messages", "receipts", "groups") &&
+                                                        peerCapabilities[peerId]?.contains(
+                                                            "tor_metadata_only_v1") == true) {
+                                                        val skipped = DeviceSyncPushWire.transportSkipped(
+                                                            inner.payload)
+                                                        sendSyncApplication(syncHost, roster, account,
+                                                            identity.deviceId, peerId, peer.onion,
+                                                            DeviceSyncFrameV2.Kind.PULL_RESPONSE, skipped)
+                                                    }
+                                                }
+                                                else -> Unit
+                                            }
+                                        }
                                     } finally {
-                                        // Application frames require a transactional importer.
-                                        // Keep them unacknowledged until that dispatcher is wired.
+                                        // Topic data remains unacknowledged until its transactional
+                                        // importer is wired. Clear decrypted application bytes.
                                         outcome.message?.fill(0)
                                     }
                                 }
@@ -144,6 +186,25 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 DeviceEnrollmentOwnerCoordinator.cancel()
             }
         } finally { identity.close() }
+    }
+
+    private fun sendSyncApplication(host: DeviceSyncFsHost, roster: DeviceRosterStore,
+                                    account: ByteArray, localId: String, peerId: String,
+                                    onion: String, kind: DeviceSyncFrameV2.Kind,
+                                    payload: org.json.JSONObject) {
+        if (!SessionManager.isUnlocked(context) ||
+            !roster.isLocalAuthorized(account, localId, 0x02) ||
+            roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) return
+        val plaintext = DeviceSyncFrameV2.encode(kind, localId, peerId, payload)
+        try {
+            val sealed = host.seal(peerId, plaintext)
+            for (wire in sealed.outgoing) {
+                if (!SessionManager.isUnlocked(context) ||
+                    !roster.isLocalAuthorized(account, localId, 0x02) ||
+                    roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) break
+                RustBridge.sendDeviceOnionFrame(onion, wire)
+            }
+        } finally { plaintext.fill(0) }
     }
 
     private companion object { const val TAG = "DeviceRosterRuntime" }

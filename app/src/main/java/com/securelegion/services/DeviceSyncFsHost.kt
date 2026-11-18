@@ -21,6 +21,7 @@ class DeviceSyncFsHost(
     private var handle = 0L
     private var closed = false
     private val peerKeys = HashMap<String, Pair<ByteArray, ByteArray>>()
+    private val livePeers = HashSet<String>()
 
     init { require(accountEd.size == 32) }
 
@@ -38,9 +39,27 @@ class DeviceSyncFsHost(
     @Synchronized
     fun seal(peerId: String, applicationPlaintext: ByteArray,
              nowMs: Long = System.currentTimeMillis()): Outcome {
-        validateTorPlaintext(applicationPlaintext)
+        validateTorPlaintext(applicationPlaintext, peerId, inbound = false)
         return call(peerId, "seal", null, applicationPlaintext, nowMs)
     }
+
+    /** Call only after an authenticated HELLO/HELLO_ACK and local feature readiness. */
+    @Synchronized
+    fun noteCapabilities(peerId: String, peerCapabilities: Set<String>,
+                         localCapabilities: Set<String>, nowMs: Long = System.currentTimeMillis()) {
+        check(!closed)
+        require(roster.isLocalAuthorized(accountEd, identity.deviceId, 0x02, nowMs) &&
+            roster.isAuthorized(accountEd, peerId, 0x02, nowMs))
+        if (DeviceSyncTorPolicy.LIVE_CAPABILITY in peerCapabilities &&
+            DeviceSyncTorPolicy.LIVE_CAPABILITY in localCapabilities) livePeers.add(peerId)
+        else livePeers.remove(peerId)
+    }
+
+    @Synchronized
+    fun liveNegotiated(peerId: String, nowMs: Long = System.currentTimeMillis()): Boolean =
+        peerId in livePeers &&
+            roster.isLocalAuthorized(accountEd, identity.deviceId, 0x02, nowMs) &&
+            roster.isAuthorized(accountEd, peerId, 0x02, nowMs)
 
     @Synchronized
     private fun call(peerId: String, operation: String, wire: ByteArray?,
@@ -84,7 +103,7 @@ class DeviceSyncFsHost(
         }
         val plaintext = if (response.isNull("message")) null else
             Base64.decode(response.getString("message"), Base64.DEFAULT).also {
-                validateTorPlaintext(it)
+                validateTorPlaintext(it, peerId, inbound = true)
                 if (operation == "receive" && wire != null) {
                     DeviceSyncFrameV2.decode(it, peerId, identity.deviceId, wire, nowMs)
                 }
@@ -104,6 +123,7 @@ class DeviceSyncFsHost(
 
     @Synchronized
     fun forget(peerId: String, nowMs: Long = System.currentTimeMillis()) {
+        livePeers.remove(peerId)
         val keys = peerKeys.remove(peerId) ?: return
         if (handle == 0L) return
         val request = JSONObject().put("op", "forget")
@@ -121,10 +141,11 @@ class DeviceSyncFsHost(
         handle = 0L
         peerKeys.values.forEach { (ed, x) -> ed.fill(0); x.fill(0) }
         peerKeys.clear()
+        livePeers.clear()
     }
 
     /** iOS build 48's PULL_REQUEST can carry group message actions. Block it here. */
-    private fun validateTorPlaintext(bytes: ByteArray) {
+    private fun validateTorPlaintext(bytes: ByteArray, peerId: String, inbound: Boolean) {
         require(bytes.size in 2..384 * 1024)
         val kind = bytes[0].toInt() and 0xff
         require(kind in setOf(0xB0, 0xB1, 0xB2, 0xB4, 0xB5))
@@ -133,9 +154,9 @@ class DeviceSyncFsHost(
             ?: throw IllegalArgumentException("Missing Tor sync payload")
         val frameKind = DeviceSyncFrameV2.Kind.fromWire(kind)
             ?: throw IllegalArgumentException("Unknown Tor sync frame")
-        // This host has no authenticated capability exchange yet. The live
-        // lane stays closed until the worker binds mutual HELLO capabilities.
-        require(DeviceSyncTorPolicy.allows(frameKind, payload, livePeer = false))
+        require(if (inbound) DeviceSyncTorPolicy.allowsInbound(frameKind, payload,
+            livePeer = peerId in livePeers) else DeviceSyncTorPolicy.allows(frameKind, payload,
+            livePeer = peerId in livePeers))
     }
 
     @Synchronized

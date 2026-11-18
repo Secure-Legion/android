@@ -64,7 +64,8 @@ interface MessageDao {
             retryCount, lastRetryTimestamp, nextRetryAtMs, lastError,
             pingDelivered, messageDelivered, tapDelivered, pongDelivered,
             pingWireBytes, paymentQuoteJson, paymentStatus, txSignature, paymentToken, paymentAmount,
-            correlationId, replyToMessageId, isEdited, selfDestructTtl, isPinned"""
+            correlationId, replyToMessageId, isEdited, selfDestructTtl, isPinned,
+            isDeviceSyncImported"""
     }
 
     /**
@@ -262,7 +263,7 @@ interface MessageDao {
      * Called when Tor restarts with fresh circuits — stale backoff timers from
      * dead-circuit retries are meaningless and would delay delivery.
      */
-    @Query("UPDATE messages SET nextRetryAtMs = NULL WHERE isSentByMe = 1 AND status NOT IN (2, 3) AND messageDelivered = 0")
+    @Query("UPDATE messages SET nextRetryAtMs = NULL WHERE isSentByMe = 1 AND isDeviceSyncImported = 0 AND status NOT IN (2, 3) AND messageDelivered = 0")
     suspend fun resetAllRetryBackoffs(): Int
 
     @Query("""
@@ -270,6 +271,7 @@ interface MessageDao {
         SET nextRetryAtMs = NULL
         WHERE contactId = :contactId
           AND isSentByMe = 1
+          AND isDeviceSyncImported = 0
           AND status NOT IN (${Message.STATUS_DELIVERED}, ${Message.STATUS_READ}, ${Message.STATUS_EXPIRED})
           AND messageDelivered = 0
     """)
@@ -280,7 +282,7 @@ interface MessageDao {
      * hasn't arrived within the timeout. This allows the retry worker to re-send
      * the blob, since "sent" over Tor doesn't guarantee "received".
      */
-    @Query("UPDATE messages SET status = ${Message.STATUS_PONG_RECEIVED} WHERE isSentByMe = 1 AND status = ${Message.STATUS_SENT} AND messageDelivered = 0 AND (lastRetryTimestamp IS NULL OR lastRetryTimestamp < :cutoffMs)")
+    @Query("UPDATE messages SET status = ${Message.STATUS_PONG_RECEIVED} WHERE isSentByMe = 1 AND isDeviceSyncImported = 0 AND status = ${Message.STATUS_SENT} AND messageDelivered = 0 AND (lastRetryTimestamp IS NULL OR lastRetryTimestamp < :cutoffMs)")
     suspend fun revertStaleSentMessages(cutoffMs: Long): Int
 
     /**
@@ -347,14 +349,14 @@ interface MessageDao {
     /**
      * Get pending messages (for retry)
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE status = ${Message.STATUS_PENDING} OR status = ${Message.STATUS_FAILED} ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE isDeviceSyncImported = 0 AND (status = ${Message.STATUS_PENDING} OR status = ${Message.STATUS_FAILED}) ORDER BY timestamp ASC")
     suspend fun getPendingMessages(): List<Message>
 
     /**
      * Get messages waiting for Pong (STATUS_PING_SENT, sent by us, with pingId)
      * Used by retryAllPendingMessages() to poll Rust for PONG arrivals
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_PING_SENT} AND pingId IS NOT NULL ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND isDeviceSyncImported = 0 AND status = ${Message.STATUS_PING_SENT} AND pingId IS NOT NULL ORDER BY timestamp ASC")
     suspend fun getMessagesAwaitingPong(): List<Message>
 
     /**
@@ -362,7 +364,7 @@ interface MessageDao {
      * Used by retryAllPendingMessages() to re-send via fast mode.
      * Only returns messages older than 30s to avoid re-sending during normal ACK latency.
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_SENT} AND messageDelivered = 0 AND correlationId LIKE 'blob_%' AND timestamp < :cutoffMs ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND isDeviceSyncImported = 0 AND status = ${Message.STATUS_SENT} AND messageDelivered = 0 AND correlationId LIKE 'blob_%' AND timestamp < :cutoffMs ORDER BY timestamp ASC")
     suspend fun getFastModePendingAck(cutoffMs: Long): List<Message>
 
     /**
@@ -373,6 +375,7 @@ interface MessageDao {
     @Query("""
         SELECT $LITE_COLS FROM messages
         WHERE isSentByMe = 1
+          AND isDeviceSyncImported = 0
           AND messageDelivered = 0
           AND pingId IS NOT NULL
           AND encryptedPayload IS NOT NULL
@@ -393,6 +396,7 @@ interface MessageDao {
         SELECT $LITE_COLS FROM messages
         WHERE contactId = :contactId
           AND isSentByMe = 1
+          AND isDeviceSyncImported = 0
           AND messageDelivered = 0
           AND pingId IS NOT NULL
           AND encryptedPayload IS NOT NULL
@@ -419,14 +423,14 @@ interface MessageDao {
      * then sendPendingMessagesForContact() picks these up and sends the blob.
      * Also includes STATUS_FAILED so blob-send failures get retried without full PING cycle.
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND status IN (${Message.STATUS_PONG_RECEIVED}, ${Message.STATUS_FAILED}) AND pingId IS NOT NULL ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND isDeviceSyncImported = 0 AND status IN (${Message.STATUS_PONG_RECEIVED}, ${Message.STATUS_FAILED}) AND pingId IS NOT NULL ORDER BY timestamp ASC")
     suspend fun getMessagesPendingBlobSend(contactId: Long): List<Message>
 
     /**
      * Get distinct contact IDs with STATUS_PONG_RECEIVED messages (ready for blob send)
      * Used by retryAllPendingMessages() to iterate per-contact
      */
-    @Query("SELECT DISTINCT contactId FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_PONG_RECEIVED}")
+    @Query("SELECT DISTINCT contactId FROM messages WHERE isSentByMe = 1 AND isDeviceSyncImported = 0 AND status = ${Message.STATUS_PONG_RECEIVED}")
     suspend fun getContactsWithPongReceived(): List<Long>
 
     /**
@@ -441,7 +445,7 @@ interface MessageDao {
      * Used to replace SharedPreferences-based PendingPing queue
      * Returns messages that have pingId set and are sent by us (isSentByMe = true)
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND pingId IS NOT NULL ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND isDeviceSyncImported = 0 AND pingId IS NOT NULL ORDER BY timestamp ASC")
     suspend fun getPendingPingsForContact(contactId: Long): List<Message>
 
     /**
@@ -499,6 +503,7 @@ interface MessageDao {
     @Query("""
         SELECT $LITE_COLS FROM messages
         WHERE isSentByMe = 1
+        AND isDeviceSyncImported = 0
         AND status NOT IN (2, 3)
         AND timestamp > :currentTimeMs - (:giveupAfterDays * 24 * 60 * 60 * 1000)
         ORDER BY timestamp ASC
@@ -518,6 +523,7 @@ interface MessageDao {
         UPDATE messages
         SET nextRetryAtMs = NULL
         WHERE isSentByMe = 1
+          AND isDeviceSyncImported = 0
           AND status NOT IN (2, 3, 8)
     """)
     suspend fun clearAllRetryBackoff(): Int
@@ -544,6 +550,7 @@ interface MessageDao {
         SET messageDelivered = 0,
             nextRetryAtMs = NULL
         WHERE isSentByMe = 1
+          AND isDeviceSyncImported = 0
           AND status = 1
           AND messageDelivered = 1
           AND timestamp < :staleCutoffMs
@@ -565,6 +572,7 @@ interface MessageDao {
             nextRetryAtMs = NULL,
             lastError = 'Recovered false delivered state without MESSAGE_ACK'
         WHERE isSentByMe = 1
+          AND isDeviceSyncImported = 0
           AND status IN (${Message.STATUS_DELIVERED}, ${Message.STATUS_READ})
           AND messageDelivered = 0
           AND timestamp < :staleCutoffMs

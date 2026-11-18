@@ -4237,6 +4237,8 @@ class MessageService(private val context: Context) {
      * Called by retry worker to attempt sending Pings for queued messages
      */
     suspend fun sendPingForMessage(message: Message): Result<String> = withContext(Dispatchers.IO) {
+        if (message.isDeviceSyncImported) return@withContext Result.failure(
+            IllegalStateException("Imported history has no contact-delivery ownership"))
         if (!pingSendInFlight.add(message.id)) {
             Log.d(TAG, "Skipping duplicate in-flight PING send for ${message.messageId}")
             return@withContext Result.failure(Exception("PING already in flight for ${message.messageId}"))
@@ -4554,7 +4556,7 @@ class MessageService(private val context: Context) {
                 return@withContext Result.failure(Exception("Message not found"))
             }
 
-            if (!message.isSentByMe) {
+            if (!message.isSentByMe || message.isDeviceSyncImported) {
                 Log.e(TAG, "Cannot retry incoming message $messageId")
                 return@withContext Result.failure(Exception("Cannot retry incoming message"))
             }
@@ -4865,6 +4867,7 @@ class MessageService(private val context: Context) {
         contact: com.securelegion.database.entities.Contact,
         pingId: String
     ) {
+        if (message.isDeviceSyncImported) return
         try {
             // Gate check for blob send - PONG received, must have transport
             Log.d(TAG, "Waiting for transport gate before sending message blob...")
