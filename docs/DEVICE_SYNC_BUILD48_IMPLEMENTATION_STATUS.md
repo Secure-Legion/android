@@ -90,5 +90,6 @@ bulk history and full groups remain Nearby-only.
 8. Complete Devices enrollment and per-device status paths; gate all
    advertising until interoperability passes.
 
-The separate Arti 0.48 branch still requires real-device Tor runtime gates and
-must not be merged into this branch before those gates pass.
+The separate Arti 0.48 branch passed a Pixel 9a bootstrap/shutdown test, but
+onion-service operation and the 24-hour soak remain unverified. It has not been
+merged into this branch.
