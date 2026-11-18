@@ -1,0 +1,12 @@
+Android build-48 device-sync branch native release artifacts
+NDK r27c, Android API 26, Cargo --release --locked --offline
+These libraries retain the baseline Arti 0.44 family. Arti 0.48 is a separate branch.
+
+arm64-v8a/libsecurelegion.so  BBBD739D5FF5607D16E3EDE42ED81C60C10CE1B7F89ADFF078F9F8F11BCC69A6
+armeabi-v7a/libsecurelegion.so DA62767E51E669F7A02351C532D57827E25957A9E415FF73F858F14024B69764
+x86_64/libsecurelegion.so    4158BF070B023EDE903BB74671B522D7538323CC92E5E881F91F16BE3404B227
+
+app-fdroid-debug.apk          D28A9D56CEC6797EE3D8BCB110A672A48C2F81F73D82DE3606B67D5C232C2481
+
+The APK is a compile/package artifact only. Enrollment, dispatch, metadata sync,
+and Nearby history transfer are not end-to-end enabled in this branch yet.
