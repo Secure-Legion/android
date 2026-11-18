@@ -3500,6 +3500,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "secure-sync-fs"
+version = "0.1.0"
+dependencies = [
+ "base64 0.21.7",
+ "ed25519-dalek",
+ "rand 0.8.7",
+ "serde",
+ "serde_json",
+ "sha2",
+ "snow",
+ "thiserror 1.0.69",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "securelegion"
 version = "1.0.0"
 dependencies = [
@@ -3537,6 +3553,7 @@ dependencies = [
  "rand_core 0.6.4",
  "reqwest",
  "secure-device-protocol",
+ "secure-sync-fs",
  "securelegion-crypto",
  "serde",
  "serde-big-array",
@@ -3908,6 +3925,21 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+
+[[package]]
+name = "snow"
+version = "0.10.0"
+dependencies = [
+ "blake2",
+ "chacha20poly1305",
+ "curve25519-dalek",
+ "getrandom 0.3.4",
+ "ring",
+ "rustc_version",
+ "sha2",
+ "subtle",
+ "zeroize",
+]
 
 [[package]]
 name = "socket2"

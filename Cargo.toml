@@ -11,6 +11,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 securelegion-crypto = { path = "../securelegion-crypto" }
+secure-sync-fs = { path = "../portable-sync-fs" }
 secure-device-protocol = { path = "device-protocol" }
 
 # Cryptography
