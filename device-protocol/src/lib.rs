@@ -8,6 +8,7 @@
 mod account_identity;
 pub mod api;
 mod authorization;
+pub mod history;
 
 pub use account_identity::*;
 pub use authorization::*;
