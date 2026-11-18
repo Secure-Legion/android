@@ -1246,10 +1246,31 @@ abstract class SecureLegionDatabase : RoomDatabase() {
 
         private val MIGRATION_59_60 = object : Migration(59, 60) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE device_sync_outbox ADD COLUMN is_live INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE device_sync_pending ADD COLUMN is_live INTEGER NOT NULL DEFAULT 0")
+                // Migration 58→59 creates the latest protocol tables for fresh
+                // upgrades, while older 59 databases lack these two columns.
+                if (!hasColumn(db, "device_sync_outbox", "is_live"))
+                    db.execSQL("ALTER TABLE device_sync_outbox ADD COLUMN is_live " +
+                        "INTEGER NOT NULL DEFAULT 0")
+                if (!hasColumn(db, "device_sync_pending", "is_live"))
+                    db.execSQL("ALTER TABLE device_sync_pending ADD COLUMN is_live " +
+                        "INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("CREATE INDEX IF NOT EXISTS idx_device_sync_outbox_live_due " +
                     "ON device_sync_outbox(peer_device_id,is_live,next_try_at_ms)")
+            }
+        }
+
+        private fun hasColumn(db: SupportSQLiteDatabase, table: String,
+                              column: String): Boolean {
+            require(table in setOf("device_sync_outbox", "device_sync_pending", "messages") &&
+                column in setOf("is_live", "isDeviceSyncImported"))
+            return db.query("PRAGMA table_info($table)").use { cursor ->
+                val name = cursor.getColumnIndexOrThrow("name")
+                var found = false
+                while (cursor.moveToNext()) if (cursor.getString(name) == column) {
+                    found = true
+                    break
+                }
+                found
             }
         }
 
@@ -1267,8 +1288,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
 
         private val MIGRATION_63_64 = object : Migration(63, 64) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE messages ADD COLUMN isDeviceSyncImported " +
-                    "INTEGER NOT NULL DEFAULT 0")
+                if (!hasColumn(db, "messages", "isDeviceSyncImported"))
+                    db.execSQL("ALTER TABLE messages ADD COLUMN isDeviceSyncImported " +
+                        "INTEGER NOT NULL DEFAULT 0")
             }
         }
 
