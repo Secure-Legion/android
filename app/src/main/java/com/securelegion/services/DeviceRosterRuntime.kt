@@ -88,6 +88,10 @@ internal class DeviceRosterRuntime(private val context: Context) {
         val identity = if (primary) LocalDeviceIdentity.loadOrCreate(context)
             else LocalDeviceIdentity.loadExisting(context)
         val linkedCrypto = if (primary) null else LinkedProfileContentCrypto(context)
+        val localCapabilities = if (primary) setOf(
+            "tor_metadata_only_v1", "contact_roster_v1", "durable_history_v2",
+            "account_profile_v1", DeviceSyncTorPolicy.LIVE_CAPABILITY)
+            else setOf("tor_metadata_only_v1", "contact_roster_v1")
         try {
             val databaseKey = if (primary) keyManager.getDatabasePassphrase()
                 else linkedStore!!.activeDatabaseKey()
@@ -222,18 +226,14 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                 DeviceSyncFrameV2.Kind.HELLO_ACK -> {
                                                     val hello = DeviceSyncHelloWire.parse(inner.payload)
                                                     peerCapabilities[peerId] = hello.capabilities
-                                                    // Android advertises only the Tor skip policy until
-                                                    // its transactional topic importers are live.
                                                     syncHost.noteCapabilities(peerId, hello.capabilities,
-                                                        setOf("tor_metadata_only_v1",
-                                                            "contact_roster_v1"))
+                                                        localCapabilities)
                                                     if (inner.kind == DeviceSyncFrameV2.Kind.HELLO) {
                                                         sendSyncApplication(syncHost, roster, account,
                                                             identity.deviceId, peerId, peer.onion,
                                                             DeviceSyncFrameV2.Kind.HELLO_ACK,
                                                             DeviceSyncHelloWire.payload(
-                                                                setOf("tor_metadata_only_v1",
-                                                                    "contact_roster_v1"),
+                                                                localCapabilities,
                                                                 cursorSnapshot(database, peerId)))
                                                     }
                                                 }
@@ -429,8 +429,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                             identity.deviceId, peer.deviceId, peer.onion,
                                             DeviceSyncFrameV2.Kind.HELLO,
                                             DeviceSyncHelloWire.payload(
-                                                setOf("tor_metadata_only_v1",
-                                                    "contact_roster_v1"),
+                                                localCapabilities,
                                                 cursorSnapshot(database, peer.deviceId)))) {
                                         lastHelloMs[peer.deviceId] = now
                                     }
