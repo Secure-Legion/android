@@ -1,6 +1,7 @@
 package com.securelegion
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -23,6 +24,7 @@ class LinkDeviceActivity : AppCompatActivity() {
     private lateinit var approve: Button
     private lateinit var cancel: Button
     private var shownQr: String? = null
+    private var openedLinkedProfile = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,7 +98,7 @@ class LinkDeviceActivity : AppCompatActivity() {
             DeviceEnrollmentCandidateRuntime.Phase.WAITING_FOR_GRANT ->
                 "Waiting for the signed device grant..."
             DeviceEnrollmentCandidateRuntime.Phase.COMPLETE ->
-                "This device is authorized. Linked-profile messaging is still being implemented."
+                "Device authorized. Opening linked messages…"
             DeviceEnrollmentCandidateRuntime.Phase.FAILED -> state.detail
         }
         approve.isEnabled = state.phase == DeviceEnrollmentCandidateRuntime.Phase.COMPARE
@@ -109,6 +111,12 @@ class LinkDeviceActivity : AppCompatActivity() {
             qr.setImageBitmap(BrandedQrGenerator.generate(this,
                 BrandedQrGenerator.QrOptions(state.qr, size = 640,
                     showLogo = false, showWebsite = false)))
+        }
+        if (state.phase == DeviceEnrollmentCandidateRuntime.Phase.COMPLETE &&
+            !openedLinkedProfile) {
+            openedLinkedProfile = true
+            startActivity(Intent(this, LinkedMessengerActivity::class.java))
+            finish()
         }
     }
 

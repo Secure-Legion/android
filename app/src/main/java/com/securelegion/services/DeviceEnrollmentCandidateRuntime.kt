@@ -18,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -200,6 +201,11 @@ internal object DeviceEnrollmentCandidateRuntime {
 
     @Synchronized
     fun stop() { job?.cancel(); job = null }
+
+    suspend fun stopAndJoin() {
+        val current = synchronized(this) { job.also { job = null } }
+        current?.cancelAndJoin()
+    }
 
     @Synchronized
     fun discard(appContext: Context) {

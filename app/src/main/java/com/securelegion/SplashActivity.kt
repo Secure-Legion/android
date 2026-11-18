@@ -91,8 +91,11 @@ class SplashActivity : AppCompatActivity() {
                 val checkpoint = com.securelegion.sync.DeviceEnrollmentCandidateCheckpoint(this).load()
                 val pendingEnrollment = checkpoint != null
                 checkpoint?.ephemeral?.fill(0)
-                val destination = if (activeLinked || pendingLinked || pendingEnrollment)
-                    LinkDeviceActivity::class.java else WelcomeActivity::class.java
+                val destination = when {
+                    activeLinked -> LinkedMessengerActivity::class.java
+                    pendingLinked || pendingEnrollment -> LinkDeviceActivity::class.java
+                    else -> WelcomeActivity::class.java
+                }
                 Log.i("SplashActivity", "No root account; opening ${destination.simpleName}")
                 val intent = Intent(this, destination)
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

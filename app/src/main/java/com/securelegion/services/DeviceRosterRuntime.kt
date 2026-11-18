@@ -42,6 +42,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
 
 /** Own-device A4/A5 loop. It never enters the legacy contact message parser. */
 internal class DeviceRosterRuntime(private val context: Context) {
@@ -66,6 +67,12 @@ internal class DeviceRosterRuntime(private val context: Context) {
     }
 
     fun stop() { job?.cancel(); job = null; DeviceEnrollmentOwnerCoordinator.cancel() }
+
+    suspend fun stopAndJoin() {
+        val current = job.also { job = null }
+        current?.cancelAndJoin()
+        DeviceEnrollmentOwnerCoordinator.cancel()
+    }
 
     private suspend fun runAuthorizedSession() {
         val keyManager = KeyManager.getInstance(context)

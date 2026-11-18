@@ -237,6 +237,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".LinkedMessengerActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".HelpCenterActivity"
             android:exported="false" />
 
@@ -416,6 +420,17 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Maintains Tor hidden service for secure P2P messaging" />
+        </service>
+
+        <service
+            android:name=".services.LinkedDeviceService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains the authorized linked device Tor endpoint" />
         </service>
 
         <!-- Voice Tor service - Dedicated Tor instance for voice calling (Single Onion Service) -->
