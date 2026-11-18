@@ -1880,7 +1880,8 @@ async fn handle_arti_incoming(
         MSG_TYPE_STICKER | MSG_TYPE_PROFILE_UPDATE | MSG_TYPE_REACTION |
         MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_HELLO | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK | MSG_TYPE_SYNC_ACK |
         MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST |
-        MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH => {}
+        MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH |
+        0xA4 | 0xA5 => {}
         _ => {
             log::error!("ARTI INVALID_MSG_TYPE_DROP: 0x{:02x}", msg_type);
             return Err(format!("Invalid message type: 0x{:02x}", msg_type).into());
@@ -1900,6 +1901,8 @@ async fn handle_arti_incoming(
         MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32 + sig_len,
         // Contact-list frames: type(1) + sender_pk(32) + timestamp(8) + cid_len(2) + cid(>=1) + sig(64)
         // = 108 minimum (no blob, 1-byte CID). contact_list_sync handles exact validation.
+        0xA4 => 43,
+        0xA5 => 198,
         MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH
             => 1 + 32 + 8 + 2 + 1 + 64,
         _ => 1 + 32 + 16 + sig_len,
@@ -1932,6 +1935,11 @@ async fn handle_arti_incoming(
     // Arti DataStream in PendingConnection (which expects TcpStream). For Arti,
     // we'll need to handle Pong responses differently — this is addressed in Phase 3.
     match msg_type {
+        0xA4 | 0xA5 => {
+            if !crate::network::enqueue_contact_roster_frame(buf) {
+                log::warn!("ARTI: contact roster frame rejected or queue full");
+            }
+        }
         MSG_TYPE_PING => {
             log::info!("ARTI → PING handler");
             // NOTE: Cannot store DataStream in PendingConnection (expects TcpStream).

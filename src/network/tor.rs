@@ -2331,10 +2331,11 @@ impl TorManager {
             MSG_TYPE_ROUTING_REQUEST |
             MSG_TYPE_CONTACT_LIST_REQUEST |
             MSG_TYPE_CONTACT_LIST_RESPONSE |
-            MSG_TYPE_CONTACT_LIST_PUSH => {
+            MSG_TYPE_CONTACT_LIST_PUSH |
+            0xA4 | 0xA5 => {
                 // Valid type, continue to length check
             }
-            0xA3..=0xA5 | 0xB0..=0xB7 => {
+            0xA3 | 0xB0..=0xB7 => {
                 // Independent-device frames require a dedicated authorized
                 // endpoint. Never reinterpret one as a contact Ping.
                 log::warn!("Reserved device frame rejected on legacy listener: 0x{:02x}", msg_type);
@@ -2363,6 +2364,8 @@ impl TorManager {
         );
         let sig_len = if is_signed_type { 64 } else { 0 };
         let min_wire_len: usize = match msg_type {
+            0xA4 => 43,
+            0xA5 => 198,
             MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_HELLO | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK | MSG_TYPE_SYNC_ACK |
             MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32 + sig_len, // type + X25519 + groupId + sig?
             MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH
@@ -2403,6 +2406,11 @@ impl TorManager {
 
         // Route based on message type (buf INCLUDES type byte at offset 0)
         match msg_type {
+            0xA4 | 0xA5 => {
+                if !crate::network::enqueue_contact_roster_frame(buf) {
+                    log::warn!("Contact roster frame rejected or queue full");
+                }
+            }
             MSG_TYPE_PING => {
                 log::info!("→ Routing to PING handler");
 
