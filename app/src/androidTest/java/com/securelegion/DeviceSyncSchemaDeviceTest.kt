@@ -18,14 +18,15 @@ class DeviceSyncSchemaDeviceTest {
         val db = database.openHelper.writableDatabase
         db.query("PRAGMA user_version").use { cursor ->
             assertTrue(cursor.moveToFirst())
-            assertEquals(65, cursor.getInt(0))
+            assertEquals(66, cursor.getInt(0))
         }
         db.query("SELECT name FROM sqlite_master WHERE type='trigger' AND " +
             "name LIKE 'device_sync_capture_contact_%'").use { cursor ->
             val names = mutableSetOf<String>()
             while (cursor.moveToNext()) names.add(cursor.getString(0))
             assertEquals(setOf("device_sync_capture_contact_insert",
-                "device_sync_capture_contact_update", "device_sync_capture_contact_delete"), names)
+                "device_sync_capture_contact_update", "device_sync_capture_contact_delete",
+                "device_sync_capture_contact_tombstone"), names)
         }
         db.query("PRAGMA table_info(messages)").use { cursor ->
             val nameIndex = cursor.getColumnIndexOrThrow("name")
@@ -37,6 +38,10 @@ class DeviceSyncSchemaDeviceTest {
         }
         db.query("SELECT name FROM sqlite_master WHERE type='table' " +
             "AND name='device_sync_contact_profiles'").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+        }
+        db.query("SELECT name FROM sqlite_master WHERE type='table' " +
+            "AND name='device_sync_contact_work'").use { cursor ->
             assertTrue(cursor.moveToFirst())
         }
     }

@@ -24,6 +24,7 @@ import com.securelegion.database.DeviceSyncOutboxStore
 import com.securelegion.sync.DeviceSyncAccountSettingsPublisher
 import com.securelegion.sync.DeviceSyncOutboundWire
 import com.securelegion.sync.DeviceSyncContactReceiver
+import com.securelegion.sync.DeviceSyncContactPublisher
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -76,6 +77,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val syncHost = DeviceSyncFsHost(account, identity, roster)
             val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
             val contactReceiver = DeviceSyncContactReceiver(database, roster)
+            val contactPublisher = DeviceSyncContactPublisher(database, roster)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
             val peerCapabilities = HashMap<String, Set<String>>()
@@ -271,10 +273,15 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                         lastHelloMs[peer.deviceId] = now
                                     }
                                 }
-                                if (control.ready && settingsMaterialized &&
-                                    peerCapabilities[peer.deviceId]?.contains("account_profile_v1") == true) {
-                                    settingsPublisher.enqueueForPeer(account, identity.deviceId,
+                                if (control.ready && peerCapabilities[peer.deviceId]
+                                        ?.contains("durable_history_v2") == true) {
+                                    contactPublisher.prepareBatch(account, identity.deviceId,
                                         peer.deviceId, now)
+                                    if (settingsMaterialized && peerCapabilities[peer.deviceId]
+                                            ?.contains("account_profile_v1") == true) {
+                                        settingsPublisher.enqueueForPeer(account, identity.deviceId,
+                                            peer.deviceId, now)
+                                    }
                                     for (event in outbox.dueTor(account, identity.deviceId,
                                             peer.deviceId, now)) {
                                         try {

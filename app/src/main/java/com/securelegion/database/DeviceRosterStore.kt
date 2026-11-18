@@ -206,7 +206,8 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
                     "device_sync_pending", "device_sync_chunks", "device_sync_outbox",
                     "device_sync_acks", "device_transport_skips",
                     "device_sync_live_peers", "device_sync_live_seed",
-                    "device_sync_live_work")) {
+                    "device_sync_live_work", "device_sync_contact_peers",
+                    "device_sync_contact_work")) {
                     db.execSQL("DELETE FROM $table WHERE peer_device_id = ?", arrayOf(removed))
                 }
                 db.execSQL("DELETE FROM enrollment_grant_outbox WHERE candidate_device_id = ?",

@@ -199,6 +199,9 @@ internal class DeviceSyncContactReceiver(
             "(topic,object_id,event_time_ms,digest,sequence,delta_json) " +
             "VALUES ('contacts',?,?,?,?,?)",
             arrayOf(part.objectId, part.eventTimeMs, digest, part.sequence, canonical))
+        db.execSQL("INSERT INTO device_sync_source_changes " +
+            "(topic,object_id,kind,changed_at_ms) VALUES ('contacts',?,?,?)",
+            arrayOf(part.objectId, if (contact.deleted) "delete" else "upsert", nowMs))
         return true
     }
 

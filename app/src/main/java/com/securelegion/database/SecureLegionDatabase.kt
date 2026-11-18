@@ -63,7 +63,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class, DeviceRoster::class, AuthorizedDevice::class],
-    version = 65,
+    version = 66,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1280,6 +1280,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_65_66 = object : Migration(65, 66) {
+            override fun migrate(db: SupportSQLiteDatabase) = createDeviceContactPeerTables(db)
+        }
+
         /** Room owns the roster entities; these bounded protocol queues are managed by SQL. */
         private fun createDeviceSyncTables(db: SupportSQLiteDatabase) {
             val statements = arrayOf(
@@ -1313,6 +1317,38 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_contact_profiles " +
                 "(contact_id INTEGER NOT NULL PRIMARY KEY, timestamp_ms INTEGER NOT NULL, " +
                 "event_id TEXT NOT NULL)")
+            createDeviceContactPeerTables(db)
+        }
+
+        private fun createDeviceContactPeerTables(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_contact_peers " +
+                "(peer_device_id TEXT NOT NULL PRIMARY KEY, seed_snapshot_seq INTEGER NOT NULL, " +
+                "seed_after_id INTEGER NOT NULL DEFAULT 0, " +
+                "seed_after_deletion TEXT NOT NULL DEFAULT '', " +
+                "discovered_seq INTEGER NOT NULL, " +
+                "created_at_ms INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_contact_work " +
+                "(peer_device_id TEXT NOT NULL, source_seq INTEGER NOT NULL, " +
+                "object_id TEXT NOT NULL, kind TEXT NOT NULL, next_try_at_ms INTEGER NOT NULL " +
+                "DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, " +
+                "PRIMARY KEY(peer_device_id,source_seq))")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_device_sync_contact_work_due " +
+                "ON device_sync_contact_work(peer_device_id,next_try_at_ms,source_seq)")
+            val guard = "(SELECT depth FROM device_sync_import_guard WHERE id=1)=0"
+            val now = "CAST(strftime('%s','now') AS INTEGER)*1000"
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS device_sync_capture_contact_tombstone " +
+                "AFTER DELETE ON contacts WHEN $guard AND length(OLD.publicKeyBase64)=44 BEGIN " +
+                "INSERT INTO device_sync_deletions(topic,object_id,event_time_ms) " +
+                "VALUES ('contacts',OLD.publicKeyBase64,$now) " +
+                "ON CONFLICT(topic,object_id) DO UPDATE SET " +
+                "event_time_ms=MAX(event_time_ms,excluded.event_time_ms); END")
+            db.execSQL("INSERT OR IGNORE INTO device_sync_deletions " +
+                "(topic,object_id,event_time_ms) " +
+                "SELECT 'contacts',c.object_id,c.changed_at_ms " +
+                "FROM device_sync_source_changes c WHERE c.topic='contacts' " +
+                "AND c.kind='delete' AND c.seq=(SELECT MAX(x.seq) FROM " +
+                "device_sync_source_changes x WHERE x.topic='contacts' " +
+                "AND x.object_id=c.object_id)")
         }
 
         private fun createDeviceContactCaptureTriggers(db: SupportSQLiteDatabase) {
@@ -1411,7 +1447,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
             MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58, MIGRATION_58_59,
             MIGRATION_59_60, MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63,
-            MIGRATION_63_64, MIGRATION_64_65
+            MIGRATION_63_64, MIGRATION_64_65, MIGRATION_65_66
         )
 
         /**
@@ -1508,7 +1544,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 65) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 66) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
