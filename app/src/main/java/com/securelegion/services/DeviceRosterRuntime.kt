@@ -46,6 +46,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /** Own-device A4/A5 loop. It never enters the legacy contact message parser. */
 internal class DeviceRosterRuntime(private val context: Context) {
@@ -145,6 +148,38 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
             check(onion == identity.onionAddress)
             check(RustBridge.startDeviceOnionListener())
+            val controlJob = SupervisorJob(kotlin.coroutines.coroutineContext[Job])
+            val controlQueue = DeviceSyncControlQueue(
+                CoroutineScope(controlJob + Dispatchers.IO), account, identity.deviceId,
+                valid = { peerId ->
+                    SessionManager.isUnlocked(context) && networkReady() &&
+                        runCatching {
+                            if (primary) keyManager.isInitialized() &&
+                                keyManager.getSigningPublicKey().contentEquals(account)
+                            else linkedStore?.activeProfile()?.accountEd?.contentEquals(account) == true
+                        }.getOrDefault(false) &&
+                        roster.isLocalAuthorized(account, identity.deviceId, 0x02) &&
+                        roster.authorizedPeer(account, peerId, 0x02) != null
+                },
+                send = { peerId, wire ->
+                    val peer = roster.authorizedPeer(account, peerId, 0x02)
+                    peer != null && RustBridge.sendDeviceOnionFrame(peer.onion, wire)
+                },
+                onFailure = { peerId, error ->
+                    Log.w(TAG, "Sync control send deferred for ${peerId.take(8)}: ${error?.message ?: "authorization or transport"}")
+                })
+            fun queueControl(peer: DeviceRosterStore.PeerKeys, outgoing: List<ByteArray>) {
+                if (outgoing.isEmpty()) return
+                val generation = syncHost.generation(peer.deviceId)
+                if (!controlQueue.enqueue(peer.deviceId, outgoing) {
+                        syncHost.generation(peer.deviceId) == generation &&
+                            roster.authorizedPeer(account, peer.deviceId, 0x02)?.let {
+                                it.onion == peer.onion &&
+                                    it.signingKey.contentEquals(peer.signingKey) &&
+                                    it.encryptionKey.contentEquals(peer.encryptionKey)
+                            } == true
+                    }) Log.w(TAG, "Sync control queue full or invalid for ${peer.deviceId.take(8)}")
+            }
             var nextSendMs = 0L
             var nextSourceCheckMs = 0L
             var lastSourceSequence = sourceSequence(database)
@@ -221,13 +256,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     try {
                                         val peer = roster.authorizedPeer(account, peerId, 0x02)
                                             ?: throw IllegalStateException("Sync peer was revoked")
-                                        for (reply in outcome.outgoing) {
-                                            if (!SessionManager.isUnlocked(context) ||
-                                                !roster.isLocalAuthorized(account, identity.deviceId, 0x02) ||
-                                                roster.authorizedPeer(account, peerId, 0x02)?.onion != peer.onion)
-                                                break
-                                            RustBridge.sendDeviceOnionFrame(peer.onion, reply)
-                                        }
+                                        queueControl(peer, outcome.outgoing)
                                         outcome.message?.let { plaintext ->
                                             val inner = DeviceSyncFrameV2.decode(plaintext, peerId,
                                                 identity.deviceId, frame)
@@ -444,9 +473,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                 val peer = roster.authorizedPeer(account, device.deviceId, 0x02)
                                     ?: continue
                                 val control = syncHost.ensure(peer.deviceId, now)
-                                control.outgoing.forEach {
-                                    RustBridge.sendDeviceOnionFrame(peer.onion, it)
-                                }
+                                queueControl(peer, control.outgoing)
                                 if (control.ready && now - (lastHelloMs[peer.deviceId] ?: 0L) >= 30_000L) {
                                     if (sendSyncApplication(syncHost, roster, account,
                                             identity.deviceId, peer.deviceId, peer.onion,
@@ -505,6 +532,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     delay(250)
                 }
             } finally {
+                withContext(NonCancellable) { controlJob.cancelAndJoin() }
                 syncHost.close()
                 RustBridge.stopDeviceOnionListener()
                 DeviceEnrollmentOwnerCoordinator.cancel()

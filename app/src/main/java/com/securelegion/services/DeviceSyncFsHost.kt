@@ -19,10 +19,15 @@ class DeviceSyncFsHost(
                        val outgoing: List<ByteArray>, val message: ByteArray?)
 
     private var handle = 0L
+    private var generation = 0L
     private var closed = false
     private val peerKeys = HashMap<String, Pair<ByteArray, ByteArray>>()
+    private val peerSessions = HashMap<String, String>()
     private val livePeers = HashSet<String>()
     private val legacyPeers = HashSet<String>()
+
+    @Synchronized fun generation(peerId: String): Pair<Long, String?> =
+        generation to peerSessions[peerId]
 
     init { require(accountEd.size == 32) }
 
@@ -104,6 +109,15 @@ class DeviceSyncFsHost(
             require(bytes.size in 5..512 * 1024 && bytes[0].toInt() and 0xff in 0xB6..0xB7)
             bytes
         }
+        // Native session replacement invalidates queued packets from its old
+        // handshake, even when the host handle itself stays alive.
+        for (bytes in outgoing) {
+            val session = if (bytes[0].toInt() and 255 == 0xB6)
+                JSONObject(bytes.copyOfRange(5, bytes.size).toString(Charsets.UTF_8))
+                    .getJSONObject("header").getString("session")
+            else Base64.encodeToString(bytes.copyOfRange(6, 38), Base64.NO_WRAP)
+            peerSessions[peerId] = session
+        }
         val plaintext = if (response.isNull("message")) null else
             Base64.decode(response.getString("message"), Base64.DEFAULT).also {
                 validateTorPlaintext(it, peerId, inbound = true)
@@ -128,6 +142,7 @@ class DeviceSyncFsHost(
     fun forget(peerId: String, nowMs: Long = System.currentTimeMillis()) {
         livePeers.remove(peerId)
         legacyPeers.remove(peerId)
+        peerSessions.remove(peerId)
         val keys = peerKeys.remove(peerId) ?: return
         if (handle == 0L) return
         val request = JSONObject().put("op", "forget")
@@ -141,10 +156,12 @@ class DeviceSyncFsHost(
     }
 
     private fun reset() {
+        generation++
         if (handle != 0L) RustBridge.syncFsFree(handle)
         handle = 0L
         peerKeys.values.forEach { (ed, x) -> ed.fill(0); x.fill(0) }
         peerKeys.clear()
+        peerSessions.clear()
         livePeers.clear()
         legacyPeers.clear()
     }
