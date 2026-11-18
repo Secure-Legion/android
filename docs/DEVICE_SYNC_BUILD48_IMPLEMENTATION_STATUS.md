@@ -51,6 +51,10 @@ bulk history and full groups remain Nearby-only.
   transactional import that preserves monotonic delivery/read state and
   suppresses outbound recapture. Missing messages remain a dependency rather
   than receiving a successful commit response.
+- Complete receipt chunks can now be applied under the authenticated roster
+  check with exact version/cursor storage; missing-message receipts are kept
+  in an encrypted pending row with `is_live=1` and receive no settlement. A
+  pending-row replay worker is still required after message import.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
