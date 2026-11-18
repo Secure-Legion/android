@@ -1,12 +1,14 @@
-Android build-48 device-sync branch native release artifacts
+Android combined device-sync + Arti 0.48 native release artifacts
 NDK r27c, Android API 26, Cargo --release --locked --offline
-These libraries retain the baseline Arti 0.44 family. Arti 0.48 is a separate branch.
+Built on feature/android-full-sync-arti-apk; full sync is not enabled yet.
 
-arm64-v8a/libsecurelegion.so  FDF65AC625FEB2F66C3027191B2D8006288FC1AD635A1CF5229D79716E01B6E5
-armeabi-v7a/libsecurelegion.so 05B3ED1A001237B7B0718BE6187D7752249057B5633DE0A6EECE681566A06D80
-x86_64/libsecurelegion.so    C7A6B1D34BFA5C658D7013BAEA6AF89D70955F9A030918C180CF3FA395E2A2BB
+arm64-v8a/libsecurelegion.so  F20A140C6AAFD0A85AE1C02A1355B9166310E4FCC481411B36A5C815876E268D
+armeabi-v7a/libsecurelegion.so 39276B5D3E08D065137911653CF039F83B23B0A230819CF27BE4BCC2D82ACEE0
+x86_64/libsecurelegion.so    F3ADB985DCD50EEDC4DFC678FD78EF2F2B3E50A1E1FE664B09F1B9B03E849B0C
 
-app-fdroid-debug.apk          A528FBE0BB27F87BF8AE46F022ACCA3DE9B4902F16775D8D2249818E5ECF5C0B
+app-googleplaydemo-debug.apk  4CE87CEEF1BA8C0F6CBB3BCA375F1E01790F81FE59B42AC8F2B9CFAD80266B05
 
-The APK is a compile/package artifact only. Enrollment, dispatch, metadata sync,
-and Nearby history transfer are not end-to-end enabled in this branch yet.
+Pixel 9a Android 17: JNI history/Noise smoke test and Arti bootstrap/shutdown
+both passed in the separately installed Google Play demo package.
+The APK is a compile/package artifact. Authenticated sync dispatch, linked
+messaging, and Nearby history transfer are not end-to-end enabled yet.

@@ -99,6 +99,7 @@ bulk history and full groups remain Nearby-only.
 8. Complete Devices enrollment and per-device status paths; gate all
    advertising until interoperability passes.
 
-The separate Arti 0.48 branch passed a Pixel 9a bootstrap/shutdown test, but
-onion-service operation and the 24-hour soak remain unverified. It has not been
-merged into this branch.
+This combined work branch now packages Arti 0.48 with the device-sync JNI on
+all three ABIs. A separately installed Google Play demo APK passed Pixel 9a
+JNI history/Noise and Arti bootstrap/shutdown smoke tests. Onion-service
+operation, 24-hour soak, and end-to-end device sync remain unverified.

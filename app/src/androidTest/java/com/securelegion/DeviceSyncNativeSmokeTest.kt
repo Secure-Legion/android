@@ -14,7 +14,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class DeviceSyncNativeSmokeTest {
     @Test fun historyIdentityAndNoiseEngineLoad() {
-        assertEquals("com.securelegion.fdroid",
+        assertEquals(BuildConfig.APPLICATION_ID,
             InstrumentationRegistry.getInstrumentation().targetContext.packageName)
         val delta = """{"message_id":"native_smoke","status":2}"""
             .toByteArray(Charsets.UTF_8)
