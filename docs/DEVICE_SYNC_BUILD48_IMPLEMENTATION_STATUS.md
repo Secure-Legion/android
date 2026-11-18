@@ -3,6 +3,12 @@
 This branch is an implementation work branch. It must not advertise linked-device
 or sync capabilities, and its debug APK is not an end-to-end feature build.
 
+The 2026-11-18 live-message handoff supersedes the older blanket Tor message
+block. Source: `Secure-Live-Message-Fix-2026-11-18-All-In-One.zip`, SHA-256
+`884D357B5ACEA03CD0F735729B7F632679F14AAB069B190EAE174D6F3C394640`.
+Its direct `live_message_sync_v1` lane applies only after mutual negotiation;
+bulk history and full groups remain Nearby-only.
+
 ## Implemented and source-checked
 
 - Exact portable device authorization and forward-secret Noise crates, with JNI.
@@ -24,7 +30,20 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 - Candidate A3 session creates a bounded QR, authenticates the owner's signed
   offer and approvals, verifies the encrypted grant against the account identity,
   device certificate, and signed roster, and can sign a post-commit receipt.
-  Candidate profile commit and startup are not connected yet.
+- Candidate profile commit stages an independent protected SQLCipher key and a
+  receipt before roster acceptance, then promotes only after the signed roster
+  authorizes the local device. A restart can verify and finish that promotion.
+  App startup and the linked-profile onion worker are not connected yet.
+- Build-49 Tor policy parser permits only negotiated `sync_mode=live_v1`
+  message/receipt PUSH frames. Existing metadata-only behavior remains active
+  until capability exchange is implemented. SQLCipher v61 records `is_live`
+  on outbox and deferred rows, defaulting preexisting work to false; Tor ACKs
+  still cannot clear Wi-Fi-only revisions. The live outbox enforces 256 revision
+  and 16 MiB serialized delta caps without deleting the source change.
+- SQLCipher message triggers capture inserts, body edits, status/read changes,
+  and deletes in the same transaction as the local write. The sequence-based
+  capture reader loads at most 25 IDs, and a transaction-scoped import guard is
+  available for the future importer. No live dispatcher consumes this log yet.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
@@ -34,9 +53,9 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 
 ## Required before device-sync acceptance
 
-1. Connect A3 owner and candidate sessions to an approval UI; implement a
-   restartable candidate profile commit and recovery checkpoint handling. The
-   current grant path supports enrollment only.
+1. Connect A3 owner and candidate sessions to an approval UI; persist an
+   in-flight candidate secret until expiry for interrupted grants, and add
+   recovery checkpoint handling. The current grant path supports enrollment only.
 2. Extend A4/A5 operation to linked profiles after candidate activation works.
 3. Support linked-candidate startup with an independent local DB key and public
    account binding, without copying the account seed or contact ratchets.
@@ -44,6 +63,10 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
    lock, profile-switch, revocation, and process-lifecycle cleanup.
 5. Implement exact metadata payload import/export, cursors, deferral, chunks,
    authenticated settlements, capability exchange, and bounded retries.
+   Include the new live direct-message 50-message one-time baseline, full
+   import suppression, receipt-only payloads, and no timestamp-based delivery
+   cutoff. Do not
+   advertise `live_message_sync_v1` until both sender and receiver pass.
 6. Keep group-link Tor work disabled until every signed operation is validated
    before both import and re-export, including indirect pull paths.
 7. Implement Android Nearby receiver and sender roles as supported by the

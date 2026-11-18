@@ -5,6 +5,7 @@ import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.sync.DeviceSyncFrameV2
+import com.securelegion.sync.DeviceSyncTorPolicy
 import org.json.JSONObject
 import java.io.Closeable
 
@@ -127,13 +128,14 @@ class DeviceSyncFsHost(
         require(bytes.size in 2..384 * 1024)
         val kind = bytes[0].toInt() and 0xff
         require(kind in setOf(0xB0, 0xB1, 0xB2, 0xB4, 0xB5))
-        if (kind == 0xB2) {
-            val frame = JSONObject(bytes.copyOfRange(1, bytes.size).toString(Charsets.UTF_8))
-            val payload = frame.optJSONObject("payload")
-                ?: throw IllegalArgumentException("Missing Tor sync payload")
-            // Group links stay disabled until the signed op envelope is validated.
-            require(payload.optString("topic") in setOf("contacts", "settings"))
-        }
+        val frame = JSONObject(bytes.copyOfRange(1, bytes.size).toString(Charsets.UTF_8))
+        val payload = frame.optJSONObject("payload")
+            ?: throw IllegalArgumentException("Missing Tor sync payload")
+        val frameKind = DeviceSyncFrameV2.Kind.fromWire(kind)
+            ?: throw IllegalArgumentException("Unknown Tor sync frame")
+        // This host has no authenticated capability exchange yet. The live
+        // lane stays closed until the worker binds mutual HELLO capabilities.
+        require(DeviceSyncTorPolicy.allows(frameKind, payload, livePeer = false))
     }
 
     @Synchronized

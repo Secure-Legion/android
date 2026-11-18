@@ -20,6 +20,8 @@ internal class LinkedProfileCredentialStore(context: Context) {
         val accountEd: ByteArray,
         val deviceId: String
     )
+    data class PendingReceipt(val accountEd: ByteArray, val ownerDeviceId: String,
+                              val ownerOnion: String, val wire: ByteArray)
 
     private val prefs = EncryptedSharedPreferences.create(
         context.applicationContext, "secure_legion_keys",
@@ -33,7 +35,14 @@ internal class LinkedProfileCredentialStore(context: Context) {
         require(accountIdentity.size == ACCOUNT_IDENTITY_SIZE && identity.deviceId.length == 43)
         synchronized(lock) {
             check(!KeyManager.getInstance(appContext).isInitialized())
-            check(prefs.getString(RECORD_KEY, null) == null) { "Linked profile already staged" }
+            readRecord()?.let { existing ->
+                try {
+                    check(existing[6] == 0.toByte() &&
+                        existing.copyOfRange(7, 7 + ACCOUNT_IDENTITY_SIZE).contentEquals(accountIdentity) &&
+                        String(existing, 7 + ACCOUNT_IDENTITY_SIZE, 43, Charsets.US_ASCII) == identity.deviceId)
+                    return existing.copyOfRange(RECORD_SIZE - 32, RECORD_SIZE)
+                } finally { existing.fill(0) }
+            }
             val accountEd = accountIdentity.copyOfRange(6, 38)
             val verified = JSONObject(RustBridge.deviceAuthorization(
                 JSONObject().put("operation", "verify_account_identity")
@@ -105,12 +114,49 @@ internal class LinkedProfileCredentialStore(context: Context) {
         finally { record.fill(0) }
     }
 
+    /** Stored before roster commit; sender must recheck current authorization. */
+    fun stageReceipt(receipt: PendingReceipt) {
+        require(receipt.accountEd.size == 32 && receipt.ownerDeviceId.length == 43 &&
+            receipt.ownerOnion.matches(Regex("[a-z2-7]{56}\\.onion")) &&
+            receipt.wire.size in 6..512)
+        synchronized(lock) {
+            val profile = readRecord() ?: throw IllegalStateException("No staged profile")
+            try { check(profile.copyOfRange(13, 45).contentEquals(receipt.accountEd)) }
+            finally { profile.fill(0) }
+            val record = JSONObject().put("account", Base64.encodeToString(receipt.accountEd, Base64.NO_WRAP))
+                .put("owner_id", receipt.ownerDeviceId).put("owner_onion", receipt.ownerOnion)
+                .put("wire", Base64.encodeToString(receipt.wire, Base64.NO_WRAP)).toString()
+            val existing = prefs.getString(RECEIPT_KEY, null)
+            if (existing != null) {
+                val old = JSONObject(existing)
+                val next = JSONObject(record)
+                check(sequenceOf("account", "owner_id", "owner_onion", "wire")
+                    .all { old.getString(it) == next.getString(it) })
+            }
+            check(prefs.edit().putString(RECEIPT_KEY, record).commit())
+        }
+    }
+
+    fun pendingReceipt(rosterStore: DeviceRosterStore, identity: LocalDeviceIdentity): PendingReceipt? {
+        val raw = prefs.getString(RECEIPT_KEY, null) ?: return null
+        val profile = activeProfile() ?: return null
+        val objectValue = JSONObject(raw)
+        val account = Base64.decode(objectValue.getString("account"), Base64.DEFAULT)
+        val ownerId = objectValue.getString("owner_id")
+        val onion = objectValue.getString("owner_onion")
+        val wire = Base64.decode(objectValue.getString("wire"), Base64.DEFAULT)
+        check(account.contentEquals(profile.accountEd) && profile.deviceId == identity.deviceId &&
+            rosterStore.isLocalAuthorized(account, identity.deviceId, 0x02) &&
+            rosterStore.authorizedPeer(account, ownerId, 0x02)?.onion == onion)
+        return PendingReceipt(account, ownerId, onion, wire)
+    }
+
     fun discardPending() {
         synchronized(lock) {
             val record = readRecord() ?: return
             try {
                 check(record[6] == 0.toByte()) { "Active profile cannot be discarded as pending" }
-                check(prefs.edit().remove(RECORD_KEY).commit())
+                check(prefs.edit().remove(RECORD_KEY).remove(RECEIPT_KEY).commit())
             } finally { record.fill(0) }
         }
     }
@@ -129,6 +175,7 @@ internal class LinkedProfileCredentialStore(context: Context) {
         private val lock = Any()
         private val MAGIC = "SLPL01".toByteArray(Charsets.US_ASCII)
         private const val RECORD_KEY = "securelegion_linked_profile_v1"
+        private const val RECEIPT_KEY = "securelegion_linked_profile_receipt_v1"
         private const val ACCOUNT_IDENTITY_SIZE = 1702
         private const val RECORD_SIZE = 6 + 1 + ACCOUNT_IDENTITY_SIZE + 43 + 32
     }
