@@ -15,6 +15,8 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 - Bounded verified history chunk assembly and exact durable settlement parsing.
 - Tor UI reports connected from verified transport state instead of a fresh
   own-onion self-test.
+- Devices screen lists the current signed roster and lets the primary revoke
+  all other devices through an account-signed successor roster.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
@@ -37,8 +39,8 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
    before both import and re-export, including indirect pull paths.
 7. Implement Android Nearby receiver and sender roles as supported by the
    cross-platform role matrix, with pinned TLS 1.3 and transactional history apply.
-8. Replace the Devices placeholder only after enrollment, revocation, and
-   status paths are wired; gate all advertising until interoperability passes.
+8. Complete Devices enrollment and per-device status paths; gate all
+   advertising until interoperability passes.
 
 The separate Arti 0.48 branch still requires real-device Tor runtime gates and
 must not be merged into this branch before those gates pass.
