@@ -147,8 +147,13 @@ internal class DeviceSyncContactReceiver(
             deferUnknownContact(db, part, canonical, digest, nowMs)
             return false
         }
+        val linkedPinned = incomingWins && linked != null && !contact.deleted &&
+            db.query(SimpleSQLiteQuery(
+                "SELECT 1 FROM linked_chat_contacts WHERE account_ed=? AND x25519=? " +
+                    "AND blocked=0 LIMIT 1", arrayOf(part.objectId, contact.x25519Key!!)
+            )).use { it.moveToFirst() }
         if (incomingWins && contact.deviceRoster != null &&
-            (pinnedX != null || linked != null)) {
+            (pinnedX != null || linkedPinned)) {
             // A linked contact first imported from an authenticated own-device
             // delta is pinned by applyPinnedContact above, in this transaction.
             roster.acceptSignedRosterInTransaction(db, contact.deviceRoster,
