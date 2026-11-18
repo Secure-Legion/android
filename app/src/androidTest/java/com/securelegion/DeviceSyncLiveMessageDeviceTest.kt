@@ -62,6 +62,16 @@ class DeviceSyncLiveMessageDeviceTest {
                 assertTrue(it.moveToFirst())
                 assertEquals(0, it.getInt(0))
             }
+            db.execSQL("INSERT INTO device_sync_live_seed " +
+                "(peer_device_id,message_id,ordinal) VALUES (?,?,?)",
+                arrayOf(peer, "unavailable_media", 0))
+            db.execSQL("INSERT INTO device_sync_live_seed " +
+                "(peer_device_id,message_id,ordinal) VALUES (?,?,?)",
+                arrayOf(peer, "next_message", 1))
+            val capture = DeviceSyncLiveCaptureStore(database, roster)
+            capture.rotateSeed(peer, "unavailable_media")
+            assertEquals(listOf("next_message", "unavailable_media"),
+                capture.seedIds(peer))
         } finally {
             db.execSQL("DELETE FROM device_sync_outbox WHERE peer_device_id=?", arrayOf(peer))
             db.execSQL("DELETE FROM device_sync_local_events WHERE topic='messages' " +

@@ -62,6 +62,24 @@ internal class DeviceSyncLiveCaptureStore(
             arrayOf(peerDeviceId, messageId))
     }
 
+    /** A missing attachment does not block every older seed behind it. */
+    fun rotateSeed(peerDeviceId: String, messageId: String) {
+        require(peerDeviceId.length == 43 && messageId.isNotEmpty())
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val last = db.query(SimpleSQLiteQuery(
+                "SELECT COALESCE(MAX(ordinal),0) FROM device_sync_live_seed " +
+                    "WHERE peer_device_id=?", arrayOf(peerDeviceId)
+            )).use { check(it.moveToFirst()); it.getLong(0) }
+            require(last < Long.MAX_VALUE)
+            db.execSQL("UPDATE device_sync_live_seed SET ordinal=? " +
+                "WHERE peer_device_id=? AND message_id=?",
+                arrayOf(last + 1, peerDeviceId, messageId))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
     /** A write failure retains the source ID for retry and does not move discovery. */
     fun completeWork(peerDeviceId: String, sourceSequence: Long) {
         require(peerDeviceId.length == 43 && sourceSequence > 0)

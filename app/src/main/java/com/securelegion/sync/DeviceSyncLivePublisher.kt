@@ -40,7 +40,7 @@ internal class DeviceSyncLivePublisher(
         try {
             queue(account, local, peer, "messages", seed, messageDelta(seed, nowMs), nowMs)
             capture.completeSeed(peer, seed)
-        } catch (_: Exception) { /* Keep this seed for a later turn. */ }
+        } catch (_: Exception) { capture.rotateSeed(peer, seed) }
     }
 
     private fun messageDelta(id: String, nowMs: Long): JSONObject {
