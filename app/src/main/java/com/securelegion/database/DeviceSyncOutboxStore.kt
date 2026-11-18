@@ -2,6 +2,8 @@ package com.securelegion.database
 
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.crypto.RustBridge
+import com.securelegion.sync.DeviceSyncFrameV2
+import com.securelegion.sync.DeviceSyncSettlementWire
 import java.util.Locale
 
 /** Durable own-device history work. All callers must hold an unlocked profile. */
@@ -23,6 +25,25 @@ class DeviceSyncOutboxStore(
     )
 
     enum class Transport { TOR, NEARBY }
+
+    /** Caller supplies a frame already authenticated by Noise or pinned Nearby TLS. */
+    internal fun consumeAuthenticatedResponse(accountEd: ByteArray, localDeviceId: String,
+                                     frame: DeviceSyncFrameV2.Frame,
+                                     transport: Transport,
+                                     nowMs: Long = System.currentTimeMillis()): Boolean {
+        require(frame.kind == DeviceSyncFrameV2.Kind.PULL_RESPONSE &&
+            frame.recipient == localDeviceId)
+        val response = DeviceSyncSettlementWire.parse(frame.payload)
+        return when (response.kind) {
+            DeviceSyncSettlementWire.Kind.TRANSPORT_SKIPPED ->
+                transport == Transport.TOR && recordTorSkip(accountEd, localDeviceId,
+                    frame.sender, response.eventId, response.digestHex, response.topic,
+                    response.objectId, response.eventTimeMs, nowMs)
+            DeviceSyncSettlementWire.Kind.SETTLED -> settle(accountEd, localDeviceId,
+                frame.sender, transport, response.eventId, response.digestHex,
+                response.topic, response.objectId, response.eventTimeMs, nowMs)
+        }
+    }
 
     private val torTopics = setOf("contacts", "settings")
     private val nearbyTopics = setOf("messages", "receipts", "contacts", "settings", "groups")
