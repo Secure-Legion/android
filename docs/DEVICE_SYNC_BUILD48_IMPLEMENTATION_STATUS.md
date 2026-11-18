@@ -62,6 +62,10 @@ bulk history and full groups remain Nearby-only.
 - No raw B0-B5 Tor fallback. Tor host rejects PULL_REQUEST and history PUSH.
 - Exact iOS build-48 Nearby offer transcript parser and fixture test.
 - Release JNI libraries built for arm64-v8a, armeabi-v7a, and x86_64; debug APK builds.
+- Pixel 9a Android 17 instrumented JNI smoke test passed on 2026-11-18:
+  deterministic native history identity and Noise engine create/free, one
+  test with zero failures. The fresh F-Droid debug app also installs and opens.
+  No authenticated device-sync or Tor status UI run has been performed yet.
 
 ## Required before device-sync acceptance
 
