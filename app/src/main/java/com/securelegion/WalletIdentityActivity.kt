@@ -733,7 +733,9 @@ class WalletIdentityActivity : AppCompatActivity() {
 
     private fun saveProfilePhoto(base64: String) {
         val prefs = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
-        prefs.edit().putString("profile_photo_base64", base64).apply()
+        prefs.edit().putString("profile_photo_base64", base64)
+            .putLong("profile_photo_changed_at_ms", System.currentTimeMillis()).apply()
+        com.securelegion.sync.DeviceSyncAccountSettingsPublisher.wake()
 
         // Broadcast profile photo update to all contacts via encrypted Tor pipeline
         // Use application-scoped coroutine so it survives activity navigation
@@ -761,7 +763,9 @@ class WalletIdentityActivity : AppCompatActivity() {
 
     private fun removeProfilePhoto() {
         val prefs = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
-        prefs.edit().remove("profile_photo_base64").apply()
+        prefs.edit().remove("profile_photo_base64")
+            .putLong("profile_photo_changed_at_ms", System.currentTimeMillis()).apply()
+        com.securelegion.sync.DeviceSyncAccountSettingsPublisher.wake()
         profilePhotoAvatar.clearPhoto()
         ThemedToast.show(this, "Profile photo removed")
 

@@ -18,6 +18,12 @@ import com.securelegion.sync.DeviceSyncFrameV2
 import com.securelegion.sync.DeviceSyncHelloWire
 import com.securelegion.sync.DeviceSyncPushWire
 import com.securelegion.sync.DeviceSyncTorPolicy
+import com.securelegion.sync.DeviceSyncAccountSettingsReceiver
+import com.securelegion.database.DeviceSyncChunkStore
+import com.securelegion.database.DeviceSyncOutboxStore
+import com.securelegion.sync.DeviceSyncAccountSettingsPublisher
+import com.securelegion.sync.DeviceSyncOutboundWire
+import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -67,13 +73,24 @@ internal class DeviceRosterRuntime(private val context: Context) {
             if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) return
             val exchange = DeviceRosterExchange(database, roster)
             val syncHost = DeviceSyncFsHost(account, identity, roster)
+            val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
+            val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
+            val outbox = DeviceSyncOutboxStore(database, roster)
             val peerCapabilities = HashMap<String, Set<String>>()
+            val lastHelloMs = HashMap<String, Long>()
             val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)
             val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
             check(onion == identity.onionAddress)
             check(RustBridge.startDeviceOnionListener())
             var nextSendMs = 0L
             try {
+                runCatching { settingsPublisher.capturePrimary(context, keyManager) }
+                    .onFailure { Log.w(TAG, "Account setting capture deferred: ${it.message}") }
+                var settingsMaterialized = runCatching {
+                    settingsReceiver.materializePrimary(context, keyManager)
+                }.onFailure {
+                    Log.w(TAG, "Account settings materialization deferred: ${it.message}")
+                }.isSuccess
                 while (kotlin.coroutines.coroutineContext.isActive &&
                     SessionManager.isUnlocked(context) &&
                     TorService.getCurrentTorState() == TorService.TorState.RUNNING &&
@@ -91,6 +108,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                 }
                                 0xA4 -> exchange.acceptUpdate(frame, account, identity)?.let { reply ->
                                     peerCapabilities.clear()
+                                    lastHelloMs.clear()
                                     // A removed endpoint may acknowledge the public
                                     // revocation before this listener shuts down.
                                     if (SessionManager.isUnlocked(context)) {
@@ -129,22 +147,45 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                             identity.deviceId, peerId, peer.onion,
                                                             DeviceSyncFrameV2.Kind.HELLO_ACK,
                                                             DeviceSyncHelloWire.payload(
-                                                                setOf("tor_metadata_only_v1"), emptyMap()))
+                                                                setOf("tor_metadata_only_v1"),
+                                                                cursorSnapshot(database, peerId)))
                                                     }
                                                 }
                                                 DeviceSyncFrameV2.Kind.PUSH -> {
                                                     val topic = inner.payload.optString("topic")
-                                                    if (topic !in DeviceSyncTorPolicy.metadataTopics &&
+                                                    if (topic == "settings") {
+                                                        settingsPublisher.capturePrimary(context,
+                                                            keyManager)
+                                                        val part = DeviceSyncPushWire.parse(inner,
+                                                            liveNegotiated = false)
+                                                        if (settingsReceiver.receive(account,
+                                                                identity.deviceId, part) ==
+                                                            DeviceSyncChunkStore.Result.COMMITTED) {
+                                                            sendSyncApplication(syncHost, roster, account,
+                                                                identity.deviceId, peerId, peer.onion,
+                                                                DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                                                DeviceSyncPushWire.settled(part))
+                                                            settingsReceiver.materializePrimary(
+                                                                context, keyManager)
+                                                        }
+                                                    } else if (topic !in DeviceSyncTorPolicy.metadataTopics &&
                                                         topic in setOf("messages", "receipts", "groups") &&
-                                                        peerCapabilities[peerId]?.contains(
-                                                            "tor_metadata_only_v1") == true) {
-                                                        val skipped = DeviceSyncPushWire.transportSkipped(
-                                                            inner.payload)
+                                                        peerCapabilities.containsKey(peerId)) {
+                                                        val policyAware = peerCapabilities[peerId]
+                                                            ?.contains("tor_metadata_only_v1") == true
+                                                        val response = if (policyAware)
+                                                            DeviceSyncPushWire.transportSkipped(inner.payload)
+                                                        else DeviceSyncPushWire.legacySettled(inner.payload)
                                                         sendSyncApplication(syncHost, roster, account,
                                                             identity.deviceId, peerId, peer.onion,
-                                                            DeviceSyncFrameV2.Kind.PULL_RESPONSE, skipped)
+                                                            DeviceSyncFrameV2.Kind.PULL_RESPONSE, response)
                                                     }
                                                 }
+                                                DeviceSyncFrameV2.Kind.PULL_RESPONSE ->
+                                                    outbox.consumeAuthenticatedResponse(account,
+                                                        identity.deviceId, inner,
+                                                        DeviceSyncOutboxStore.Transport.TOR,
+                                                        syncHost.liveNegotiated(peerId))
                                                 else -> Unit
                                             }
                                         }
@@ -158,7 +199,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                         } catch (e: Exception) { Log.w(TAG, "Device roster frame rejected: ${e.message}") }
                     }
                     val now = System.currentTimeMillis()
-                    if (now >= nextSendMs && TorService.getTransportGate()?.isOpenNow() == true) {
+                    if (TorService.getTransportGate()?.isOpenNow() == true &&
+                        (now >= nextSendMs || DeviceSyncAccountSettingsPublisher.consumeWake())) {
                         for (pending in exchange.pendingNotifications(account, now)) {
                             if (!SessionManager.isUnlocked(context) ||
                                 !roster.isLocalAuthorized(account, identity.deviceId, 0x02)) break
@@ -177,6 +219,56 @@ internal class DeviceRosterRuntime(private val context: Context) {
                             }
                         }
                         nextSendMs = now + 10_000L
+                        runCatching {
+                            settingsPublisher.capturePrimary(context, keyManager, now)
+                        }.onFailure { Log.w(TAG, "Account setting capture deferred: ${it.message}") }
+                        if (!settingsMaterialized) {
+                            settingsMaterialized = runCatching {
+                                settingsReceiver.materializePrimary(context, keyManager)
+                            }.isSuccess
+                        }
+                        for (device in roster.listAuthorizedDevices(account)) {
+                            if (device.isSelf || device.capabilities and 0x02 == 0 ||
+                                device.expiresAtMs <= now) continue
+                            try {
+                                val peer = roster.authorizedPeer(account, device.deviceId, 0x02)
+                                    ?: continue
+                                val control = syncHost.ensure(peer.deviceId, now)
+                                control.outgoing.forEach {
+                                    RustBridge.sendDeviceOnionFrame(peer.onion, it)
+                                }
+                                if (control.ready && now - (lastHelloMs[peer.deviceId] ?: 0L) >= 30_000L) {
+                                    if (sendSyncApplication(syncHost, roster, account,
+                                            identity.deviceId, peer.deviceId, peer.onion,
+                                            DeviceSyncFrameV2.Kind.HELLO,
+                                            DeviceSyncHelloWire.payload(
+                                                setOf("tor_metadata_only_v1"),
+                                                cursorSnapshot(database, peer.deviceId)))) {
+                                        lastHelloMs[peer.deviceId] = now
+                                    }
+                                }
+                                if (control.ready && settingsMaterialized &&
+                                    peerCapabilities[peer.deviceId]?.contains("account_profile_v1") == true) {
+                                    settingsPublisher.enqueueForPeer(account, identity.deviceId,
+                                        peer.deviceId, now)
+                                    for (event in outbox.dueTor(account, identity.deviceId,
+                                            peer.deviceId, now)) {
+                                        try {
+                                            for (payload in DeviceSyncOutboundWire.payloads(event)) {
+                                                if (!sendSyncApplication(syncHost, roster, account,
+                                                        identity.deviceId, peer.deviceId, peer.onion,
+                                                        DeviceSyncFrameV2.Kind.PUSH, payload)) break
+                                            }
+                                        } finally {
+                                            outbox.recordTorAttempt(account, identity.deviceId,
+                                                event, now)
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Sync peer retry deferred: ${e.message}")
+                            }
+                        }
                     }
                     delay(250)
                 }
@@ -188,22 +280,38 @@ internal class DeviceRosterRuntime(private val context: Context) {
         } finally { identity.close() }
     }
 
+    private fun cursorSnapshot(database: SecureLegionDatabase,
+                               peerDeviceId: String): Map<String, Pair<Long, Long>> {
+        require(peerDeviceId.length == 43)
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT topic,pushed_seq,received_seq FROM device_sync_cursors " +
+                "WHERE peer_device_id=?", arrayOf(peerDeviceId)
+        )).use { cursor ->
+            buildMap {
+                while (cursor.moveToNext()) put(cursor.getString(0),
+                    cursor.getLong(1) to cursor.getLong(2))
+            }
+        }
+    }
+
     private fun sendSyncApplication(host: DeviceSyncFsHost, roster: DeviceRosterStore,
                                     account: ByteArray, localId: String, peerId: String,
                                     onion: String, kind: DeviceSyncFrameV2.Kind,
-                                    payload: org.json.JSONObject) {
+                                    payload: org.json.JSONObject): Boolean {
         if (!SessionManager.isUnlocked(context) ||
             !roster.isLocalAuthorized(account, localId, 0x02) ||
-            roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) return
+            roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) return false
         val plaintext = DeviceSyncFrameV2.encode(kind, localId, peerId, payload)
         try {
             val sealed = host.seal(peerId, plaintext)
+            if (!sealed.ready || sealed.outgoing.isEmpty()) return false
             for (wire in sealed.outgoing) {
                 if (!SessionManager.isUnlocked(context) ||
                     !roster.isLocalAuthorized(account, localId, 0x02) ||
-                    roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) break
-                RustBridge.sendDeviceOnionFrame(onion, wire)
+                    roster.authorizedPeer(account, peerId, 0x02)?.onion != onion) return false
+                if (!RustBridge.sendDeviceOnionFrame(onion, wire)) return false
             }
+            return true
         } finally { plaintext.fill(0) }
     }
 

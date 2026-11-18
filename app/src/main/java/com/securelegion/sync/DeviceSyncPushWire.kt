@@ -73,6 +73,15 @@ internal object DeviceSyncPushWire {
         return response
     }
 
+    /** Known pre-policy peers receive the legacy battery bridge without import. */
+    fun legacySettled(payload: JSONObject, nowMs: Long = System.currentTimeMillis()): JSONObject {
+        val settled = transportSkipped(payload, nowMs)
+        settled.put("kind", "settled")
+        settled.remove("policy")
+        DeviceSyncSettlementWire.parse(settled)
+        return settled
+    }
+
     private fun integer(value: Any?): Long {
         require(value is Int || value is Long)
         return (value as Number).toLong()

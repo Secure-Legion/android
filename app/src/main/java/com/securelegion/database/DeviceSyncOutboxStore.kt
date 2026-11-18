@@ -28,6 +28,57 @@ class DeviceSyncOutboxStore(
 
     enum class Transport { TOR, NEARBY }
 
+    /** A small, revision-stable batch. Application settlement alone removes rows. */
+    fun dueTor(accountEd: ByteArray, localDeviceId: String, peerDeviceId: String,
+               nowMs: Long = System.currentTimeMillis(), limit: Int = 3): List<Event> {
+        require(limit in 1..3 && accountEd.size == 32 && localDeviceId.length == 43 &&
+            peerDeviceId.length == 43 && localDeviceId != peerDeviceId)
+        require(roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) &&
+            roster.isAuthorized(accountEd, peerDeviceId, 0x02, nowMs))
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT topic,object_id,event_id,event_time_ms,digest,sequence,delta_json," +
+                "attempts,is_live FROM device_sync_outbox WHERE peer_device_id=? " +
+                "AND transport='TOR' AND next_try_at_ms<=? " +
+                "AND topic IN ('contacts','settings') " +
+                "ORDER BY next_try_at_ms,created_at_ms LIMIT ?",
+            arrayOf(peerDeviceId, nowMs, limit)
+        )).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(Event(peerDeviceId, cursor.getString(0),
+                    cursor.getString(1), cursor.getString(2), cursor.getLong(3),
+                    cursor.getBlob(4), cursor.getLong(5), cursor.getBlob(6), Transport.TOR,
+                    cursor.getInt(7), cursor.getInt(8) == 1))
+            }
+        }
+    }
+
+    /** A retry is charged to the exact revision even if a newer one replaced it. */
+    fun recordTorAttempt(accountEd: ByteArray, localDeviceId: String, event: Event,
+                         nowMs: Long = System.currentTimeMillis()): Boolean {
+        require(event.transport == Transport.TOR && event.topic in torTopics && !event.isLive)
+        if (!authorized(accountEd, localDeviceId, event.peerDeviceId,
+                event.topic, nowMs)) return false
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            if (!authorized(accountEd, localDeviceId, event.peerDeviceId,
+                    event.topic, nowMs)) return false
+            val current = currentEvent(db, event.peerDeviceId, event.topic, event.objectId)
+                ?: return false
+            if (current.eventId != event.eventId ||
+                !current.digest.contentEquals(event.digest) ||
+                current.transport != Transport.TOR || current.isLive) return false
+            val delay = (5_000L shl current.attempts.coerceIn(0, 10))
+                .coerceAtMost(3_600_000L)
+            db.execSQL("UPDATE device_sync_outbox SET attempts=attempts+1,next_try_at_ms=? " +
+                "WHERE peer_device_id=? AND topic=? AND object_id=? AND event_id=?",
+                arrayOf(nowMs + delay, event.peerDeviceId, event.topic,
+                    event.objectId, event.eventId))
+            db.setTransactionSuccessful()
+            return true
+        } finally { db.endTransaction() }
+    }
+
     /** Caller supplies a frame already authenticated by Noise or pinned Nearby TLS. */
     internal fun consumeAuthenticatedResponse(accountEd: ByteArray, localDeviceId: String,
                                      frame: DeviceSyncFrameV2.Frame,
@@ -183,6 +234,12 @@ class DeviceSyncOutboxStore(
                     eventId, eventTimeMs, event.digest, nowMs))
             db.execSQL("DELETE FROM device_transport_skips WHERE peer_device_id=? AND event_id=?",
                 arrayOf(peerDeviceId, eventId))
+            db.execSQL("INSERT INTO device_sync_cursors " +
+                "(peer_device_id,topic,pushed_seq,received_seq,updated_at_ms) " +
+                "VALUES (?,?,?,0,?) ON CONFLICT(peer_device_id,topic) DO UPDATE SET " +
+                "pushed_seq=MAX(pushed_seq,excluded.pushed_seq)," +
+                "updated_at_ms=excluded.updated_at_ms",
+                arrayOf(peerDeviceId, topic, event.sequence, nowMs))
             if (event.isLive) {
                 db.execSQL("DELETE FROM device_sync_live_work WHERE peer_device_id=? " +
                     "AND topic=? AND object_id=? AND source_seq<=?",

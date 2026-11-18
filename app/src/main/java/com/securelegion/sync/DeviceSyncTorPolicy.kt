@@ -9,7 +9,8 @@ internal object DeviceSyncTorPolicy {
     val metadataTopics = setOf("contacts", "settings")
     val liveTopics = setOf("messages", "receipts")
 
-    fun allows(kind: DeviceSyncFrameV2.Kind, payload: JSONObject, livePeer: Boolean): Boolean {
+    fun allows(kind: DeviceSyncFrameV2.Kind, payload: JSONObject,
+               livePeer: Boolean, legacyPeer: Boolean = false): Boolean {
         if (payload.has("group_action_v")) return false
         return when (kind) {
             DeviceSyncFrameV2.Kind.PUSH -> {
@@ -22,7 +23,9 @@ internal object DeviceSyncTorPolicy {
             DeviceSyncFrameV2.Kind.PULL_RESPONSE -> when (payload.optString("kind")) {
                 "transport_skipped" -> true
                 "settled" -> payload.optString("topic") in metadataTopics ||
-                    livePeer && payload.optString("topic") in liveTopics
+                    livePeer && payload.optString("topic") in liveTopics ||
+                    legacyPeer && payload.optString("topic") in
+                    setOf("messages", "receipts", "groups")
                 else -> false
             }
             DeviceSyncFrameV2.Kind.HELLO, DeviceSyncFrameV2.Kind.HELLO_ACK,

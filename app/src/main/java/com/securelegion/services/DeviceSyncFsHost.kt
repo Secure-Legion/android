@@ -22,6 +22,7 @@ class DeviceSyncFsHost(
     private var closed = false
     private val peerKeys = HashMap<String, Pair<ByteArray, ByteArray>>()
     private val livePeers = HashSet<String>()
+    private val legacyPeers = HashSet<String>()
 
     init { require(accountEd.size == 32) }
 
@@ -53,6 +54,8 @@ class DeviceSyncFsHost(
         if (DeviceSyncTorPolicy.LIVE_CAPABILITY in peerCapabilities &&
             DeviceSyncTorPolicy.LIVE_CAPABILITY in localCapabilities) livePeers.add(peerId)
         else livePeers.remove(peerId)
+        if ("tor_metadata_only_v1" !in peerCapabilities) legacyPeers.add(peerId)
+        else legacyPeers.remove(peerId)
     }
 
     @Synchronized
@@ -124,6 +127,7 @@ class DeviceSyncFsHost(
     @Synchronized
     fun forget(peerId: String, nowMs: Long = System.currentTimeMillis()) {
         livePeers.remove(peerId)
+        legacyPeers.remove(peerId)
         val keys = peerKeys.remove(peerId) ?: return
         if (handle == 0L) return
         val request = JSONObject().put("op", "forget")
@@ -142,6 +146,7 @@ class DeviceSyncFsHost(
         peerKeys.values.forEach { (ed, x) -> ed.fill(0); x.fill(0) }
         peerKeys.clear()
         livePeers.clear()
+        legacyPeers.clear()
     }
 
     /** iOS build 48's PULL_REQUEST can carry group message actions. Block it here. */
@@ -156,7 +161,7 @@ class DeviceSyncFsHost(
             ?: throw IllegalArgumentException("Unknown Tor sync frame")
         require(if (inbound) DeviceSyncTorPolicy.allowsInbound(frameKind, payload,
             livePeer = peerId in livePeers) else DeviceSyncTorPolicy.allows(frameKind, payload,
-            livePeer = peerId in livePeers))
+            livePeer = peerId in livePeers, legacyPeer = peerId in legacyPeers))
     }
 
     @Synchronized

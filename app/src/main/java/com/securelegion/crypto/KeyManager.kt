@@ -850,9 +850,18 @@ class KeyManager private constructor(context: Context) {
     fun storeUsername(username: String) {
         encryptedPrefs.edit {
             putString("username", username)
+            putLong("username_changed_at_ms", System.currentTimeMillis())
         }
-        Log.i(TAG, "Stored username: $username")
+        com.securelegion.sync.DeviceSyncAccountSettingsPublisher.wake()
+        Log.i(TAG, "Stored username")
     }
+
+    fun storeUsernameFromDeviceSync(username: String) {
+        encryptedPrefs.edit { putString("username", username) }
+    }
+
+    fun getUsernameChangedAtMs(): Long =
+        encryptedPrefs.getLong("username_changed_at_ms", 0L)
 
     /**
      * Get stored username
