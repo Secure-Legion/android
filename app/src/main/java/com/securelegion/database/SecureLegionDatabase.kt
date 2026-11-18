@@ -63,7 +63,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class, DeviceRoster::class, AuthorizedDevice::class],
-    version = 62,
+    version = 63,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1261,6 +1261,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) = createDeviceLivePeerTables(db)
         }
 
+        private val MIGRATION_62_63 = object : Migration(62, 63) {
+            override fun migrate(db: SupportSQLiteDatabase) = createDeviceContactCaptureTriggers(db)
+        }
+
         /** Room owns the roster entities; these bounded protocol queues are managed by SQL. */
         private fun createDeviceSyncTables(db: SupportSQLiteDatabase) {
             val statements = arrayOf(
@@ -1290,6 +1294,29 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             statements.forEach(db::execSQL)
             createDeviceLiveCaptureTables(db)
             createDeviceLivePeerTables(db)
+            createDeviceContactCaptureTriggers(db)
+        }
+
+        private fun createDeviceContactCaptureTriggers(db: SupportSQLiteDatabase) {
+            val guard = "(SELECT depth FROM device_sync_import_guard WHERE id=1)=0"
+            val now = "CAST(strftime('%s','now') AS INTEGER)*1000"
+            val fields = listOf("displayName", "publicKeyBase64", "x25519PublicKeyBase64",
+                "kyberPublicKeyBase64", "friendRequestOnion", "messagingOnion",
+                "voiceOnion", "profilePictureBase64", "friendshipStatus", "isBlocked")
+            val changed = fields.joinToString(" OR ") { "OLD.$it IS NOT NEW.$it" }
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS device_sync_capture_contact_insert " +
+                "AFTER INSERT ON contacts WHEN $guard AND length(NEW.publicKeyBase64)=44 BEGIN " +
+                "INSERT INTO device_sync_source_changes(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('contacts',NEW.publicKeyBase64,'upsert',$now); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS device_sync_capture_contact_update " +
+                "AFTER UPDATE ON contacts WHEN $guard AND length(NEW.publicKeyBase64)=44 " +
+                "AND ($changed) BEGIN " +
+                "INSERT INTO device_sync_source_changes(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('contacts',NEW.publicKeyBase64,'upsert',$now); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS device_sync_capture_contact_delete " +
+                "AFTER DELETE ON contacts WHEN $guard AND length(OLD.publicKeyBase64)=44 BEGIN " +
+                "INSERT INTO device_sync_source_changes(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('contacts',OLD.publicKeyBase64,'delete',$now); END")
         }
 
         private fun createDeviceLivePeerTables(db: SupportSQLiteDatabase) {
@@ -1365,7 +1392,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_48_49, MIGRATION_49_50,
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
             MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58, MIGRATION_58_59,
-            MIGRATION_59_60, MIGRATION_60_61, MIGRATION_61_62
+            MIGRATION_59_60, MIGRATION_60_61, MIGRATION_61_62, MIGRATION_62_63
         )
 
         /**
@@ -1462,7 +1489,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 62) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 63) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

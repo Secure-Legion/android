@@ -56,6 +56,14 @@ bulk history and full groups remain Nearby-only.
   available for the future importer. Per-peer state selects at most 50 initial
   IDs once, then discovers later changes by durable sequence in bounded work
   queues with independent retry. No live dispatcher consumes this work yet.
+- The v63 migration also captures new contacts and relevant contact edits by
+  pinned account public-key ID. Due work reserves an oldest-item slot while
+  putting contact and message-body changes before receipts. The sender must
+  process this due work before the one-time older seed and refresh small
+  network batches. Contact-roster export/import remains absent.
+- The primary listener routes bounded B6/B7 frames to the roster-checked Rust
+  Noise engine and returns authenticated handshake replies. Application frames
+  remain unacknowledged because the transactional dispatcher is not yet wired.
 - Direct receipt deltas have an exact-key parser, small export query, and
   transactional import that preserves monotonic delivery/read state and
   suppresses outbound recapture. Missing messages remain a dependency rather
@@ -90,8 +98,11 @@ bulk history and full groups remain Nearby-only.
    authenticated settlements, capability exchange, and bounded retries.
    Include the new live direct-message payload preparation, full import
    suppression, end-to-end receipt dispatch, and no timestamp-based delivery
-   cutoff. Do not
-   advertise `live_message_sync_v1` until both sender and receiver pass.
+   cutoff. Prioritize fresh contact/message work in refreshed batches of three,
+   while giving older work a turn. Carry a contact's existing signed public
+   roster only after `contact_roster_v1` negotiation and validate it atomically
+   against the pinned contact account. Do not advertise `live_message_sync_v1`
+   or `contact_roster_v1` until both sender and receiver pass.
 6. Keep group-link Tor work disabled until every signed operation is validated
    before both import and re-export, including indirect pull paths.
 7. Implement Android Nearby receiver and sender roles as supported by the

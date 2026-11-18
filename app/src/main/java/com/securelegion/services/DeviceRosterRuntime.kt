@@ -13,6 +13,7 @@ import com.securelegion.sync.DeviceRosterAuthority
 import com.securelegion.sync.DeviceEnrollmentReceiptVerifier
 import com.securelegion.sync.DeviceEnrollmentOwnerCoordinator
 import com.securelegion.sync.DeviceEnrollmentWire
+import com.securelegion.sync.DeviceSyncWireRoute
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
             }
             if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) return
             val exchange = DeviceRosterExchange(database, roster)
+            val syncHost = DeviceSyncFsHost(account, identity, roster)
             val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)
             val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
             check(onion == identity.onionAddress)
@@ -90,8 +92,26 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     }
                                 }
                                 0xA5 -> exchange.acceptAcknowledgment(frame, account)
-                                // Offers, approvals, and Noise traffic remain closed until
-                                // their authenticated state machines are connected here.
+                                0xB6, 0xB7 -> {
+                                    val peerId = DeviceSyncWireRoute.peerId(frame,
+                                        identity.deviceId, account)
+                                    val outcome = syncHost.receive(peerId, frame)
+                                    try {
+                                        val peer = roster.authorizedPeer(account, peerId, 0x02)
+                                            ?: throw IllegalStateException("Sync peer was revoked")
+                                        for (reply in outcome.outgoing) {
+                                            if (!SessionManager.isUnlocked(context) ||
+                                                !roster.isLocalAuthorized(account, identity.deviceId, 0x02) ||
+                                                roster.authorizedPeer(account, peerId, 0x02)?.onion != peer.onion)
+                                                break
+                                            RustBridge.sendDeviceOnionFrame(peer.onion, reply)
+                                        }
+                                    } finally {
+                                        // Application frames require a transactional importer.
+                                        // Keep them unacknowledged until that dispatcher is wired.
+                                        outcome.message?.fill(0)
+                                    }
+                                }
                             }
                         } catch (e: Exception) { Log.w(TAG, "Device roster frame rejected: ${e.message}") }
                     }
@@ -119,6 +139,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     delay(250)
                 }
             } finally {
+                syncHost.close()
                 RustBridge.stopDeviceOnionListener()
                 DeviceEnrollmentOwnerCoordinator.cancel()
             }

@@ -89,14 +89,27 @@ internal class DeviceSyncLiveCaptureStore(
             limit: Int = 25): List<SourceWork> {
         require(peerDeviceId.length == 43 && limit in 1..25)
         val rows = ArrayList<SourceWork>(limit)
-        database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
-            "SELECT source_seq,topic,object_id,kind,attempts FROM device_sync_live_work " +
-                "WHERE peer_device_id=? AND next_try_at_ms<=? " +
-                "ORDER BY source_seq LIMIT ?", arrayOf(peerDeviceId, nowMs, limit)))
-            .use { cursor ->
-                while (cursor.moveToNext()) rows.add(SourceWork(cursor.getLong(0),
-                    cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
+        val db = database.openHelper.readableDatabase
+        fun append(sql: String, count: Int) {
+            db.query(SimpleSQLiteQuery(
+                "SELECT source_seq,topic,object_id,kind,attempts FROM device_sync_live_work " +
+                    "WHERE peer_device_id=? AND next_try_at_ms<=? $sql LIMIT ?",
+                arrayOf(peerDeviceId, nowMs, count))).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val row = SourceWork(cursor.getLong(0), cursor.getString(1),
+                        cursor.getString(2), cursor.getString(3), cursor.getInt(4))
+                    if (rows.none { it.sequence == row.sequence }) rows.add(row)
+                }
             }
+        }
+        // Reserve one turn for the oldest due revision so a stream of new
+        // messages cannot starve older work. Fresh contact/body changes take
+        // the remaining slots before status-only receipt updates.
+        append("ORDER BY source_seq", 1)
+        if (limit > 1) append("ORDER BY CASE WHEN topic='contacts' THEN 0 " +
+            "WHEN topic='messages' AND kind='body' THEN 1 " +
+            "WHEN topic='messages' THEN 2 ELSE 3 END, source_seq", limit)
+        if (rows.size > limit) rows.subList(limit, rows.size).clear()
         return rows
     }
 
