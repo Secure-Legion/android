@@ -1,6 +1,8 @@
 [submodule "secure-legion-core"]
 	path = secure-legion-core
-	url = https://github.com/Secure-Legion/rust-core.git
+	url = https://github.com/Secure-Legion/android.git
+	branch = native/rust-core-contact-roster-v45
 [submodule "securelegion-crypto"]
 	path = securelegion-crypto
-	url = https://github.com/Secure-Legion/securelegion-crypto.git
+	url = https://github.com/Secure-Legion/android.git
+	branch = native/securelegion-crypto-contact-roster-v45

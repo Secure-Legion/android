@@ -112,6 +112,11 @@ internal class DeviceSyncContactPublisher(
                 }
                 snapshot(db, row, old, nowMs)
             }
+            if (row != null) {
+                val signedRoster = roster.fetchSignedRoster(Base64.decode(objectId, Base64.NO_WRAP))
+                if (signedRoster != null)
+                    delta.put("device_roster", Base64.encodeToString(signedRoster, Base64.NO_WRAP))
+            }
             DeviceSyncContactDelta.parse(delta, nowMs)
             val eventTime = maxOf(nowMs, (old?.eventTimeMs ?: 0L) + 1)
             val identity = RustBridge.deviceHistoryIdentity(
@@ -184,16 +189,9 @@ internal class DeviceSyncContactPublisher(
         require(roster.isLocalAuthorized(accountEd, localId, 0x02, nowMs) &&
             roster.isAuthorized(accountEd, peerId, 0x02, nowMs))
         val db = database.openHelper.readableDatabase
-        val publicRoster = if (contactRosterNegotiated &&
-            runCatching { java.util.Base64.getDecoder().decode(revision.objectId).size == 32 }
-                .getOrDefault(false)) roster.fetchSignedRoster(
-                    java.util.Base64.getDecoder().decode(revision.objectId)) else null
-        val delta = if (publicRoster != null &&
-            !JSONObject(revision.delta.toString(Charsets.UTF_8)).optBoolean("deleted")) {
-            JSONObject(revision.delta.toString(Charsets.UTF_8))
-                .put("device_roster", java.util.Base64.getEncoder().encodeToString(publicRoster))
-                .toString().toByteArray(Charsets.UTF_8)
-        } else revision.delta
+        val projected = JSONObject(revision.delta.toString(Charsets.UTF_8))
+        if (!contactRosterNegotiated) projected.remove("device_roster")
+        val delta = projected.toString().toByteArray(Charsets.UTF_8)
         val identity = RustBridge.deviceHistoryIdentity(delta, "contacts",
             revision.objectId, revision.eventTimeMs)
         try {

@@ -68,11 +68,6 @@ internal class LinkedChatStore(
         if (existingX != null) require(existingX.contentEquals(x)) {
             "Linked contact account key rebind"
         }
-        // The containing own-device frame is authenticated. A public recipient
-        // roster is still accepted only after account-signature verification.
-        delta.deviceRoster?.let {
-            roster.acceptSignedRosterInTransaction(db, it, delta.publicKey, null, nowMs)
-        }
         db.execSQL("INSERT INTO linked_chat_contacts " +
             "(account_ed,x25519,display_name,messaging_onion," +
             "friend_request_onion,created_at_ms,updated_at_ms,blocked) " +

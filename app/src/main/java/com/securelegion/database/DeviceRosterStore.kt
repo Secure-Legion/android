@@ -253,10 +253,16 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
             if (localDeviceId == null &&
                 (previous == null || !previous.contentEquals(signedRoster))) {
                 val pinnedContact = db.query(SimpleSQLiteQuery(
-                    "SELECT 1 FROM contacts WHERE publicKeyBase64=? LIMIT 1",
+                    "SELECT 1 FROM contacts WHERE publicKeyBase64=? " +
+                        "AND friendshipStatus='CONFIRMED' AND isBlocked=0 LIMIT 1",
                     arrayOf(account)
                 )).use { it.moveToFirst() }
-                if (pinnedContact) db.execSQL("INSERT INTO device_sync_source_changes " +
+                val pinnedLinkedContact = runCatching { db.query(SimpleSQLiteQuery(
+                    "SELECT 1 FROM linked_chat_contacts WHERE account_ed=? " +
+                        "AND blocked=0 LIMIT 1", arrayOf(account)
+                )).use { it.moveToFirst() } }.getOrDefault(false)
+                if (pinnedContact || pinnedLinkedContact)
+                    db.execSQL("INSERT INTO device_sync_source_changes " +
                     "(topic,object_id,kind,changed_at_ms) VALUES ('contacts',?,'upsert',?)",
                     arrayOf(account, nowMs))
             }

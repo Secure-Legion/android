@@ -149,6 +149,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
             check(onion == identity.onionAddress)
             check(RustBridge.startDeviceOnionListener())
             val controlJob = SupervisorJob(kotlin.coroutines.coroutineContext[Job])
+            val contactJob = SupervisorJob(kotlin.coroutines.coroutineContext[Job])
             val controlQueue = DeviceSyncControlQueue(
                 CoroutineScope(controlJob + Dispatchers.IO), account, identity.deviceId,
                 valid = { peerId ->
@@ -168,6 +169,16 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 onFailure = { peerId, error ->
                     Log.w(TAG, "Sync control send deferred for ${peerId.take(8)}: ${error?.message ?: "authorization or transport"}")
                 })
+            val contactQueue = ContactRosterSendQueue(
+                CoroutineScope(contactJob + Dispatchers.IO),
+                valid = { item ->
+                    SessionManager.isUnlocked(context) && networkReady() &&
+                        runCatching { keyManager.isInitialized() &&
+                            keyManager.getSigningPublicKey().contentEquals(account) }
+                            .getOrDefault(false) &&
+                        exchange.canSendBootstrap(account, identity.deviceId, item)
+                },
+                send = { item -> RustBridge.sendContactRosterFrame(item.onion, item.wire) })
             fun queueControl(peer: DeviceRosterStore.PeerKeys, outgoing: List<ByteArray>) {
                 if (outgoing.isEmpty()) return
                 val generation = syncHost.generation(peer.deviceId)
@@ -181,6 +192,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     }) Log.w(TAG, "Sync control queue full or invalid for ${peer.deviceId.take(8)}")
             }
             var nextSendMs = 0L
+            var reconnectBootstrap = true
             var nextSourceCheckMs = 0L
             var lastSourceSequence = sourceSequence(database)
             try {
@@ -211,7 +223,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     lastHelloMs.clear()
                                     // A removed endpoint may acknowledge the public
                                     // revocation before this listener shuts down.
-                                    if (SessionManager.isUnlocked(context)) {
+                                    if (SessionManager.isUnlocked(context) &&
+                                        exchange.canSendReply(account, identity.deviceId, reply)) {
                                         RustBridge.sendDeviceOnionFrame(reply.onion, reply.wire)
                                     }
                                 }
@@ -384,6 +397,15 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     if ((directArti || TorService.getTransportGate()?.isOpenNow() == true) &&
                         (now >= nextSendMs || localChangeWake ||
                             DeviceSyncAccountSettingsPublisher.consumeWake())) {
+                        if (primary) {
+                            for (item in exchange.contactBootstraps(account, now,
+                                    reconnect = reconnectBootstrap)) {
+                                if (!SessionManager.isUnlocked(context)) break
+                                if (!contactQueue.enqueue(item))
+                                    Log.w(TAG, "Contact roster control queue full")
+                            }
+                            reconnectBootstrap = false
+                        }
                         for (pending in exchange.pendingNotifications(account, now)) {
                             if (!SessionManager.isUnlocked(context) ||
                                 !roster.isLocalAuthorized(account, identity.deviceId, 0x02)) break
@@ -533,6 +555,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 }
             } finally {
                 withContext(NonCancellable) { controlJob.cancelAndJoin() }
+                withContext(NonCancellable) { contactJob.cancelAndJoin() }
                 syncHost.close()
                 RustBridge.stopDeviceOnionListener()
                 DeviceEnrollmentOwnerCoordinator.cancel()

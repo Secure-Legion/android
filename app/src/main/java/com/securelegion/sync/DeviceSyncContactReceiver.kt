@@ -109,20 +109,21 @@ internal class DeviceSyncContactReceiver(
                                part: DeviceSyncChunkStore.Part,
                                contact: DeviceSyncContactDelta.Contact,
                                canonical: ByteArray, nowMs: Long): Boolean {
-        if (!contact.deleted) {
-            val pinnedX = db.query(SimpleSQLiteQuery(
-                "SELECT x25519PublicKeyBase64 FROM contacts WHERE publicKeyBase64=? LIMIT 1",
+        val pinnedX = if (!contact.deleted) {
+            val existingPin = if (linked != null) db.query(SimpleSQLiteQuery(
+                "SELECT x25519 FROM linked_chat_contacts WHERE account_ed=? " +
+                    "AND blocked=0 LIMIT 1", arrayOf(part.objectId)
+            )).use { if (it.moveToFirst()) it.getBlob(0) else null }
+            else db.query(SimpleSQLiteQuery(
+                "SELECT x25519PublicKeyBase64 FROM contacts WHERE publicKeyBase64=? " +
+                    "AND friendshipStatus='CONFIRMED' AND isBlocked=0 LIMIT 1",
                 arrayOf(part.objectId)
-            )).use { if (it.moveToFirst()) it.getString(0) else null }
-            if (pinnedX != null) require(Base64.decode(pinnedX, Base64.NO_WRAP)
-                .contentEquals(contact.x25519Key!!)) { "Contact account key rebind" }
-            if (contact.deviceRoster != null && pinnedX != null) {
-                // The contact identity was pinned independently. The signed
-                // roster is verified and replaced under this same SQL transaction.
-                roster.acceptSignedRosterInTransaction(db, contact.deviceRoster,
-                    contact.publicKey, null, nowMs)
-            }
-        }
+            )).use { if (it.moveToFirst()) Base64.decode(it.getString(0), Base64.NO_WRAP)
+                else null }
+            if (existingPin != null) require(existingPin.contentEquals(contact.x25519Key!!)) {
+                "Contact account key rebind" }
+            existingPin
+        } else null
         val digest = ByteArray(32) { i ->
             part.digestHex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         }
@@ -145,6 +146,13 @@ internal class DeviceSyncContactReceiver(
         if (incomingWins && !applyPinnedContact(db, part, contact, canonical, digest, nowMs)) {
             deferUnknownContact(db, part, canonical, digest, nowMs)
             return false
+        }
+        if (incomingWins && contact.deviceRoster != null &&
+            (pinnedX != null || linked != null)) {
+            // A linked contact first imported from an authenticated own-device
+            // delta is pinned by applyPinnedContact above, in this transaction.
+            roster.acceptSignedRosterInTransaction(db, contact.deviceRoster,
+                contact.publicKey, null, nowMs)
         }
         db.execSQL("INSERT OR REPLACE INTO device_sync_versions " +
             "(peer_device_id,topic,object_id,event_time_ms,digest) " +

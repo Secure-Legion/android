@@ -63,6 +63,7 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 
 /**
@@ -98,6 +99,7 @@ class TorService : Service() {
     // Reconnection state
     private var isReconnecting = false
     private var deviceRosterRuntime: DeviceRosterRuntime? = null
+    private val contactRosterInFlight = AtomicInteger(0)
 
     // Transport gate (blocks all Tor operations during network switch)
     private lateinit var gate: TransportGate
@@ -3326,6 +3328,22 @@ class TorService : Service() {
      * The native call parks one IO thread for up to 60 seconds and is explicitly woken on shutdown.
      */
     private fun startInboundEventPoller() {
+        if (pollerJobs["ContactRoster"]?.isActive != true) {
+            launchPoller("ContactRoster", intervalMs = 250L) {
+                val frame = RustBridge.pollContactRosterFrame() ?: return@launchPoller
+                if (contactRosterInFlight.incrementAndGet() > 16) {
+                    contactRosterInFlight.decrementAndGet()
+                    return@launchPoller
+                }
+                serviceScope.launch(Dispatchers.IO) {
+                    try { handleContactRosterFrame(frame) }
+                    catch (error: Exception) {
+                        Log.w(TAG, "Contact roster dispatch rejected: ${error.message}")
+                    }
+                    finally { contactRosterInFlight.decrementAndGet() }
+                }
+            }
+        }
         if (pollerJobs["Inbound"]?.isActive == true) return
         pollerJobs["Inbound"] = pollerScope.launch {
             Log.i(TAG, "Unified inbound event poller started")
@@ -3376,6 +3394,50 @@ class TorService : Service() {
         }
     }
 
+    private fun handleContactRosterFrame(frame: ByteArray) {
+        if (!com.securelegion.sync.DeviceRosterExchange.isStructurallyValid(frame) ||
+            !com.securelegion.utils.SessionManager.isUnlocked(this)) return
+        val keyManager = KeyManager.getInstance(this)
+        if (!keyManager.isInitialized()) return
+        val account = keyManager.getSigningPublicKey()
+        val identity = com.securelegion.crypto.LocalDeviceIdentity.loadExisting(this)
+        try {
+            val databaseKey = keyManager.getDatabasePassphrase()
+            val database = try {
+                com.securelegion.database.SecureLegionDatabase.getInstance(this, databaseKey)
+            } finally { databaseKey.fill(0) }
+            val roster = com.securelegion.database.DeviceRosterStore(database)
+            if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) return
+            val exchange = com.securelegion.sync.DeviceRosterExchange(database, roster)
+            when (frame[0].toInt() and 255) {
+                0xA4 -> {
+                    val owner = frame.copyOfRange(11, 43)
+                    val reply = exchange.acceptUpdate(frame, account, identity)
+                    if (reply != null &&
+                        com.securelegion.utils.SessionManager.isUnlocked(this) &&
+                        keyManager.isInitialized() &&
+                        keyManager.getSigningPublicKey().contentEquals(account) &&
+                        exchange.canSendReply(account, identity.deviceId, reply)) {
+                        RustBridge.sendDeviceOnionFrame(reply.onion, reply.wire)
+                    }
+                    if (!owner.contentEquals(account)) {
+                        for (item in exchange.contactBootstraps(account,
+                                reconnect = true, targetAccount = owner)) {
+                            if (!com.securelegion.utils.SessionManager.isUnlocked(this) ||
+                                !keyManager.isInitialized() ||
+                                !keyManager.getSigningPublicKey().contentEquals(account) ||
+                                !exchange.canSendBootstrap(account, identity.deviceId, item)) break
+                            RustBridge.sendContactRosterFrame(item.onion, item.wire)
+                        }
+                    }
+                }
+                0xA5 -> exchange.acceptAcknowledgment(frame, account)
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Contact roster frame rejected: ${error.message}")
+        } finally { identity.close() }
+    }
+
     private fun processIncomingAckEvent(ackBytes: ByteArray) {
         val ackJson = RustBridge.decryptAndStoreAckFromListener(ackBytes)
         if (ackJson == null) {
@@ -3420,6 +3482,7 @@ class TorService : Service() {
                             "FriendRequest" -> startFriendRequestPoller()
                             "Pong" -> startPongPoller()
                             "ACK" -> startAckPoller()
+                            "ContactRoster" -> startInboundEventPoller()
                             "SessionCleanup" -> startSessionCleanup()
                         }
                     }

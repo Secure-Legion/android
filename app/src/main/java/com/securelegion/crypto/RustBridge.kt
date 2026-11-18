@@ -77,6 +77,8 @@ object RustBridge {
     external fun stopDeviceOnionListener()
     /** A bounded socket write only; application-level A5/settlement remains required. */
     external fun sendDeviceOnionFrame(onion: String, wire: ByteArray): Boolean
+    external fun sendContactRosterFrame(onion: String, wire: ByteArray): Boolean
+    external fun pollContactRosterFrame(): ByteArray?
 
     /** digest[32] || event_id[32] || canonical JSON delta, with topic bounds. */
     external fun deviceHistoryIdentity(deltaJson: ByteArray, topic: String, objectId: String,
