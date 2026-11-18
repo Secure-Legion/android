@@ -9,6 +9,7 @@ import com.securelegion.database.DeviceTransportSessionStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceTransportFrame
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,15 +54,49 @@ class DeviceTransportHandshakeDeviceTest {
                     assertTrue(prekey.verify(receiver.signingPublicKey))
                     sessions.acceptPrekey(prekey, sender, now)
                     sessions.acceptPrekey(prekey, sender, now)
+                    val payload = byteArrayOf(0, 1, 2, -1, 0, 9)
+                    val job = sessions.queuePayload(accountA, accountB,
+                        receiver.deviceId, payload, sender, now)
+                    val dataWire = sessions.nextDataWire(accountA, sender)!!
+                    assertArrayEquals(dataWire, sessions.nextDataWire(accountA, sender))
+                    val data = DeviceTransportFrame.parse(dataWire)
+                    assertArrayEquals(job, data.jobId)
+                    var commits = 0
+                    val ackWire = sessions.acceptData(data, receiver, { _, _, plain ->
+                        assertArrayEquals(payload, plain)
+                        commits++
+                        true
+                    }, now)
+                    assertArrayEquals(ackWire, sessions.acceptData(data, receiver,
+                        { _, _, _ -> error("Duplicate commit") }, now))
+                    assertEquals(1, commits)
+                    val ack = DeviceTransportFrame.parse(ackWire)
+                    assertEquals(DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK, ack.kind)
+                    sessions.acceptAcknowledgment(ack, sender, now)
+                    val secondJob = sessions.queuePayload(accountA, accountB,
+                        receiver.deviceId, byteArrayOf(7, 8), sender, now + 1)
+                    val second = DeviceTransportFrame.parse(sessions.nextDataWire(accountA,
+                        sender)!!)
+                    assertEquals(1L, second.counter)
+                    assertEquals(0, second.payload[0].toInt())
+                    assertArrayEquals(secondJob, second.jobId)
+                    val secondAck = sessions.acceptData(second, receiver,
+                        { _, _, plain -> assertArrayEquals(byteArrayOf(7, 8), plain); true }, now)
+                    sessions.acceptAcknowledgment(DeviceTransportFrame.parse(secondAck), sender, now)
                     db.query(SimpleSQLiteQuery("SELECT state,length(chain_key)," +
-                        "length(initial_cipher) FROM device_transport_sessions " +
+                        "initial_cipher IS NULL FROM device_transport_sessions " +
                         "WHERE account_ed=? AND peer_device_id=? AND direction='tx'",
                         arrayOf(Base64.getEncoder().encodeToString(accountB),
                             receiver.deviceId))).use {
                         assertTrue(it.moveToFirst())
                         assertEquals("ready", it.getString(0))
                         assertEquals(32, it.getInt(1))
-                        assertEquals(1600, it.getInt(2))
+                        assertEquals(1, it.getInt(2))
+                    }
+                    db.query(SimpleSQLiteQuery("SELECT COUNT(*) FROM device_transport_jobs " +
+                        "WHERE job_id=?", arrayOf(job))).use {
+                        assertTrue(it.moveToFirst())
+                        assertEquals(0, it.getInt(0))
                     }
                 } finally {
                     for ((account, peerId) in listOf(accountA to sender.deviceId,

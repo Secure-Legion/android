@@ -1,6 +1,7 @@
 package com.securelegion.database
 
 import androidx.sqlite.db.SimpleSQLiteQuery
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.sync.DeviceTransportFrame
@@ -176,6 +177,221 @@ internal class DeviceTransportSessionStore(
             } finally { encapsulated.fill(0) }
         } finally { db.endTransaction() }
     }
+
+    /** Store plaintext before sending; the first send atomically seals the exact retry wire. */
+    fun queuePayload(localAccount: ByteArray, recipientAccount: ByteArray,
+                     peerId: String, plaintext: ByteArray, identity: LocalDeviceIdentity,
+                     nowMs: Long = System.currentTimeMillis()): ByteArray {
+        require(localAccount.size == 32 && recipientAccount.size == 32 &&
+            plaintext.isNotEmpty() && plaintext.size <= 5 * 1024 * 1024)
+        authorize(localAccount, identity.deviceId, recipientAccount, peerId, nowMs)
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            authorize(localAccount, identity.deviceId, recipientAccount, peerId, nowMs)
+            val session = db.query(SimpleSQLiteQuery(
+                "SELECT session_id,prekey_wire FROM device_transport_sessions WHERE account_ed=? " +
+                    "AND peer_device_id=? AND local_device_id=? AND direction='tx' " +
+                    "AND state='ready' ORDER BY generation DESC LIMIT 1",
+                arrayOf(encoded(recipientAccount), peerId, identity.deviceId)
+            )).use { if (it.moveToFirst()) it.getBlob(0) to it.getBlob(1) else null }
+                ?: throw IllegalStateException("No ready transport session")
+            require(DeviceTransportFrame.parse(session.second).recipientAccount
+                .contentEquals(localAccount)) { "Account does not own transport session" }
+            val jobId = DeviceTransportFrame.randomId()
+            val logicalId = DeviceTransportFrame.logicalId(localAccount, identity.deviceId, jobId)
+            db.execSQL("INSERT INTO device_transport_jobs " +
+                "(account_ed,peer_device_id,local_device_id,job_id,logical_id," +
+                "session_id,plaintext,created_at_ms) VALUES (?,?,?,?,?,?,?,?)",
+                arrayOf(encoded(recipientAccount), peerId, identity.deviceId, jobId,
+                logicalId, session.first, plaintext, nowMs))
+            db.setTransactionSuccessful()
+            return jobId
+        } finally { db.endTransaction() }
+    }
+
+    /** Return the oldest exact wire for retry, sealing a queued draft when necessary. */
+    fun nextDataWire(localAccount: ByteArray, identity: LocalDeviceIdentity): ByteArray? {
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val pending = db.query(SimpleSQLiteQuery(
+                "SELECT j.account_ed,j.peer_device_id,j.job_id,j.session_id,j.plaintext," +
+                    "j.wire,s.counter,s.chain_key,s.initial_cipher,s.prekey_wire " +
+                    "FROM device_transport_jobs j JOIN device_transport_sessions s ON " +
+                    "s.account_ed=j.account_ed AND s.peer_device_id=j.peer_device_id AND " +
+                    "s.local_device_id=j.local_device_id AND s.session_id=j.session_id " +
+                    "AND s.direction='tx' WHERE j.local_device_id=? AND s.state='ready' " +
+                    "ORDER BY j.created_at_ms LIMIT 1",
+                arrayOf(identity.deviceId)
+            )).use { c ->
+                if (!c.moveToFirst()) null else DataDraft(c.getString(0), c.getString(1),
+                    c.getBlob(2), c.getBlob(3), if (c.isNull(4)) null else c.getBlob(4),
+                    if (c.isNull(5)) null else c.getBlob(5), c.getLong(6),
+                    if (c.isNull(7)) null else c.getBlob(7),
+                    if (c.isNull(8)) null else c.getBlob(8), c.getBlob(9))
+            } ?: return null
+            val recipient = Base64.getDecoder().decode(pending.account)
+            require(DeviceTransportFrame.parse(pending.prekey).recipientAccount
+                .contentEquals(localAccount)) { "Account does not own transport session" }
+            authorize(localAccount, identity.deviceId, recipient, pending.peer, System.currentTimeMillis())
+            if (pending.wire != null) {
+                db.setTransactionSuccessful()
+                return pending.wire
+            }
+            val plain = pending.plaintext ?: throw IllegalStateException("Missing transport draft")
+            val chain = pending.chain ?: throw IllegalStateException("Missing send chain")
+            require(pending.counter in 0 until DeviceTransportFrame.MAX_COUNTER)
+            val encrypted = RustBridge.encryptMessageWithEvolution(
+                String(plain, Charsets.ISO_8859_1), chain, pending.counter)
+            try {
+                val payload = byteArrayOf(if (pending.initial == null) 0 else 1) +
+                    (pending.initial ?: ByteArray(0)) + encrypted.ciphertext
+                val frame = DeviceTransportFrame.sign(DeviceTransportFrame.Kind.DATA,
+                    localAccount, recipient, identity.deviceId, pending.peer,
+                    pending.session, pending.counter, pending.job, payload, identity)
+                db.execSQL("UPDATE device_transport_jobs SET wire=?,wire_hash=?," +
+                    "plaintext=NULL,counter=?,next_try_at_ms=0 WHERE account_ed=? " +
+                    "AND peer_device_id=? AND local_device_id=? AND job_id=? AND wire IS NULL",
+                    arrayOf(frame.wire, frame.exactWireHash, pending.counter, pending.account,
+                        pending.peer, identity.deviceId, pending.job))
+                db.execSQL("UPDATE device_transport_sessions SET counter=?,chain_key=?," +
+                    "initial_cipher=NULL WHERE account_ed=? AND peer_device_id=? " +
+                    "AND local_device_id=? AND session_id=? AND direction='tx' AND counter=?",
+                    arrayOf(pending.counter + 1, encrypted.evolvedChainKey,
+                        pending.account, pending.peer, identity.deviceId, pending.session,
+                        pending.counter))
+                db.setTransactionSuccessful()
+                return frame.wire
+            } finally { encrypted.evolvedChainKey.fill(0) }
+        } finally { db.endTransaction() }
+    }
+
+    /** Payload commit and exact-wire ACK share one database transaction. */
+    fun acceptData(frame: DeviceTransportFrame, identity: LocalDeviceIdentity,
+                   commitPayload: (SupportSQLiteDatabase, String, ByteArray) -> Boolean,
+                   nowMs: Long = System.currentTimeMillis()): ByteArray {
+        require(frame.version == 2 && frame.kind == DeviceTransportFrame.Kind.DATA &&
+            frame.recipientDeviceId == identity.deviceId)
+        authorize(frame.recipientAccount, identity.deviceId,
+            frame.senderAccount, frame.senderDeviceId, nowMs)
+        val peer = roster.authorizedPeer(frame.senderAccount, frame.senderDeviceId, 0x01, nowMs)
+            ?: throw IllegalArgumentException("Unknown sender device")
+        require(frame.verify(peer.signingKey))
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            authorize(frame.recipientAccount, identity.deviceId,
+                frame.senderAccount, frame.senderDeviceId, nowMs)
+            val account = encoded(frame.senderAccount)
+            val old = db.query(SimpleSQLiteQuery(
+                "SELECT session_id,counter,wire_hash,ack_wire FROM device_transport_receipts " +
+                    "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? AND job_id=?",
+                arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId)
+            )).use { c -> if (!c.moveToFirst()) null else Receipt(c.getBlob(0),
+                c.getLong(1), c.getBlob(2), c.getBlob(3)) }
+            if (old != null) {
+                require(old.session.contentEquals(frame.sessionId) && old.counter == frame.counter &&
+                    old.hash.contentEquals(frame.exactWireHash)) { "Conflicting transport replay" }
+                db.setTransactionSuccessful()
+                return old.ack
+            }
+            val session = db.query(SimpleSQLiteQuery(
+                "SELECT state,counter,chain_key,prekey_wire,prekey_x,prekey_kem " +
+                    "FROM device_transport_sessions WHERE account_ed=? AND peer_device_id=? " +
+                    "AND local_device_id=? AND session_id=? AND direction='rx'",
+                arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.sessionId)
+            )).use { c -> if (!c.moveToFirst()) null else ReceiveSession(c.getString(0),
+                c.getLong(1), if (c.isNull(2)) null else c.getBlob(2), c.getBlob(3),
+                if (c.isNull(4)) null else c.getBlob(4),
+                if (c.isNull(5)) null else c.getBlob(5)) }
+                ?: throw IllegalArgumentException("Unknown transport session")
+            require(frame.counter == session.counter) { "Counter gap or replay" }
+            val initial = frame.payload[0].toInt() == 1
+            val chain = if (session.state == "prekey") {
+                require(initial && session.prekeyX != null && session.prekeyKem != null)
+                val prekey = DeviceTransportFrame.parse(session.prekeyWire)
+                val secret = RustBridge.hybridDecapsulate(session.prekeyX,
+                    session.prekeyKem, frame.payload.copyOfRange(1, 1601))
+                    ?: throw IllegalArgumentException("Invalid hybrid ciphertext")
+                try { RustBridge.deriveRootKey(secret, prekey.keyContext) }
+                    finally { secret.fill(0) }
+            } else {
+                require(session.state == "ready")
+                session.chain ?: throw IllegalArgumentException("Missing receive chain")
+            }
+            try {
+                val encrypted = frame.payload.copyOfRange(1 + if (initial) 1600 else 0,
+                    frame.payload.size)
+                val decrypted = RustBridge.decryptMessageWithEvolution(encrypted, chain,
+                    frame.counter) ?: throw IllegalArgumentException("Invalid transport ciphertext")
+                val plain = decrypted.plaintext.toByteArray(Charsets.ISO_8859_1)
+                try {
+                    val logicalId = DeviceTransportFrame.logicalId(frame.senderAccount,
+                        frame.senderDeviceId, frame.jobId)
+                    val ready = commitPayload(db, logicalId, plain)
+                    val ack = DeviceTransportFrame.sign(
+                        if (ready) DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK
+                            else DeviceTransportFrame.Kind.DEVICE_STORAGE_ACK,
+                        frame.recipientAccount, frame.senderAccount, identity.deviceId,
+                        frame.senderDeviceId, frame.sessionId, frame.counter, frame.jobId,
+                        frame.exactWireHash, identity)
+                    db.execSQL("UPDATE device_transport_sessions SET state='ready',chain_key=?," +
+                        "counter=?,prekey_x=NULL,prekey_kem=NULL WHERE account_ed=? " +
+                        "AND peer_device_id=? AND local_device_id=? AND session_id=? AND direction='rx'",
+                        arrayOf(decrypted.evolvedChainKey, frame.counter + 1, account,
+                            frame.senderDeviceId, identity.deviceId, frame.sessionId))
+                    db.execSQL("INSERT INTO device_transport_receipts " +
+                        "(account_ed,peer_device_id,local_device_id,session_id,counter," +
+                        "job_id,wire_hash,ack_wire,committed_at_ms) VALUES (?,?,?,?,?,?,?,?,?)",
+                        arrayOf(account, frame.senderDeviceId, identity.deviceId,
+                            frame.sessionId, frame.counter, frame.jobId,
+                            frame.exactWireHash, ack.wire, nowMs))
+                    db.setTransactionSuccessful()
+                    return ack.wire
+                } finally { plain.fill(0); decrypted.evolvedChainKey.fill(0) }
+            } finally { chain.fill(0) }
+        } finally { db.endTransaction() }
+    }
+
+    fun acceptAcknowledgment(frame: DeviceTransportFrame, identity: LocalDeviceIdentity,
+                             nowMs: Long = System.currentTimeMillis()) {
+        require(frame.version == 2 && frame.kind in listOf(
+            DeviceTransportFrame.Kind.DEVICE_STORAGE_ACK,
+            DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK) &&
+            frame.recipientDeviceId == identity.deviceId)
+        authorize(frame.recipientAccount, identity.deviceId,
+            frame.senderAccount, frame.senderDeviceId, nowMs)
+        val peer = roster.authorizedPeer(frame.senderAccount, frame.senderDeviceId, 0x01, nowMs)
+            ?: throw IllegalArgumentException("Unknown ACK sender")
+        require(frame.verify(peer.signingKey))
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val account = encoded(frame.senderAccount)
+            val matched = db.query(SimpleSQLiteQuery(
+                "SELECT session_id,counter,wire_hash FROM device_transport_jobs " +
+                    "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? AND job_id=?",
+                arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId)
+            )).use { c -> c.moveToFirst() && c.getBlob(0).contentEquals(frame.sessionId) &&
+                c.getLong(1) == frame.counter && c.getBlob(2).contentEquals(frame.payload) }
+            require(matched) { "Invalid transport acknowledgment" }
+            db.execSQL("DELETE FROM device_transport_jobs WHERE account_ed=? AND " +
+                "peer_device_id=? AND local_device_id=? AND job_id=?",
+                arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    private data class DataDraft(val account: String, val peer: String, val job: ByteArray,
+        val session: ByteArray, val plaintext: ByteArray?, val wire: ByteArray?,
+        val counter: Long, val chain: ByteArray?, val initial: ByteArray?,
+        val prekey: ByteArray)
+    private data class ReceiveSession(val state: String, val counter: Long,
+        val chain: ByteArray?, val prekeyWire: ByteArray,
+        val prekeyX: ByteArray?, val prekeyKem: ByteArray?)
+    private data class Receipt(val session: ByteArray, val counter: Long,
+        val hash: ByteArray, val ack: ByteArray)
 
     private fun authorize(localAccount: ByteArray, localId: String,
                           peerAccount: ByteArray, peerId: String, nowMs: Long) {
