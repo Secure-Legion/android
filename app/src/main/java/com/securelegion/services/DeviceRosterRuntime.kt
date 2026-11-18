@@ -27,6 +27,7 @@ import com.securelegion.sync.DeviceSyncContactReceiver
 import com.securelegion.sync.DeviceSyncContactPublisher
 import com.securelegion.sync.DeviceSyncLiveMessageReceiver
 import com.securelegion.sync.DeviceSyncLiveReceiptReceiver
+import com.securelegion.sync.DeviceSyncMediaFiles
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -80,7 +81,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
             val contactReceiver = DeviceSyncContactReceiver(database, roster)
             val messageReceiver = DeviceSyncLiveMessageReceiver(database, roster,
-                keyManager::encryptDeviceSyncContent)
+                keyManager::encryptDeviceSyncContent,
+                DeviceSyncMediaFiles(context, keyManager)::store)
             val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster)
             val contactPublisher = DeviceSyncContactPublisher(database, roster)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)

@@ -51,7 +51,7 @@ class DeviceSyncLiveMessageDeviceTest {
                         2, now - 1_000, now + 60_000, 1, self))
             }
             val receiver = DeviceSyncLiveMessageReceiver(database,
-                DeviceRosterStore(database)) { "ENC1:$it" }
+                DeviceRosterStore(database), { "ENC1:$it" })
             assertEquals(DeviceSyncChunkStore.Result.DEFERRED,
                 receiver.receive(account, local, part, true, now))
             db.query(SimpleSQLiteQuery("SELECT COUNT(*) FROM device_sync_pending " +

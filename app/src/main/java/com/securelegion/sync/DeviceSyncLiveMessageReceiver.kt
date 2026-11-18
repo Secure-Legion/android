@@ -12,7 +12,10 @@ import org.json.JSONObject
 internal class DeviceSyncLiveMessageReceiver(
     private val database: SecureLegionDatabase,
     private val roster: DeviceRosterStore,
-    private val encryptForLocalProfile: (String) -> String
+    private val encryptForLocalProfile: (String) -> String,
+    private val storeMedia: (DeviceSyncMessageDelta.Message) -> String = {
+        throw IllegalArgumentException("Media storage unavailable")
+    }
 ) {
     private val chunks = DeviceSyncChunkStore(database, roster)
     data class Applied(val peerDeviceId: String, val objectId: String,
@@ -116,8 +119,8 @@ internal class DeviceSyncLiveMessageReceiver(
             advanceCursor(db, part, nowMs)
             return true
         }
-        if (!DeviceSyncTextMessageStore.applyInTransaction(db, message,
-                encryptForLocalProfile)) {
+        if (!DeviceSyncDirectMessageStore.applyInTransaction(db, message,
+                encryptForLocalProfile, storeMedia)) {
             defer(db, part, canonical, digest, nowMs)
             return false
         }
