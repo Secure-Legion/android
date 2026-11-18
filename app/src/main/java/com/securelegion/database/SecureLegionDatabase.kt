@@ -63,7 +63,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class, DeviceRoster::class, AuthorizedDevice::class],
-    version = 61,
+    version = 62,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1257,6 +1257,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) = createDeviceLiveCaptureTables(db)
         }
 
+        private val MIGRATION_61_62 = object : Migration(61, 62) {
+            override fun migrate(db: SupportSQLiteDatabase) = createDeviceLivePeerTables(db)
+        }
+
         /** Room owns the roster entities; these bounded protocol queues are managed by SQL. */
         private fun createDeviceSyncTables(db: SupportSQLiteDatabase) {
             val statements = arrayOf(
@@ -1285,6 +1289,24 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             )
             statements.forEach(db::execSQL)
             createDeviceLiveCaptureTables(db)
+            createDeviceLivePeerTables(db)
+        }
+
+        private fun createDeviceLivePeerTables(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_live_peers " +
+                "(peer_device_id TEXT NOT NULL PRIMARY KEY, seed_snapshot_seq INTEGER NOT NULL, " +
+                "discovered_seq INTEGER NOT NULL, created_at_ms INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_live_seed " +
+                "(peer_device_id TEXT NOT NULL, message_id TEXT NOT NULL, ordinal INTEGER NOT NULL, " +
+                "PRIMARY KEY(peer_device_id,message_id))")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_device_sync_live_seed_ordinal " +
+                "ON device_sync_live_seed(peer_device_id,ordinal)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS device_sync_live_work " +
+                "(peer_device_id TEXT NOT NULL, source_seq INTEGER NOT NULL, topic TEXT NOT NULL, " +
+                "object_id TEXT NOT NULL, kind TEXT NOT NULL, next_try_at_ms INTEGER NOT NULL DEFAULT 0, " +
+                "attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(peer_device_id,source_seq))")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_device_sync_live_work_due " +
+                "ON device_sync_live_work(peer_device_id,next_try_at_ms,source_seq)")
         }
 
         /** Triggers run in the message write transaction, including Room DAO writes. */
@@ -1343,7 +1365,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_48_49, MIGRATION_49_50,
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
             MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58, MIGRATION_58_59,
-            MIGRATION_59_60, MIGRATION_60_61
+            MIGRATION_59_60, MIGRATION_60_61, MIGRATION_61_62
         )
 
         /**
@@ -1440,7 +1462,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 61) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 62) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

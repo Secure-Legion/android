@@ -174,6 +174,14 @@ class DeviceSyncOutboxStore(
                     eventId, eventTimeMs, event.digest, nowMs))
             db.execSQL("DELETE FROM device_transport_skips WHERE peer_device_id=? AND event_id=?",
                 arrayOf(peerDeviceId, eventId))
+            if (event.isLive) {
+                db.execSQL("DELETE FROM device_sync_live_work WHERE peer_device_id=? " +
+                    "AND topic=? AND object_id=? AND source_seq<=?",
+                    arrayOf(peerDeviceId, topic, objectId, event.sequence))
+                if (topic == "messages") db.execSQL("DELETE FROM device_sync_live_seed " +
+                    "WHERE peer_device_id=? AND message_id=?",
+                    arrayOf(peerDeviceId, objectId))
+            }
             db.setTransactionSuccessful()
             return true
         } finally {

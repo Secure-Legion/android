@@ -36,14 +36,16 @@ bulk history and full groups remain Nearby-only.
   App startup and the linked-profile onion worker are not connected yet.
 - Build-49 Tor policy parser permits only negotiated `sync_mode=live_v1`
   message/receipt PUSH frames. Existing metadata-only behavior remains active
-  until capability exchange is implemented. SQLCipher v61 records `is_live`
+  until capability exchange is implemented. SQLCipher v62 records `is_live`
   on outbox and deferred rows, defaulting preexisting work to false; Tor ACKs
   still cannot clear Wi-Fi-only revisions. The live outbox enforces 256 revision
   and 16 MiB serialized delta caps without deleting the source change.
 - SQLCipher message triggers capture inserts, body edits, status/read changes,
   and deletes in the same transaction as the local write. The sequence-based
   capture reader loads at most 25 IDs, and a transaction-scoped import guard is
-  available for the future importer. No live dispatcher consumes this log yet.
+  available for the future importer. Per-peer state selects at most 50 initial
+  IDs once, then discovers later changes by durable sequence in bounded work
+  queues with independent retry. No live dispatcher consumes this work yet.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
@@ -63,9 +65,8 @@ bulk history and full groups remain Nearby-only.
    lock, profile-switch, revocation, and process-lifecycle cleanup.
 5. Implement exact metadata payload import/export, cursors, deferral, chunks,
    authenticated settlements, capability exchange, and bounded retries.
-   Include the new live direct-message 50-message one-time baseline, full
-   import suppression, receipt-only payloads, and no timestamp-based delivery
-   cutoff. Do not
+   Include the new live direct-message payload preparation, full import
+   suppression, receipt-only payloads, and no timestamp-based delivery cutoff. Do not
    advertise `live_message_sync_v1` until both sender and receiver pass.
 6. Keep group-link Tor work disabled until every signed operation is validated
    before both import and re-export, including indirect pull paths.
