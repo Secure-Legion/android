@@ -96,6 +96,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
             check(onion == identity.onionAddress)
             check(RustBridge.startDeviceOnionListener())
             var nextSendMs = 0L
+            var nextSourceCheckMs = 0L
+            var lastSourceSequence = sourceSequence(database)
             try {
                 runCatching { settingsPublisher.capturePrimary(context, keyManager) }
                     .onFailure { Log.w(TAG, "Account setting capture deferred: ${it.message}") }
@@ -247,8 +249,18 @@ internal class DeviceRosterRuntime(private val context: Context) {
                         } catch (e: Exception) { Log.w(TAG, "Device roster frame rejected: ${e.message}") }
                     }
                     val now = System.currentTimeMillis()
+                    var localChangeWake = false
+                    if (now >= nextSourceCheckMs) {
+                        nextSourceCheckMs = now + 1_000L
+                        val sequence = sourceSequence(database)
+                        if (sequence != lastSourceSequence) {
+                            localChangeWake = true
+                            lastSourceSequence = sequence
+                        }
+                    }
                     if (TorService.getTransportGate()?.isOpenNow() == true &&
-                        (now >= nextSendMs || DeviceSyncAccountSettingsPublisher.consumeWake())) {
+                        (now >= nextSendMs || localChangeWake ||
+                            DeviceSyncAccountSettingsPublisher.consumeWake())) {
                         for (pending in exchange.pendingNotifications(account, now)) {
                             if (!SessionManager.isUnlocked(context) ||
                                 !roster.isLocalAuthorized(account, identity.deviceId, 0x02)) break
@@ -389,6 +401,11 @@ internal class DeviceRosterRuntime(private val context: Context) {
             }
         }
     }
+
+    private fun sourceSequence(database: SecureLegionDatabase): Long =
+        database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT COALESCE(MAX(seq),0) FROM device_sync_source_changes"
+        )).use { cursor -> check(cursor.moveToFirst()); cursor.getLong(0) }
 
     private fun sendSyncApplication(host: DeviceSyncFsHost, roster: DeviceRosterStore,
                                     account: ByteArray, localId: String, peerId: String,
