@@ -8,6 +8,7 @@
 ///   - Incoming connections come from `RendRequest` stream (no TCP listener)
 
 use std::error::Error;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -476,6 +477,16 @@ static FR_REND_REQUEST_STREAM: StdMutex<Option<Box<dyn futures::Stream<Item = to
 
 /// CancellationToken for the friend-request HS acceptor task.
 static FR_ACCEPTOR_CANCEL: StdMutex<Option<CancellationToken>> = StdMutex::new(None);
+
+// Independent-device traffic has its own onion and bounded inbound queue.
+// No device frame may enter MESSAGE_TX, PING_TX, or the contact parser.
+static RUNNING_DEVICE_HS: StdMutex<Option<Arc<tor_hsservice::RunningOnionService>>> = StdMutex::new(None);
+static DEVICE_ONION_ADDRESS: StdMutex<Option<String>> = StdMutex::new(None);
+static DEVICE_REND_REQUEST_STREAM: StdMutex<Option<Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>>> = StdMutex::new(None);
+static DEVICE_ACCEPTOR_CANCEL: StdMutex<Option<CancellationToken>> = StdMutex::new(None);
+static DEVICE_FRAMES: Lazy<StdMutex<VecDeque<Vec<u8>>>> = Lazy::new(|| StdMutex::new(VecDeque::new()));
+const DEVICE_FRAME_MAX: usize = 512 * 1024 + 8;
+const DEVICE_QUEUE_MAX: usize = 16;
 
 // ───── Per-Peer Failure Tracking (Stale Descriptor Recovery) ─────
 
@@ -2189,6 +2200,7 @@ pub fn shutdown_arti() {
     // 1. Cancel all acceptor tasks
     stop_arti_listener();
     stop_fr_listener();
+    stop_device_listener();
     stop_bootstrap_listener();
 
     // 2. Drop running onion services (stops descriptor publishing)
@@ -2210,6 +2222,7 @@ pub fn shutdown_arti() {
             log::info!("Arti: dropped FR HS");
         }
     }
+    lock_recover(&RUNNING_DEVICE_HS).take();
 
     // 3. Clear RendRequest streams
     {
@@ -2220,6 +2233,8 @@ pub fn shutdown_arti() {
         let mut guard = lock_recover(&FR_REND_REQUEST_STREAM);
         *guard = None;
     }
+    lock_recover(&DEVICE_REND_REQUEST_STREAM).take();
+    lock_recover(&DEVICE_FRAMES).clear();
 
     // 4. Clear onion addresses
     {
@@ -2234,6 +2249,7 @@ pub fn shutdown_arti() {
         let mut guard = lock_recover(&FR_ONION_ADDRESS);
         *guard = None;
     }
+    lock_recover(&DEVICE_ONION_ADDRESS).take();
 
     // 5. Drop the TorClient (closes all circuits, releases relay connections)
     {
@@ -2638,6 +2654,107 @@ pub fn stop_fr_listener() {
     let dropped_hs = lock_recover(&RUNNING_FR_HS).take().is_some();
     lock_recover(&FR_REND_REQUEST_STREAM).take();
     log::info!("Arti: FR HS acceptor cancelled (dropped_hs={})", dropped_hs);
+}
+
+/// Launch the installation's own onion. Call only after the protected
+/// installation identity has been loaded for the unlocked profile.
+pub async fn create_device_onion_service(
+    ed25519_seed: &[u8; 32],
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
+    let address = super::tor::compute_onion_address_from_ed25519_seed(ed25519_seed);
+    let nickname_text = format!("sl-dev-{}", &address[..12]);
+    let ed = tor_llcrypto::pk::ed25519::Keypair::from_bytes(ed25519_seed);
+    let hsid = HsIdKeypair::from(tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&ed));
+    let config = OnionServiceConfig::builder()
+        .nickname(HsNickname::new(nickname_text.clone())?)
+        .build()?;
+    let launched: (Arc<tor_hsservice::RunningOnionService>,
+        Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>) =
+        match client.launch_onion_service_with_hsid(config, hsid) {
+        Ok(Some((service, stream))) => (service, Box::new(stream)),
+        Ok(None) => return Err("Device onion service disabled".into()),
+        Err(_) => {
+            let fallback = OnionServiceConfig::builder()
+                .nickname(HsNickname::new(nickname_text)?)
+                .build()?;
+            let (service, stream) = client.launch_onion_service(fallback)?
+                .ok_or("Device onion service disabled")?;
+            (service, Box::new(stream))
+        }
+    };
+    let (service, stream) = launched;
+    if service.onion_address().is_none() {
+        return Err("Device onion key not available in Arti keystore".into());
+    }
+    lock_recover(&RUNNING_DEVICE_HS).replace(service);
+    lock_recover(&DEVICE_ONION_ADDRESS).replace(address.clone());
+    lock_recover(&DEVICE_REND_REQUEST_STREAM).replace(Box::new(stream));
+    Ok(address)
+}
+
+pub fn start_device_listener() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let stream = lock_recover(&DEVICE_REND_REQUEST_STREAM)
+        .take().ok_or("Device onion was not created")?;
+    let cancel = CancellationToken::new();
+    if let Some(old) = lock_recover(&DEVICE_ACCEPTOR_CANCEL).replace(cancel.clone()) {
+        old.cancel();
+    }
+    runtime_spawn(async move {
+        let mut requests = tor_hsservice::handle_rend_requests(stream);
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                maybe = requests.next() => match maybe {
+                    Some(request) => { runtime_spawn(async move {
+                        if let Err(error) = accept_and_handle_device(request).await {
+                            log::warn!("Device onion frame rejected: {}", error);
+                        }
+                    }); }
+                    None => break,
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+async fn accept_and_handle_device(
+    request: StreamRequest,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    use futures::io::AsyncReadExt as FuturesReadExt;
+    let mut stream = request.accept(Connected::new_empty()).await?;
+    let mut length = [0u8; 4];
+    stream.read_exact(&mut length).await?;
+    let size = u32::from_be_bytes(length) as usize;
+    if !(2..=DEVICE_FRAME_MAX).contains(&size) {
+        return Err("Device frame size rejected".into());
+    }
+    let mut frame = vec![0u8; size];
+    stream.read_exact(&mut frame).await?;
+    if !matches!(frame[0], 0xA3..=0xA5 | 0xB6 | 0xB7) {
+        return Err("Non-device frame on device onion".into());
+    }
+    let mut queue = lock_recover(&DEVICE_FRAMES);
+    if queue.len() == DEVICE_QUEUE_MAX {
+        return Err("Device frame queue full".into());
+    }
+    queue.push_back(frame);
+    Ok(())
+}
+
+pub fn poll_device_frame() -> Option<Vec<u8>> {
+    lock_recover(&DEVICE_FRAMES).pop_front()
+}
+
+pub fn stop_device_listener() {
+    if let Some(cancel) = lock_recover(&DEVICE_ACCEPTOR_CANCEL).take() {
+        cancel.cancel();
+    }
+    lock_recover(&RUNNING_DEVICE_HS).take();
+    lock_recover(&DEVICE_REND_REQUEST_STREAM).take();
+    lock_recover(&DEVICE_ONION_ADDRESS).take();
+    lock_recover(&DEVICE_FRAMES).clear();
 }
 
 // ───── Utilities ─────
