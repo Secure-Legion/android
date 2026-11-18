@@ -30,7 +30,8 @@ class DeviceSyncOutboxStore(
 
     /** A small, revision-stable batch. Application settlement alone removes rows. */
     fun dueTor(accountEd: ByteArray, localDeviceId: String, peerDeviceId: String,
-               nowMs: Long = System.currentTimeMillis(), limit: Int = 3): List<Event> {
+               nowMs: Long = System.currentTimeMillis(), limit: Int = 3,
+               liveNegotiated: Boolean = false): List<Event> {
         require(limit in 1..3 && accountEd.size == 32 && localDeviceId.length == 43 &&
             peerDeviceId.length == 43 && localDeviceId != peerDeviceId)
         require(roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) &&
@@ -42,8 +43,10 @@ class DeviceSyncOutboxStore(
                 "SELECT topic,object_id,event_id,event_time_ms,digest,sequence,delta_json," +
                     "attempts,is_live FROM device_sync_outbox WHERE peer_device_id=? " +
                     "AND transport='TOR' AND next_try_at_ms<=? " +
-                    "AND topic IN ('contacts','settings') ORDER BY $order LIMIT ?",
-                arrayOf(peerDeviceId, nowMs, count)
+                    "AND (topic IN ('contacts','settings') OR " +
+                    "(?=1 AND is_live=1 AND topic IN ('messages','receipts'))) " +
+                    "ORDER BY $order LIMIT ?",
+                arrayOf(peerDeviceId, nowMs, if (liveNegotiated) 1 else 0, count)
             )).use { cursor ->
                 while (cursor.moveToNext() && selected.size < limit) {
                     val event = Event(peerDeviceId, cursor.getString(0),
@@ -57,15 +60,19 @@ class DeviceSyncOutboxStore(
         // One old revision progresses in every batch. New contacts then use the
         // remaining slots before a long seed or settings backlog can delay them.
         append("created_at_ms ASC, rowid ASC", 1)
-        if (selected.size < limit) append("CASE WHEN topic='contacts' THEN 0 ELSE 1 END, " +
+        if (selected.size < limit) append("CASE topic WHEN 'contacts' THEN 0 " +
+            "WHEN 'messages' THEN 1 WHEN 'receipts' THEN 2 ELSE 3 END, " +
             "created_at_ms DESC, rowid DESC", limit)
         return selected.values.toList()
     }
 
     /** A retry is charged to the exact revision even if a newer one replaced it. */
     fun recordTorAttempt(accountEd: ByteArray, localDeviceId: String, event: Event,
-                         nowMs: Long = System.currentTimeMillis()): Boolean {
-        require(event.transport == Transport.TOR && event.topic in torTopics && !event.isLive)
+                         nowMs: Long = System.currentTimeMillis(),
+                         liveNegotiated: Boolean = false): Boolean {
+        require(event.transport == Transport.TOR &&
+            (event.topic in torTopics && !event.isLive ||
+                event.topic in DeviceSyncTorPolicy.liveTopics && event.isLive && liveNegotiated))
         if (!authorized(accountEd, localDeviceId, event.peerDeviceId,
                 event.topic, nowMs)) return false
         val db = database.openHelper.writableDatabase
@@ -77,7 +84,7 @@ class DeviceSyncOutboxStore(
                 ?: return false
             if (current.eventId != event.eventId ||
                 !current.digest.contentEquals(event.digest) ||
-                current.transport != Transport.TOR || current.isLive) return false
+                current.transport != Transport.TOR || current.isLive != event.isLive) return false
             val delay = (5_000L shl current.attempts.coerceIn(0, 10))
                 .coerceAtMost(3_600_000L)
             db.execSQL("UPDATE device_sync_outbox SET attempts=attempts+1,next_try_at_ms=? " +

@@ -16,7 +16,9 @@ internal object DeviceSyncOutboundWire {
         val base = { JSONObject().put("history_v", 2).put("event_id", event.eventId)
             .put("digest", event.digest.toHex()).put("topic", event.topic)
             .put("object_id", event.objectId).put("event_ts", event.eventTimeMs)
-            .put("seq", event.sequence) }
+            .put("seq", event.sequence).apply {
+                if (event.isLive) put("sync_mode", DeviceSyncTorPolicy.LIVE_MODE)
+            } }
         if (event.canonicalDelta.size <= CHUNK_BYTES) {
             return listOf(base().put("delta", JSONObject(
                 event.canonicalDelta.toString(Charsets.UTF_8))))

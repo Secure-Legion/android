@@ -340,7 +340,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                             peer.deviceId, now)
                                     }
                                     for (event in outbox.dueTor(account, identity.deviceId,
-                                            peer.deviceId, now)) {
+                                            peer.deviceId, now,
+                                            liveNegotiated = syncHost.liveNegotiated(peer.deviceId))) {
                                         try {
                                             for (payload in DeviceSyncOutboundWire.payloads(event)) {
                                                 if (!sendSyncApplication(syncHost, roster, account,
@@ -349,7 +350,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                             }
                                         } finally {
                                             outbox.recordTorAttempt(account, identity.deviceId,
-                                                event, now)
+                                                event, now,
+                                                liveNegotiated = syncHost.liveNegotiated(peer.deviceId))
                                         }
                                     }
                                 }

@@ -52,6 +52,20 @@ class DeviceSyncContactWorkDeviceTest {
                 .dueTor(account, local, peer, now)
             assertEquals(listOf("batch_0", "batch_3", "batch_2"),
                 selected.map { it.objectId })
+            db.execSQL("INSERT INTO device_sync_outbox " +
+                "(peer_device_id,topic,object_id,event_id,event_time_ms,digest,sequence," +
+                "delta_json,transport,next_try_at_ms,attempts,created_at_ms,is_live) " +
+                "VALUES (?,'messages',?,?,?,?,?,?,'TOR',0,0,?,1)",
+                arrayOf(peer, "live_batch", "f".repeat(64), now,
+                    ByteArray(32) { 0x44 }, 1, "{}".toByteArray(), now + 1))
+            db.execSQL("DELETE FROM device_sync_outbox WHERE peer_device_id=? " +
+                "AND topic='contacts'", arrayOf(peer))
+            val outbox = DeviceSyncOutboxStore(database, DeviceRosterStore(database))
+            assertEquals(listOf("batch_0"), outbox.dueTor(account, local, peer, now)
+                .map { it.objectId })
+            assertEquals(listOf("batch_0", "live_batch"),
+                outbox.dueTor(account, local, peer, now, liveNegotiated = true)
+                    .map { it.objectId })
         } finally {
             db.execSQL("DELETE FROM device_sync_outbox WHERE peer_device_id=?", arrayOf(peer))
             db.execSQL("DELETE FROM authorized_devices WHERE deviceId IN (?,?)",
