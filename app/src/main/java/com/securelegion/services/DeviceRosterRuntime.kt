@@ -10,6 +10,7 @@ import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterExchange
 import com.securelegion.sync.DeviceRosterAuthority
+import com.securelegion.sync.DeviceEnrollmentReceiptVerifier
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
             }
             if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) return
             val exchange = DeviceRosterExchange(database, roster)
+            val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)
             val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
             check(onion == identity.onionAddress)
             check(RustBridge.startDeviceOnionListener())
@@ -71,6 +73,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     if (frame != null) {
                         try {
                             when (frame[0].toInt() and 0xff) {
+                                0xA3 -> receiptVerifier.verifyAndComplete(frame)
                                 0xA4 -> exchange.acceptUpdate(frame, account, identity)?.let { reply ->
                                     // A removed endpoint may acknowledge the public
                                     // revocation before this listener shuts down.
@@ -79,8 +82,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     }
                                 }
                                 0xA5 -> exchange.acceptAcknowledgment(frame, account)
-                                // Enrollment and Noise traffic remain closed until their
-                                // authenticated state machines are connected here.
+                                // Offers, approvals, and Noise traffic remain closed until
+                                // their authenticated state machines are connected here.
                             }
                         } catch (e: Exception) { Log.w(TAG, "Device roster frame rejected: ${e.message}") }
                     }
@@ -92,6 +95,16 @@ internal class DeviceRosterRuntime(private val context: Context) {
                             try { RustBridge.sendDeviceOnionFrame(pending.onion, pending.wire) }
                             catch (e: Exception) { Log.w(TAG, "Roster notice send failed: ${e.message}") }
                             exchange.recordAttempt(account, pending, now)
+                        }
+                        if (roster.fetchSignedRoster(account) != null) {
+                            for (grant in roster.pendingEnrollmentGrants(account, now)) {
+                                if (!SessionManager.isUnlocked(context) ||
+                                    !roster.isLocalAuthorized(account, identity.deviceId, 0x02)) break
+                                val candidate = roster.authorizedPeer(account, grant.candidateDeviceId, 0x02)
+                                    ?: continue
+                                try { RustBridge.sendDeviceOnionFrame(candidate.onion, grant.wireFrame) }
+                                catch (e: Exception) { Log.w(TAG, "Grant retry failed: ${e.message}") }
+                            }
                         }
                         nextSendMs = now + 10_000L
                     }

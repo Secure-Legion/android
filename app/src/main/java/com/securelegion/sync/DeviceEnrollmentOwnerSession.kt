@@ -30,6 +30,7 @@ internal class DeviceEnrollmentOwnerSession private constructor(
     private var localApproved = false
     private var candidateApproved = false
     private var closed = false
+    private var grantWire: ByteArray? = null
 
     val candidateDeviceId: String get() = request.candidate.deviceId
     val candidateName: String get() = request.candidate.name
@@ -84,6 +85,61 @@ internal class DeviceEnrollmentOwnerSession private constructor(
         return try { block(copy) } finally { copy.fill(0) }
     }
 
+    /** The caller must commit this exact grant alongside the new signed roster. */
+    fun createGrant(candidateCertificate: ByteArray, signedRoster: ByteArray,
+                    accountName: String): ByteArray {
+        requireOpen()
+        grantWire?.let { return it.copyOf() }
+        require(request.version == 1 && canIssueGrant && candidateCertificate.size == 274)
+        require(accountName.isNotBlank() && accountName.codePointCount(0, accountName.length) <= 64)
+        require(accountName.codePoints().noneMatch { it < 32 || it in 127..159 })
+        val verified = JSONObject(RustBridge.deviceAuthorization(JSONObject()
+            .put("operation", "verify_roster").put("roster", b64(signedRoster))
+            .put("pinned_account", b64(accountSigningPublicKey))
+            .put("previous_roster", JSONObject.NULL).put("now_ms", System.currentTimeMillis())
+            .put("authorize", JSONObject().put("device_id", candidateDeviceId)
+                .put("capabilities", 0x07))
+            .toString().toByteArray(Charsets.UTF_8), null).toString(Charsets.UTF_8))
+        require(verified.getString("roster") == b64(signedRoster) &&
+            verified.getString("primary_device_id") == ownerEndpoint.deviceId)
+        val entries = verified.getJSONArray("entries")
+        var candidateMatches = false
+        var ownerMatches = false
+        for (index in 0 until entries.length()) {
+            val entry = entries.getJSONObject(index)
+            val cert = entry.getJSONObject("certificate")
+            when (cert.getString("device_id")) {
+                candidateDeviceId -> candidateMatches =
+                    cert.getString("certificate") == b64(candidateCertificate) &&
+                    cert.getString("device_ed") == b64(request.candidate.signingPublicKey) &&
+                    cert.getString("device_x") == b64(request.candidate.encryptionPublicKey) &&
+                    cert.getString("onion") + ".onion" == request.candidate.onion &&
+                    entry.getString("ml_kem_public") == b64(candidateKemPublic!!)
+                ownerEndpoint.deviceId -> ownerMatches =
+                    cert.getString("device_ed") == b64(ownerEndpoint.signingPublicKey) &&
+                    cert.getString("device_x") == b64(ownerEndpoint.encryptionPublicKey) &&
+                    cert.getString("onion") + ".onion" == ownerEndpoint.onion &&
+                    MessageDigest.isEqual(MessageDigest.getInstance("SHA-256").digest(
+                        Base64.decode(entry.getString("ml_kem_public"), Base64.DEFAULT)),
+                        ownerEndpoint.kemHash)
+            }
+        }
+        require(candidateMatches && ownerMatches)
+        val plaintext = JSONObject().put("v", request.version).put("id", transcriptId)
+            .put("identity", b64(accountIdentity)).put("certificate", b64(candidateCertificate))
+            .put("roster", b64(signedRoster)).put("account_name", accountName)
+            .toString().toByteArray(Charsets.UTF_8)
+        val nonce = ByteArray(24).also { SecureRandom().nextBytes(it) }
+        val ciphertext = try { nonce + RustBridge.xchacha20Encrypt(plaintext, grantWrappingKey, nonce) }
+            finally { plaintext.fill(0) }
+        val wire = DeviceEnrollmentWire.encodeFrame(baseFrame("grant")
+            .put("ct", b64(ciphertext)).put("proof", makeProof("grant", ciphertext)))
+        grantWire = wire.copyOf()
+        return wire
+    }
+
+    fun discardUncommittedGrant() { grantWire?.fill(0); grantWire = null }
+
     private fun requireFrame(wire: ByteArray, type: String, fields: Set<String>): JSONObject {
         val frame = DeviceEnrollmentWire.decodeFrame(wire)
         require(frame.version == request.version && frame.transcriptId == transcriptId && frame.type == type)
@@ -99,8 +155,8 @@ internal class DeviceEnrollmentOwnerSession private constructor(
         DeviceEnrollmentWire.proofBytes(if (request.version == 1) "Secure-ENROLL-v1"
             else "Secure-RECOVER-v1", purpose, transcript, extra)
 
-    private fun makeProof(purpose: String): JSONObject {
-        val bytes = proof(purpose)
+    private fun makeProof(purpose: String, extra: ByteArray? = null): JSONObject {
+        val bytes = proof(purpose, extra)
         val signature = RustBridge.signData(bytes, signingSeed)
         require(signature.size == 64)
         return JSONObject().put("sig", b64(signature))
@@ -130,6 +186,7 @@ internal class DeviceEnrollmentOwnerSession private constructor(
         confirmationKey.fill(0)
         grantWrappingKey.fill(0)
         candidateKemPublic?.fill(0)
+        grantWire?.fill(0)
         closed = true
     }
 

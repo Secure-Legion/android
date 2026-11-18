@@ -18,8 +18,9 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 - Devices screen lists the current signed roster and lets the primary revoke
   all other devices through an account-signed successor roster.
 - A3 canonical transcript/proof encoding and an in-memory owner authentication
-  session for signed offers, candidate ML-KEM proof, and both approvals. It does
-  not yet issue a grant or activate a candidate.
+  session for signed offers, candidate ML-KEM proof, both approvals, and an
+  encrypted grant committed with the successor roster. The owner retries exact
+  grant bytes and verifies a signed candidate receipt after process restart.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
@@ -29,8 +30,9 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 
 ## Required before device-sync acceptance
 
-1. Complete A3 owner/candidate enrollment and recovery, both user approvals,
-   full ML-KEM key proof, exact grant retry, and committed receipt recovery.
+1. Connect A3 owner enrollment to an approval UI; implement candidate grant
+   validation/activation and recovery checkpoint handling. The current owner
+   grant path supports enrollment only.
 2. Extend A4/A5 operation to linked profiles after candidate activation works.
 3. Support linked-candidate startup with an independent local DB key and public
    account binding, without copying the account seed or contact ratchets.

@@ -15,6 +15,9 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
     data class AcceptedRoster(val epoch: Long, val primaryDeviceId: String, val deviceIds: List<String>)
     data class PendingGrant(val transcriptId: String, val candidateDeviceId: String,
                             val wireFrame: ByteArray, val expiresAtMs: Long)
+    data class PendingGrantRecord(val transcriptId: String, val account: ByteArray,
+                                  val candidateDeviceId: String, val wireFrame: ByteArray,
+                                  val expiresAtMs: Long)
     private data class Endpoint(val onion: String, val signingKey: ByteArray)
 
     data class DeviceView(
@@ -47,6 +50,60 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
         return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
             "SELECT signedRoster FROM device_rosters WHERE accountEd = ?", arrayOf(account)
         )).use { if (it.moveToFirst()) it.getBlob(0) else null }
+    }
+
+    fun pendingEnrollmentGrants(pinnedAccount: ByteArray,
+                                nowMs: Long = System.currentTimeMillis()): List<PendingGrantRecord> {
+        require(pinnedAccount.size == 32)
+        val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT transcript_id,candidate_device_id,wire_frame,expires_at_ms " +
+                "FROM enrollment_grant_outbox WHERE account_ed=? AND expires_at_ms>? " +
+                "ORDER BY created_at_ms LIMIT 8", arrayOf<Any>(account, nowMs)
+        )).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(PendingGrantRecord(cursor.getString(0),
+                    pinnedAccount.copyOf(), cursor.getString(1), cursor.getBlob(2), cursor.getLong(3)))
+            }
+        }
+    }
+
+    fun pendingEnrollmentGrant(transcriptId: String, nowMs: Long = System.currentTimeMillis()): PendingGrantRecord? {
+        require(transcriptId.matches(Regex("[0-9a-f]{64}")))
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT account_ed,candidate_device_id,wire_frame,expires_at_ms " +
+                "FROM enrollment_grant_outbox WHERE transcript_id=? AND expires_at_ms>?",
+            arrayOf<Any>(transcriptId, nowMs)
+        )).use { cursor ->
+            if (!cursor.moveToFirst()) null else PendingGrantRecord(transcriptId,
+                Base64.decode(cursor.getString(0), Base64.DEFAULT), cursor.getString(1),
+                cursor.getBlob(2), cursor.getLong(3))
+        }
+    }
+
+    /** Delete only the grant bytes authenticated by a candidate's signed receipt. */
+    fun completeEnrollmentGrant(pending: PendingGrantRecord): Boolean {
+        val account = Base64.encodeToString(pending.account, Base64.NO_WRAP)
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val exact = db.query(SimpleSQLiteQuery(
+                "SELECT wire_frame FROM enrollment_grant_outbox WHERE transcript_id=? " +
+                    "AND account_ed=? AND candidate_device_id=?",
+                arrayOf(pending.transcriptId, account, pending.candidateDeviceId)
+            )).use { it.moveToFirst() && it.getBlob(0).contentEquals(pending.wireFrame) }
+            val authorized = db.query(SimpleSQLiteQuery(
+                "SELECT 1 FROM authorized_devices WHERE accountEd=? AND deviceId=? " +
+                    "AND (capabilities & 2)=2 AND expiresAtMs>?",
+                arrayOf(account, pending.candidateDeviceId, System.currentTimeMillis())
+            )).use { it.moveToFirst() }
+            if (!exact || !authorized) return false
+            db.execSQL("DELETE FROM enrollment_grant_outbox WHERE transcript_id=? AND account_ed=? " +
+                "AND candidate_device_id=? AND wire_frame=?",
+                arrayOf(pending.transcriptId, account, pending.candidateDeviceId, pending.wireFrame))
+            db.setTransactionSuccessful()
+            return true
+        } finally { db.endTransaction() }
     }
 
     fun listAuthorizedDevices(pinnedAccount: ByteArray): List<DeviceView> {
