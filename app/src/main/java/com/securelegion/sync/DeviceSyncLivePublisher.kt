@@ -28,7 +28,9 @@ internal class DeviceSyncLivePublisher(
         capture.discover(account, local, peer, true, nowMs)
         for (work in capture.due(peer, nowMs, 2)) {
             try {
-                val delta = if (work.topic == "messages") messageDelta(work.objectId, nowMs)
+                val delta = if (work.topic == "messages" && work.kind == "import")
+                    relayDelta(work.objectId, nowMs)
+                    else if (work.topic == "messages") messageDelta(work.objectId, nowMs)
                     else DeviceSyncReceiptDelta.export(database.openHelper.readableDatabase,
                         work.objectId)
                 if (delta != null) queue(account, local, peer, work.topic,
@@ -41,6 +43,19 @@ internal class DeviceSyncLivePublisher(
             queue(account, local, peer, "messages", seed, messageDelta(seed, nowMs), nowMs)
             capture.completeSeed(peer, seed)
         } catch (_: Exception) { capture.rotateSeed(peer, seed) }
+    }
+
+    private fun relayDelta(id: String, nowMs: Long): JSONObject {
+        val bytes = database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT delta_json FROM device_sync_local_events " +
+                "WHERE topic='messages' AND object_id=?", arrayOf(id)
+        )).use { if (it.moveToFirst()) it.getBlob(0) else null }
+            ?: throw IllegalStateException("Imported message revision missing")
+        try {
+            val delta = JSONObject(bytes.toString(Charsets.UTF_8))
+            require(DeviceSyncMessageDelta.parse(delta, nowMs).id == id)
+            return delta
+        } finally { bytes.fill(0) }
     }
 
     private fun messageDelta(id: String, nowMs: Long): JSONObject {
@@ -139,6 +154,14 @@ internal class DeviceSyncLivePublisher(
                     )).use { c -> if (c.moveToFirst()) c.getString(0) else null }
                     if (existing == eventId) return
                 }
+                val observed = db.query(SimpleSQLiteQuery(
+                    "SELECT event_time_ms,digest FROM device_sync_versions WHERE " +
+                        "peer_device_id=? AND topic=? AND object_id=?",
+                    arrayOf(peer, topic, id)
+                )).use { c -> if (c.moveToFirst()) c.getLong(0) to c.getBlob(1)
+                    else null }
+                if (observed != null && observed.first == time &&
+                    observed.second.contentEquals(identity.copyOfRange(0, 32))) return
                 outbox.enqueue(account, local, peer, topic, id, time, sequence,
                     identity.copyOfRange(64, identity.size),
                     DeviceSyncOutboxStore.Transport.TOR,

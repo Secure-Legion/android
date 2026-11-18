@@ -93,6 +93,7 @@ class DeviceSyncLiveMessageDeviceTest {
         val accountB64 = Base64.encodeToString(account, Base64.NO_WRAP)
         val local = "S".repeat(43)
         val peer = "T".repeat(43)
+        val relay = "W".repeat(43)
         val now = System.currentTimeMillis()
         val contactEd = Base64.encodeToString(ByteArray(32) { 0x45 }, Base64.NO_WRAP)
         val contactX = Base64.encodeToString(ByteArray(32) { 0x46 }, Base64.NO_WRAP)
@@ -107,7 +108,7 @@ class DeviceSyncLiveMessageDeviceTest {
             identity.copyOfRange(32, 64).toHex(),
             identity.copyOfRange(0, 32).toHex(), now, 1, 0, 1, delta)
         try {
-            for ((id, self) in listOf(local to 1, peer to 0)) {
+            for ((id, self) in listOf(local to 1, peer to 0, relay to 0)) {
                 db.execSQL("INSERT OR REPLACE INTO authorized_devices " +
                     "(deviceId,accountEd,displayName,syncOnion,deviceEd,deviceX,mlKemPublic," +
                     "certificate,capabilities,issuedAtMs,expiresAtMs,rosterEpoch,isSelf) " +
@@ -116,8 +117,12 @@ class DeviceSyncLiveMessageDeviceTest {
                         ByteArray(32), ByteArray(32), ByteArray(1), ByteArray(1),
                         2, now - 1_000, now + 60_000, 1, self))
             }
+            val roster = DeviceRosterStore(database)
+            val capture = DeviceSyncLiveCaptureStore(database, roster)
+            capture.initialize(account, local, peer, true, now)
+            capture.initialize(account, local, relay, true, now)
             val receiver = DeviceSyncLiveMessageReceiver(database,
-                DeviceRosterStore(database), { "ENC1:$it" })
+                roster, { "ENC1:$it" })
             assertEquals(DeviceSyncChunkStore.Result.DEFERRED,
                 receiver.receive(account, local, part, true, now))
             db.query(SimpleSQLiteQuery("SELECT COUNT(*) FROM device_sync_pending " +
@@ -138,17 +143,41 @@ class DeviceSyncLiveMessageDeviceTest {
                 assertEquals(1, it.getInt(0))
                 assertEquals("ENC1:sync text", it.getString(1))
             }
+            val publisher = DeviceSyncLivePublisher(context, database, roster,
+                KeyManager.getInstance(context))
+            publisher.prepareBatch(account, local, relay, now)
+            publisher.prepareBatch(account, local, peer, now)
+            assertEquals(1, DeviceSyncOutboxStore(database, roster)
+                .dueTor(account, local, relay, now, liveNegotiated = true)
+                .count { it.topic == "messages" && it.objectId == messageId })
+            assertEquals(0, DeviceSyncOutboxStore(database, roster)
+                .dueTor(account, local, peer, now, liveNegotiated = true)
+                .count { it.topic == "messages" && it.objectId == messageId })
         } finally {
             db.execSQL("DELETE FROM messages WHERE messageId=?", arrayOf(messageId))
             db.execSQL("DELETE FROM device_sync_pending WHERE peer_device_id=?", arrayOf(peer))
+            db.execSQL("DELETE FROM device_sync_outbox WHERE peer_device_id IN (?,?)",
+                arrayOf(peer, relay))
             db.execSQL("DELETE FROM device_sync_chunks WHERE peer_device_id=?", arrayOf(peer))
-            db.execSQL("DELETE FROM device_sync_versions WHERE peer_device_id=?", arrayOf(peer))
-            db.execSQL("DELETE FROM device_sync_cursors WHERE peer_device_id=?", arrayOf(peer))
+            db.execSQL("DELETE FROM device_sync_versions WHERE peer_device_id IN (?,?)",
+                arrayOf(peer, relay))
+            db.execSQL("DELETE FROM device_sync_cursors WHERE peer_device_id IN (?,?)",
+                arrayOf(peer, relay))
+            db.execSQL("DELETE FROM device_sync_local_events WHERE topic='messages' " +
+                "AND object_id=?", arrayOf(messageId))
+            db.execSQL("DELETE FROM device_sync_live_work WHERE peer_device_id IN (?,?)",
+                arrayOf(peer, relay))
+            db.execSQL("DELETE FROM device_sync_live_seed WHERE peer_device_id IN (?,?)",
+                arrayOf(peer, relay))
+            db.execSQL("DELETE FROM device_sync_live_peers WHERE peer_device_id IN (?,?)",
+                arrayOf(peer, relay))
+            db.execSQL("DELETE FROM device_sync_source_changes WHERE object_id=?",
+                arrayOf(messageId))
             db.execSQL("UPDATE device_sync_import_guard SET depth=depth+1 WHERE id=1")
             try { db.execSQL("DELETE FROM contacts WHERE publicKeyBase64=?", arrayOf(contactEd)) }
             finally { db.execSQL("UPDATE device_sync_import_guard SET depth=depth-1 WHERE id=1") }
-            db.execSQL("DELETE FROM authorized_devices WHERE deviceId IN (?,?)",
-                arrayOf(local, peer))
+            db.execSQL("DELETE FROM authorized_devices WHERE deviceId IN (?,?,?)",
+                arrayOf(local, peer, relay))
             identity.fill(0)
         }
     }

@@ -119,10 +119,27 @@ internal class DeviceSyncLiveMessageReceiver(
             advanceCursor(db, part, nowMs)
             return true
         }
-        if (!DeviceSyncDirectMessageStore.applyInTransaction(db, message,
+        val local = db.query(SimpleSQLiteQuery(
+            "SELECT event_time_ms,sequence,digest FROM device_sync_local_events " +
+                "WHERE topic='messages' AND object_id=?", arrayOf(part.objectId)
+        )).use { if (it.moveToFirst()) Triple(it.getLong(0), it.getLong(1),
+            it.getBlob(2)) else null }
+        val incomingWins = local == null || part.eventTimeMs > local.first ||
+            part.eventTimeMs == local.first && part.digestHex > local.third.toHex()
+        if (incomingWins && !DeviceSyncDirectMessageStore.applyInTransaction(db, message,
                 encryptForLocalProfile, storeMedia)) {
             defer(db, part, canonical, digest, nowMs)
             return false
+        }
+        if (incomingWins) {
+            db.execSQL("INSERT OR REPLACE INTO device_sync_local_events " +
+                "(topic,object_id,event_time_ms,digest,sequence,delta_json) " +
+                "VALUES ('messages',?,?,?,?,?)",
+                arrayOf(part.objectId, part.eventTimeMs, digest,
+                    maxOf(part.sequence, (local?.second ?: 0L) + 1), canonical))
+            db.execSQL("INSERT INTO device_sync_source_changes " +
+                "(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('messages',?,'import',?)", arrayOf(part.objectId, nowMs))
         }
         db.execSQL("INSERT OR REPLACE INTO device_sync_versions " +
             "(peer_device_id,topic,object_id,event_time_ms,digest) " +
