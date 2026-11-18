@@ -36,8 +36,7 @@ class DeviceSyncFsHost(
     @Synchronized
     fun seal(peerId: String, applicationPlaintext: ByteArray,
              nowMs: Long = System.currentTimeMillis()): Outcome {
-        require(applicationPlaintext.size in 2..384 * 1024)
-        require(applicationPlaintext[0].toInt() and 0xff in 0xB0..0xB5)
+        validateTorPlaintext(applicationPlaintext)
         return call(peerId, "seal", null, applicationPlaintext, nowMs)
     }
 
@@ -83,7 +82,7 @@ class DeviceSyncFsHost(
         }
         val plaintext = if (response.isNull("message")) null else
             Base64.decode(response.getString("message"), Base64.DEFAULT).also {
-                require(it.size in 2..384 * 1024 && it[0].toInt() and 0xff in 0xB0..0xB5)
+                validateTorPlaintext(it)
             }
         // A revocation during Noise work invalidates the result before dispatch or send.
         if (!roster.isLocalAuthorized(accountEd, identity.deviceId, 0x02, nowMs) ||
@@ -117,6 +116,20 @@ class DeviceSyncFsHost(
         handle = 0L
         peerKeys.values.forEach { (ed, x) -> ed.fill(0); x.fill(0) }
         peerKeys.clear()
+    }
+
+    /** iOS build 48's PULL_REQUEST can carry group message actions. Block it here. */
+    private fun validateTorPlaintext(bytes: ByteArray) {
+        require(bytes.size in 2..384 * 1024)
+        val kind = bytes[0].toInt() and 0xff
+        require(kind in setOf(0xB0, 0xB1, 0xB2, 0xB4, 0xB5))
+        if (kind == 0xB2) {
+            val frame = JSONObject(bytes.copyOfRange(1, bytes.size).toString(Charsets.UTF_8))
+            val payload = frame.optJSONObject("payload")
+                ?: throw IllegalArgumentException("Missing Tor sync payload")
+            // Group links stay disabled until the signed op envelope is validated.
+            require(payload.optString("topic") in setOf("contacts", "settings"))
+        }
     }
 
     @Synchronized
