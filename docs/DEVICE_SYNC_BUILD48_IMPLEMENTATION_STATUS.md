@@ -27,6 +27,10 @@ bulk history and full groups remain Nearby-only.
   session for signed offers, candidate ML-KEM proof, both approvals, and an
   encrypted grant committed with the successor roster. The owner retries exact
   grant bytes and verifies a signed candidate receipt after process restart.
+- The Android primary Devices screen scans a candidate QR, shows the matching
+  comparison code, requires local approval, and routes A3 responses through
+  the isolated onion listener. The in-memory session is cleared on listener
+  stop; the signed grant remains in the durable retry outbox.
 - Candidate A3 session creates a bounded QR, authenticates the owner's signed
   offer and approvals, verifies the encrypted grant against the account identity,
   device certificate, and signed roster, and can sign a post-commit receipt.
@@ -69,9 +73,10 @@ bulk history and full groups remain Nearby-only.
 
 ## Required before device-sync acceptance
 
-1. Connect A3 owner and candidate sessions to an approval UI; persist an
-   in-flight candidate secret until expiry for interrupted grants, and add
-   recovery checkpoint handling. The current grant path supports enrollment only.
+1. Connect the Android candidate A3 session to onboarding and approval UI;
+   persist an in-flight candidate secret until expiry for interrupted grants,
+   and add recovery checkpoint handling. The current grant path supports
+   enrollment only. Physically verify the new owner flow against iOS.
 2. Extend A4/A5 operation to linked profiles after candidate activation works.
 3. Support linked-candidate startup with an independent local DB key and public
    account binding, without copying the account seed or contact ratchets.

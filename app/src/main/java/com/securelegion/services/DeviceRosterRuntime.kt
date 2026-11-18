@@ -11,6 +11,8 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterExchange
 import com.securelegion.sync.DeviceRosterAuthority
 import com.securelegion.sync.DeviceEnrollmentReceiptVerifier
+import com.securelegion.sync.DeviceEnrollmentOwnerCoordinator
+import com.securelegion.sync.DeviceEnrollmentWire
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +41,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
         }
     }
 
-    fun stop() { job?.cancel(); job = null }
+    fun stop() { job?.cancel(); job = null; DeviceEnrollmentOwnerCoordinator.cancel() }
 
     private suspend fun runAuthorizedSession() {
         val keyManager = KeyManager.getInstance(context)
@@ -70,10 +72,16 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     TorService.getCurrentTorState() == TorService.TorState.RUNNING &&
                     roster.isLocalAuthorized(account, identity.deviceId, 0x02)) {
                     val frame = RustBridge.pollDeviceOnionFrame()
-                    if (frame != null) {
+                    if (frame != null && frame.isNotEmpty()) {
                         try {
                             when (frame[0].toInt() and 0xff) {
-                                0xA3 -> receiptVerifier.verifyAndComplete(frame)
+                                0xA3 -> {
+                                    val enrollment = DeviceEnrollmentWire.decodeFrame(frame)
+                                    if (enrollment.type == "committed") {
+                                        if (receiptVerifier.verifyAndComplete(frame))
+                                            DeviceEnrollmentOwnerCoordinator.committed(enrollment.transcriptId)
+                                    } else DeviceEnrollmentOwnerCoordinator.receive(context, frame)
+                                }
                                 0xA4 -> exchange.acceptUpdate(frame, account, identity)?.let { reply ->
                                     // A removed endpoint may acknowledge the public
                                     // revocation before this listener shuts down.
@@ -110,7 +118,10 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     }
                     delay(250)
                 }
-            } finally { RustBridge.stopDeviceOnionListener() }
+            } finally {
+                RustBridge.stopDeviceOnionListener()
+                DeviceEnrollmentOwnerCoordinator.cancel()
+            }
         } finally { identity.close() }
     }
 

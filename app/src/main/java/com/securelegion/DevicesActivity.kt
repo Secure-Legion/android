@@ -1,6 +1,8 @@
 package com.securelegion
 
 import android.app.AlertDialog
+import android.app.Activity
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Base64
@@ -8,12 +10,14 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
+import androidx.activity.result.contract.ActivityResultContracts
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterAuthority
+import com.securelegion.sync.DeviceEnrollmentOwnerCoordinator
 import com.securelegion.utils.SessionManager
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +30,20 @@ class DevicesActivity : BaseActivity() {
     private data class RosterView(val primaryId: String, val devices: List<DeviceRosterStore.DeviceView>)
     private var currentRoster: RosterView? = null
     private var busy = false
+    private var shownCode: String? = null
+    private val scanCandidate = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        result ->
+        if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
+        val qr = result.data?.getStringExtra("SCANNED_ADDRESS") ?: return@registerForActivityResult
+        lifecycleScope.launch {
+            val started = withContext(Dispatchers.IO) {
+                runCatching { DeviceEnrollmentOwnerCoordinator.start(this@DevicesActivity, qr) }
+            }
+            ThemedToast.show(this@DevicesActivity, if (started.isSuccess)
+                "Waiting for the candidate device" else
+                started.exceptionOrNull()?.message?.take(100) ?: "Could not start linking")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +52,18 @@ class DevicesActivity : BaseActivity() {
         findViewById<TextView>(R.id.deviceName).text = Build.MODEL ?: "Android"
         findViewById<TextView>(R.id.deviceSubtitle).text = "Secure Android ${Build.VERSION.RELEASE}"
         findViewById<View>(R.id.linkDeviceButton).setOnClickListener {
-            ThemedToast.show(this, "Device linking is not available in this build")
+            if (DeviceEnrollmentOwnerCoordinator.state.value.phase !=
+                DeviceEnrollmentOwnerCoordinator.Phase.IDLE) {
+                AlertDialog.Builder(this).setTitle("Cancel device linking?")
+                    .setMessage("The current comparison and approval will be discarded.")
+                    .setNegativeButton("Keep waiting", null)
+                    .setPositiveButton("Cancel linking") { _, _ ->
+                        DeviceEnrollmentOwnerCoordinator.cancel()
+                    }.show()
+            } else scanCandidate.launch(Intent(this, QRScannerActivity::class.java))
+        }
+        lifecycleScope.launch {
+            DeviceEnrollmentOwnerCoordinator.state.collect { renderEnrollment(it) }
         }
         findViewById<View>(R.id.terminateSessionsRow).setOnClickListener {
             val others = currentRoster?.devices?.filter { !it.isSelf }.orEmpty()
@@ -50,6 +79,38 @@ class DevicesActivity : BaseActivity() {
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Revoke") { _, _ -> revokeOthers(others.map { it.deviceId }.toSet()) }
                 .show()
+        }
+    }
+
+    private fun renderEnrollment(state: DeviceEnrollmentOwnerCoordinator.State) {
+        when (state.phase) {
+            DeviceEnrollmentOwnerCoordinator.Phase.COMPARE -> {
+                if (shownCode == state.comparisonCode) return
+                shownCode = state.comparisonCode
+                AlertDialog.Builder(this)
+                    .setTitle("Compare device codes")
+                    .setMessage("Confirm ${state.candidateName} shows the same code:\n\n" +
+                        state.comparisonCode + "\n\nApprove only if both screens match.")
+                    .setNegativeButton("Codes differ") { _, _ ->
+                        DeviceEnrollmentOwnerCoordinator.cancel()
+                    }
+                    .setPositiveButton("Codes match") { _, _ ->
+                        lifecycleScope.launch {
+                            val approved = withContext(Dispatchers.IO) {
+                                runCatching { DeviceEnrollmentOwnerCoordinator.approve(this@DevicesActivity) }
+                            }
+                            if (approved.isFailure) ThemedToast.show(this@DevicesActivity,
+                                approved.exceptionOrNull()?.message?.take(100) ?: "Approval failed")
+                        }
+                    }.show()
+            }
+            DeviceEnrollmentOwnerCoordinator.Phase.COMPLETE -> {
+                shownCode = null
+                ThemedToast.show(this, "Device linked")
+                refreshRoster()
+            }
+            DeviceEnrollmentOwnerCoordinator.Phase.IDLE -> shownCode = null
+            else -> Unit
         }
     }
 
