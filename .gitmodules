@@ -1,7 +1,7 @@
 [submodule "secure-legion-core"]
 	path = secure-legion-core
 	url = https://github.com/Secure-Legion/android.git
-	branch = native/rust-core-contact-roster-v45
+	branch = native/rust-core-device-port-v46
 [submodule "securelegion-crypto"]
 	path = securelegion-crypto
 	url = https://github.com/Secure-Legion/android.git
