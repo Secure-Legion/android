@@ -13,6 +13,7 @@ import com.securelegion.database.DeviceSyncOutboxStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact
 import com.securelegion.sync.DeviceSyncLiveMessageReceiver
+import com.securelegion.sync.DeviceSyncLiveReceiptReceiver
 import com.securelegion.sync.DeviceSyncLivePublisher
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -153,6 +154,28 @@ class DeviceSyncLiveMessageDeviceTest {
             assertEquals(0, DeviceSyncOutboxStore(database, roster)
                 .dueTor(account, local, peer, now, liveNegotiated = true)
                 .count { it.topic == "messages" && it.objectId == messageId })
+            val receipt = JSONObject().put("message_id", messageId)
+                .put("status", 2).put("ping_delivered", true)
+                .put("message_delivered", true).toString().toByteArray()
+            val receiptIdentity = RustBridge.deviceHistoryIdentity(receipt,
+                "receipts", messageId, now + 1)
+            try {
+                val receiptPart = DeviceSyncChunkStore.Part(peer, "receipts", messageId,
+                    receiptIdentity.copyOfRange(32, 64).toHex(),
+                    receiptIdentity.copyOfRange(0, 32).toHex(), now + 1,
+                    2, 0, 1, receipt)
+                assertEquals(DeviceSyncChunkStore.Result.COMMITTED,
+                    DeviceSyncLiveReceiptReceiver(database, roster).receive(
+                        account, local, receiptPart, true, now + 1))
+                publisher.prepareBatch(account, local, relay, now + 2)
+                publisher.prepareBatch(account, local, peer, now + 2)
+                assertEquals(1, DeviceSyncOutboxStore(database, roster)
+                    .dueTor(account, local, relay, now + 2, liveNegotiated = true)
+                    .count { it.topic == "receipts" && it.objectId == messageId })
+                assertEquals(0, DeviceSyncOutboxStore(database, roster)
+                    .dueTor(account, local, peer, now + 2, liveNegotiated = true)
+                    .count { it.topic == "receipts" && it.objectId == messageId })
+            } finally { receiptIdentity.fill(0) }
         } finally {
             db.execSQL("DELETE FROM messages WHERE messageId=?", arrayOf(messageId))
             db.execSQL("DELETE FROM device_sync_pending WHERE peer_device_id=?", arrayOf(peer))
@@ -164,6 +187,8 @@ class DeviceSyncLiveMessageDeviceTest {
             db.execSQL("DELETE FROM device_sync_cursors WHERE peer_device_id IN (?,?)",
                 arrayOf(peer, relay))
             db.execSQL("DELETE FROM device_sync_local_events WHERE topic='messages' " +
+                "AND object_id=?", arrayOf(messageId))
+            db.execSQL("DELETE FROM device_sync_local_events WHERE topic='receipts' " +
                 "AND object_id=?", arrayOf(messageId))
             db.execSQL("DELETE FROM device_sync_live_work WHERE peer_device_id IN (?,?)",
                 arrayOf(peer, relay))

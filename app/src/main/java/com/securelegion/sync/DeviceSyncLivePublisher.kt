@@ -28,8 +28,8 @@ internal class DeviceSyncLivePublisher(
         capture.discover(account, local, peer, true, nowMs)
         for (work in capture.due(peer, nowMs, 2)) {
             try {
-                val delta = if (work.topic == "messages" && work.kind == "import")
-                    relayDelta(work.objectId, nowMs)
+                val delta = if (work.kind == "import")
+                    relayDelta(work.topic, work.objectId, nowMs)
                     else if (work.topic == "messages") messageDelta(work.objectId, nowMs)
                     else DeviceSyncReceiptDelta.export(database.openHelper.readableDatabase,
                         work.objectId)
@@ -45,15 +45,17 @@ internal class DeviceSyncLivePublisher(
         } catch (_: Exception) { capture.rotateSeed(peer, seed) }
     }
 
-    private fun relayDelta(id: String, nowMs: Long): JSONObject {
+    private fun relayDelta(topic: String, id: String, nowMs: Long): JSONObject {
+        require(topic in setOf("messages", "receipts"))
         val bytes = database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
             "SELECT delta_json FROM device_sync_local_events " +
-                "WHERE topic='messages' AND object_id=?", arrayOf(id)
+                "WHERE topic=? AND object_id=?", arrayOf(topic, id)
         )).use { if (it.moveToFirst()) it.getBlob(0) else null }
-            ?: throw IllegalStateException("Imported message revision missing")
+            ?: throw IllegalStateException("Imported live revision missing")
         try {
             val delta = JSONObject(bytes.toString(Charsets.UTF_8))
-            require(DeviceSyncMessageDelta.parse(delta, nowMs).id == id)
+            if (topic == "messages") require(DeviceSyncMessageDelta.parse(delta, nowMs).id == id)
+            else require(DeviceSyncReceiptDelta.parse(delta).messageId == id)
             return delta
         } finally { bytes.fill(0) }
     }

@@ -139,6 +139,22 @@ internal class DeviceSyncLiveReceiptReceiver(
                     part.eventTimeMs, canonical, "missing_message", nowMs, part.eventId, digest))
             return false
         }
+        val local = db.query(SimpleSQLiteQuery(
+            "SELECT event_time_ms,sequence,digest FROM device_sync_local_events " +
+                "WHERE topic='receipts' AND object_id=?", arrayOf(part.objectId)
+        )).use { if (it.moveToFirst()) Triple(it.getLong(0), it.getLong(1),
+            it.getBlob(2)) else null }
+        if (local == null || part.eventTimeMs > local.first ||
+            part.eventTimeMs == local.first && part.digestHex > local.third.toHex()) {
+            db.execSQL("INSERT OR REPLACE INTO device_sync_local_events " +
+                "(topic,object_id,event_time_ms,digest,sequence,delta_json) " +
+                "VALUES ('receipts',?,?,?,?,?)",
+                arrayOf(part.objectId, part.eventTimeMs, digest,
+                    maxOf(part.sequence, (local?.second ?: 0L) + 1), canonical))
+            db.execSQL("INSERT INTO device_sync_source_changes " +
+                "(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('receipts',?,'import',?)", arrayOf(part.objectId, nowMs))
+        }
         db.execSQL("INSERT OR REPLACE INTO device_sync_versions " +
             "(peer_device_id,topic,object_id,event_time_ms,digest) VALUES (?,'receipts',?,?,?)",
             arrayOf(part.peerDeviceId, part.objectId, part.eventTimeMs, digest))
