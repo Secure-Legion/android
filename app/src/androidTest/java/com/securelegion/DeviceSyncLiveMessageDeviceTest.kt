@@ -49,7 +49,8 @@ class DeviceSyncLiveMessageDeviceTest {
             db.execSQL("INSERT INTO device_sync_source_changes " +
                 "(topic,object_id,kind,changed_at_ms) " +
                 "VALUES ('messages',?,'delete',?)", arrayOf(id, now))
-            DeviceSyncLivePublisher(database, roster, KeyManager.getInstance(context))
+            DeviceSyncLivePublisher(context, database, roster,
+                KeyManager.getInstance(context))
                 .prepareBatch(account, local, peer, now)
             val event = DeviceSyncOutboxStore(database, roster)
                 .dueTor(account, local, peer, now, liveNegotiated = true)

@@ -8,11 +8,14 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact
 import com.securelegion.sync.DeviceSyncMessageDelta
 import com.securelegion.sync.DeviceSyncDirectMessageStore
+import com.securelegion.sync.DeviceSyncMediaFiles
+import com.securelegion.crypto.KeyManager
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -70,6 +73,9 @@ class DeviceSyncTextMessageDeviceTest {
                     Base64.encodeToString(byteArrayOf(5, 6, 7, 8), Base64.NO_WRAP))
                     .put("voice_duration", 2)
                 val media = DeviceSyncMessageDelta.parse(payload, now)
+                if (type == "IMAGE") assertThrows(IllegalArgumentException::class.java) {
+                    DeviceSyncMediaFiles(context, KeyManager.getInstance(context)).store(media)
+                }
                 db.beginTransaction()
                 try {
                     assertTrue(DeviceSyncDirectMessageStore.applyInTransaction(db, media,

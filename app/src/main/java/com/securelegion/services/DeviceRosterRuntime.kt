@@ -86,7 +86,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 DeviceSyncMediaFiles(context, keyManager)::store)
             val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster)
             val contactPublisher = DeviceSyncContactPublisher(database, roster)
-            val livePublisher = DeviceSyncLivePublisher(database, roster, keyManager)
+            val livePublisher = DeviceSyncLivePublisher(context, database, roster, keyManager)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
             val peerCapabilities = HashMap<String, Set<String>>()

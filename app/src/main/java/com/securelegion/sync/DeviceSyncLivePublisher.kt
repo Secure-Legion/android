@@ -1,6 +1,7 @@
 package com.securelegion.sync
 
 import android.util.Base64
+import android.content.Context
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
@@ -9,9 +10,11 @@ import com.securelegion.database.DeviceSyncLiveCaptureStore
 import com.securelegion.database.DeviceSyncOutboxStore
 import com.securelegion.database.SecureLegionDatabase
 import org.json.JSONObject
+import java.io.File
 
 /** Turns refreshed source IDs into durable live outbox revisions. */
 internal class DeviceSyncLivePublisher(
+    private val context: Context,
     private val database: SecureLegionDatabase,
     private val roster: DeviceRosterStore,
     private val keyManager: KeyManager
@@ -46,7 +49,8 @@ internal class DeviceSyncLivePublisher(
             "SELECT m.encryptedContent,m.isSentByMe,m.timestamp,m.status,m.messageType," +
                 "m.isRead,m.isEdited,m.selfDestructAt,m.selfDestructTtl," +
                 "m.pingDelivered,m.messageDelivered,m.replyToMessageId," +
-                "c.x25519PublicKeyBase64 FROM messages m JOIN contacts c " +
+                "c.x25519PublicKeyBase64,m.attachmentData,m.voiceFilePath," +
+                "m.voiceDuration FROM messages m JOIN contacts c " +
                 "ON c.id=m.contactId WHERE m.messageId=? LIMIT 1", arrayOf(id)
         )).use { c ->
             if (!c.moveToFirst()) null else Row(c.getString(0), c.getInt(1) == 1,
@@ -54,24 +58,55 @@ internal class DeviceSyncLivePublisher(
                 c.getInt(6) == 1, if (c.isNull(7)) null else c.getLong(7),
                 if (c.isNull(8)) null else c.getDouble(8), c.getInt(9) == 1,
                 c.getInt(10) == 1, if (c.isNull(11)) null else c.getString(11),
-                c.getString(12))
+                c.getString(12), if (c.isNull(13)) null else c.getString(13),
+                if (c.isNull(14)) null else c.getString(14),
+                if (c.isNull(15)) null else c.getInt(15))
         } ?: return JSONObject().put("message_id", id).put("deleted", true)
         if (row.status == 8 || row.expiry != null && row.expiry <= nowMs)
             return JSONObject().put("message_id", id).put("deleted", true)
-        require(row.type == "TEXT" && row.status in 0..7 &&
+        require(row.type in setOf("TEXT", "IMAGE", "VOICE") && row.status in 0..7 &&
             Base64.decode(row.contactX, Base64.NO_WRAP).size == 32)
         val delta = JSONObject().put("message_id", id)
-            .put("contact_x25519", row.contactX).put("message_type", "TEXT")
+            .put("contact_x25519", row.contactX).put("message_type", row.type)
             .put("is_sent_by_me", row.sent).put("timestamp", row.timestamp)
             .put("status", row.status)
-            .put("content", keyManager.decryptMessageContent(row.encrypted))
             .put("is_read", row.read).put("is_edited", row.edited)
             .put("ping_delivered", row.ping).put("message_delivered", row.delivered)
+        when (row.type) {
+            "TEXT" -> delta.put("content", keyManager.decryptMessageContent(row.encrypted))
+            "IMAGE" -> {
+                val bytes = readMedia(row.attachmentData, "image_messages", 4 * 1024 * 1024)
+                try {
+                    val plain = keyManager.decryptImageFile(bytes)
+                    try { delta.put("attachment_type", "image")
+                        .put("attachment_data", Base64.encodeToString(plain, Base64.NO_WRAP)) }
+                    finally { plain.fill(0) }
+                } finally { bytes.fill(0) }
+            }
+            "VOICE" -> {
+                require(row.voiceDuration != null && row.voiceDuration in 0..86_400)
+                val bytes = readMedia(row.voicePath, "voice_messages", 5_242_880)
+                try {
+                    val plain = keyManager.decryptVoiceFile(bytes)
+                    try { delta.put("voice_duration", row.voiceDuration)
+                        .put("voice_data", Base64.encodeToString(plain, Base64.NO_WRAP)) }
+                    finally { plain.fill(0) }
+                } finally { bytes.fill(0) }
+            }
+        }
         row.reply?.let { delta.put("reply_to_message_id", it) }
         row.expiry?.let { delta.put("self_destruct_at", it) }
         row.ttl?.let { delta.put("self_destruct_ttl", it) }
         DeviceSyncMessageDelta.parse(delta, nowMs)
         return delta
+    }
+
+    private fun readMedia(path: String?, folder: String, maxBytes: Int): ByteArray {
+        require(path != null)
+        val root = File(context.filesDir, folder).canonicalFile
+        val file = File(path).canonicalFile
+        require(file.parentFile == root && file.isFile && file.length() in 29L..(maxBytes + 64L))
+        return file.readBytes()
     }
 
     private fun queue(account: ByteArray, local: String, peer: String, topic: String,
@@ -117,7 +152,9 @@ internal class DeviceSyncLivePublisher(
                            val timestamp: Long, val status: Int, val type: String,
                            val read: Boolean, val edited: Boolean, val expiry: Long?,
                            val ttl: Double?, val ping: Boolean, val delivered: Boolean,
-                           val reply: String?, val contactX: String)
+                           val reply: String?, val contactX: String,
+                           val attachmentData: String?, val voicePath: String?,
+                           val voiceDuration: Int?)
     private fun ByteArray.toHex() = joinToString("") {
         "%02x".format(it.toInt() and 0xff)
     }
