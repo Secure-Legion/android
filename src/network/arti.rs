@@ -485,8 +485,9 @@ static DEVICE_ONION_ADDRESS: StdMutex<Option<String>> = StdMutex::new(None);
 static DEVICE_REND_REQUEST_STREAM: StdMutex<Option<Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>>> = StdMutex::new(None);
 static DEVICE_ACCEPTOR_CANCEL: StdMutex<Option<CancellationToken>> = StdMutex::new(None);
 static DEVICE_FRAMES: Lazy<StdMutex<VecDeque<Vec<u8>>>> = Lazy::new(|| StdMutex::new(VecDeque::new()));
-const DEVICE_FRAME_MAX: usize = 512 * 1024 + 8;
+const DEVICE_FRAME_MAX: usize = 211 + 5 * 1024 * 1024 + 2048 + 64;
 const DEVICE_QUEUE_MAX: usize = 16;
+const DEVICE_QUEUE_BYTES_MAX: usize = 8 * 1024 * 1024;
 
 // ───── Per-Peer Failure Tracking (Stale Descriptor Recovery) ─────
 
@@ -2732,11 +2733,16 @@ async fn accept_and_handle_device(
     }
     let mut frame = vec![0u8; size];
     stream.read_exact(&mut frame).await?;
-    if !matches!(frame[0], 0xA3..=0xA5 | 0xB6 | 0xB7) {
+    if !matches!(frame[0], 0xA3..=0xA5 | 0xB6 | 0xB7 | 0xC0) {
         return Err("Non-device frame on device onion".into());
     }
+    if frame[0] == 0xC0 && (frame.len() < 275 || frame[5] != 2 ||
+        u32::from_be_bytes(frame[1..5].try_into().unwrap()) as usize != frame.len() - 5) {
+        return Err("Malformed C0 device frame".into());
+    }
     let mut queue = lock_recover(&DEVICE_FRAMES);
-    if queue.len() == DEVICE_QUEUE_MAX {
+    if queue.len() == DEVICE_QUEUE_MAX ||
+        queue.iter().map(Vec::len).sum::<usize>() + frame.len() > DEVICE_QUEUE_BYTES_MAX {
         return Err("Device frame queue full".into());
     }
     queue.push_back(frame);
