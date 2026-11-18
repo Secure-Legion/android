@@ -257,14 +257,8 @@ class DeviceSyncOutboxStore(
                 "pushed_seq=MAX(pushed_seq,excluded.pushed_seq)," +
                 "updated_at_ms=excluded.updated_at_ms",
                 arrayOf(peerDeviceId, topic, event.sequence, nowMs))
-            if (event.isLive) {
-                db.execSQL("DELETE FROM device_sync_live_work WHERE peer_device_id=? " +
-                    "AND topic=? AND object_id=? AND source_seq<=?",
-                    arrayOf(peerDeviceId, topic, objectId, event.sequence))
-                if (topic == "messages") db.execSQL("DELETE FROM device_sync_live_seed " +
-                    "WHERE peer_device_id=? AND message_id=?",
-                    arrayOf(peerDeviceId, objectId))
-            }
+            // Capture work is completed only after a durable outbox insert. Its
+            // source_seq is global and must never be compared to this revision.
             db.setTransactionSuccessful()
             return true
         } finally {

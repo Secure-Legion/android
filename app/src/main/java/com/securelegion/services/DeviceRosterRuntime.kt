@@ -28,6 +28,7 @@ import com.securelegion.sync.DeviceSyncContactPublisher
 import com.securelegion.sync.DeviceSyncLiveMessageReceiver
 import com.securelegion.sync.DeviceSyncLiveReceiptReceiver
 import com.securelegion.sync.DeviceSyncMediaFiles
+import com.securelegion.sync.DeviceSyncLivePublisher
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -85,6 +86,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 DeviceSyncMediaFiles(context, keyManager)::store)
             val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster)
             val contactPublisher = DeviceSyncContactPublisher(database, roster)
+            val livePublisher = DeviceSyncLivePublisher(database, roster, keyManager)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
             val peerCapabilities = HashMap<String, Set<String>>()
@@ -334,6 +336,10 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                         ?.contains("durable_history_v2") == true) {
                                     contactPublisher.prepareBatch(account, identity.deviceId,
                                         peer.deviceId, now)
+                                    if (syncHost.liveNegotiated(peer.deviceId)) {
+                                        livePublisher.prepareBatch(account, identity.deviceId,
+                                            peer.deviceId, now)
+                                    }
                                     if (settingsMaterialized && peerCapabilities[peer.deviceId]
                                             ?.contains("account_profile_v1") == true) {
                                         settingsPublisher.enqueueForPeer(account, identity.deviceId,

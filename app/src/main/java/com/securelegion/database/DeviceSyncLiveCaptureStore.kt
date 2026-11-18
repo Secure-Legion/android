@@ -54,6 +54,22 @@ internal class DeviceSyncLiveCaptureStore(
         return ids
     }
 
+    /** Call only after the exact snapshot is in the durable outbox or ACK table. */
+    fun completeSeed(peerDeviceId: String, messageId: String) {
+        require(peerDeviceId.length == 43 && messageId.isNotEmpty())
+        database.openHelper.writableDatabase.execSQL(
+            "DELETE FROM device_sync_live_seed WHERE peer_device_id=? AND message_id=?",
+            arrayOf(peerDeviceId, messageId))
+    }
+
+    /** A write failure retains the source ID for retry and does not move discovery. */
+    fun completeWork(peerDeviceId: String, sourceSequence: Long) {
+        require(peerDeviceId.length == 43 && sourceSequence > 0)
+        database.openHelper.writableDatabase.execSQL(
+            "DELETE FROM device_sync_live_work WHERE peer_device_id=? AND source_seq=?",
+            arrayOf(peerDeviceId, sourceSequence))
+    }
+
     /** A full work queue leaves undiscovered source changes in the global log. */
     fun discover(accountEd: ByteArray, localDeviceId: String, peerDeviceId: String,
                  liveNegotiated: Boolean, nowMs: Long = System.currentTimeMillis()): Int {
@@ -72,6 +88,7 @@ internal class DeviceSyncLiveCaptureStore(
             if (limit == 0) { db.setTransactionSuccessful(); return 0 }
             val changes = DeviceSyncSourceCapture.next(db, last, limit)
             for (change in changes) {
+                if (change.topic !in setOf("messages", "receipts")) continue
                 db.execSQL("INSERT INTO device_sync_live_work " +
                     "(peer_device_id,source_seq,topic,object_id,kind) VALUES (?,?,?,?,?)",
                     arrayOf(peerDeviceId, change.sequence, change.topic,
@@ -103,12 +120,11 @@ internal class DeviceSyncLiveCaptureStore(
             }
         }
         // Reserve one turn for the oldest due revision so a stream of new
-        // messages cannot starve older work. Fresh contact/body changes take
-        // the remaining slots before status-only receipt updates.
+        // messages cannot starve older work. Body changes take the remaining
+        // slots before status-only receipt updates. Contacts use their own queue.
         append("ORDER BY source_seq", 1)
-        if (limit > 1) append("ORDER BY CASE WHEN topic='contacts' THEN 0 " +
-            "WHEN topic='messages' AND kind='body' THEN 1 " +
-            "WHEN topic='messages' THEN 2 ELSE 3 END, source_seq", limit)
+        if (limit > 1) append("ORDER BY CASE WHEN topic='messages' AND kind='body' THEN 0 " +
+            "WHEN topic='messages' THEN 1 ELSE 2 END, source_seq DESC", limit)
         if (rows.size > limit) rows.subList(limit, rows.size).clear()
         return rows
     }

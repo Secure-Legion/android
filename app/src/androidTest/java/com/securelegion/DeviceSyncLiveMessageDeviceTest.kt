@@ -5,11 +5,15 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.securelegion.crypto.RustBridge
+import com.securelegion.crypto.KeyManager
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceSyncChunkStore
+import com.securelegion.database.DeviceSyncLiveCaptureStore
+import com.securelegion.database.DeviceSyncOutboxStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact
 import com.securelegion.sync.DeviceSyncLiveMessageReceiver
+import com.securelegion.sync.DeviceSyncLivePublisher
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -19,6 +23,57 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DeviceSyncLiveMessageDeviceTest {
+    @Test fun deletedMessageSourceQueuesDurableLiveTombstone() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = SecureLegionDatabase.getInstance(context, ByteArray(32) { 0x53 })
+        val db = database.openHelper.writableDatabase
+        val account = ByteArray(32) { 0x66 }
+        val accountB64 = Base64.encodeToString(account, Base64.NO_WRAP)
+        val local = "U".repeat(43)
+        val peer = "V".repeat(43)
+        val id = "live-deleted-device-test"
+        val now = System.currentTimeMillis()
+        try {
+            for ((device, self) in listOf(local to 1, peer to 0)) {
+                db.execSQL("INSERT OR REPLACE INTO authorized_devices " +
+                    "(deviceId,accountEd,displayName,syncOnion,deviceEd,deviceX,mlKemPublic," +
+                    "certificate,capabilities,issuedAtMs,expiresAtMs,rosterEpoch,isSelf) " +
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    arrayOf(device, accountB64, "test", "a".repeat(56) + ".onion",
+                        ByteArray(32), ByteArray(32), ByteArray(1), ByteArray(1),
+                        2, now - 1_000, now + 60_000, 1, self))
+            }
+            val roster = DeviceRosterStore(database)
+            DeviceSyncLiveCaptureStore(database, roster)
+                .initialize(account, local, peer, true, now)
+            db.execSQL("INSERT INTO device_sync_source_changes " +
+                "(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('messages',?,'delete',?)", arrayOf(id, now))
+            DeviceSyncLivePublisher(database, roster, KeyManager.getInstance(context))
+                .prepareBatch(account, local, peer, now)
+            val event = DeviceSyncOutboxStore(database, roster)
+                .dueTor(account, local, peer, now, liveNegotiated = true)
+                .single { it.topic == "messages" && it.objectId == id }
+            assertTrue(JSONObject(event.canonicalDelta.toString(Charsets.UTF_8))
+                .getBoolean("deleted"))
+            db.query(SimpleSQLiteQuery("SELECT COUNT(*) FROM device_sync_live_work " +
+                "WHERE peer_device_id=?", arrayOf(peer))).use {
+                assertTrue(it.moveToFirst())
+                assertEquals(0, it.getInt(0))
+            }
+        } finally {
+            db.execSQL("DELETE FROM device_sync_outbox WHERE peer_device_id=?", arrayOf(peer))
+            db.execSQL("DELETE FROM device_sync_local_events WHERE topic='messages' " +
+                "AND object_id=?", arrayOf(id))
+            db.execSQL("DELETE FROM device_sync_live_work WHERE peer_device_id=?", arrayOf(peer))
+            db.execSQL("DELETE FROM device_sync_live_seed WHERE peer_device_id=?", arrayOf(peer))
+            db.execSQL("DELETE FROM device_sync_live_peers WHERE peer_device_id=?", arrayOf(peer))
+            db.execSQL("DELETE FROM device_sync_source_changes WHERE object_id=?", arrayOf(id))
+            db.execSQL("DELETE FROM authorized_devices WHERE deviceId IN (?,?)",
+                arrayOf(local, peer))
+        }
+    }
+
     @Test fun missingContactSurvivesAndSettlesOnlyAfterImport() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = SecureLegionDatabase.getInstance(context, ByteArray(32) { 0x53 })
