@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.LinkedProfileCredentialStore
+import com.securelegion.crypto.LinkedProfileContentCrypto
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
@@ -44,13 +46,15 @@ import kotlinx.coroutines.launch
 /** Own-device A4/A5 loop. It never enters the legacy contact message parser. */
 internal class DeviceRosterRuntime(private val context: Context) {
     private var job: Job? = null
+    private var directArti = false
 
-    fun start(scope: CoroutineScope) {
+    fun start(scope: CoroutineScope, directArti: Boolean = false) {
         if (job?.isActive == true) return
+        this.directArti = directArti
         job = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 if (!SessionManager.isUnlocked(context) ||
-                    TorService.getCurrentTorState() != TorService.TorState.RUNNING) {
+                    !networkReady()) {
                     delay(2_000)
                     continue
                 }
@@ -65,16 +69,27 @@ internal class DeviceRosterRuntime(private val context: Context) {
 
     private suspend fun runAuthorizedSession() {
         val keyManager = KeyManager.getInstance(context)
-        if (!keyManager.isInitialized()) return
-        val account = keyManager.getSigningPublicKey()
+        val primary = keyManager.isInitialized()
+        val linkedStore = if (primary) null else LinkedProfileCredentialStore(context)
+        val linkedProfile = linkedStore?.activeProfile()
+        if (!primary && linkedProfile == null) return
+        val account = if (primary) keyManager.getSigningPublicKey()
+            else linkedProfile!!.accountEd
         if (account.size != 32) return
         // A completed primary profile needs an independent installation identity
         // and an account-signed initial roster before it can receive device frames.
-        val identity = LocalDeviceIdentity.loadOrCreate(context)
+        val identity = if (primary) LocalDeviceIdentity.loadOrCreate(context)
+            else LocalDeviceIdentity.loadExisting(context)
+        val linkedCrypto = if (primary) null else LinkedProfileContentCrypto(context)
         try {
-            val database = SecureLegionDatabase.getInstance(context, keyManager.getDatabasePassphrase())
+            val databaseKey = if (primary) keyManager.getDatabasePassphrase()
+                else linkedStore!!.activeDatabaseKey()
+                    ?: throw IllegalStateException("Linked profile database unavailable")
+            val database = try { SecureLegionDatabase.getInstance(context, databaseKey) }
+                finally { databaseKey.fill(0) }
             val roster = DeviceRosterStore(database)
             if (roster.fetchSignedRoster(account) == null) {
+                if (!primary) throw IllegalStateException("Linked roster unavailable")
                 val model = Build.MODEL.orEmpty().filter { it.code >= 32 && it.code !in 127..159 }
                     .trim().take(64).ifBlank { "Android" }
                 DeviceRosterAuthority(roster).ensurePrimaryRoster(keyManager, identity, model)
@@ -84,16 +99,25 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val syncHost = DeviceSyncFsHost(account, identity, roster)
             val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
             val contactReceiver = DeviceSyncContactReceiver(database, roster)
+            val mediaFiles = if (primary) DeviceSyncMediaFiles(context, keyManager)
+                else DeviceSyncMediaFiles(context, linkedCrypto!!::encryptImage,
+                    linkedCrypto::encryptVoice)
             val messageReceiver = DeviceSyncLiveMessageReceiver(database, roster,
-                keyManager::encryptDeviceSyncContent,
-                DeviceSyncMediaFiles(context, keyManager)::store)
+                if (primary) keyManager::encryptDeviceSyncContent else linkedCrypto!!::encryptText,
+                mediaFiles::store)
             val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster)
             val contactPublisher = DeviceSyncContactPublisher(database, roster)
-            val livePublisher = DeviceSyncLivePublisher(context, database, roster, keyManager)
+            val livePublisher = if (primary)
+                DeviceSyncLivePublisher(context, database, roster, keyManager)
+                else DeviceSyncLivePublisher(context, database, roster,
+                    linkedCrypto!!::decryptText, linkedCrypto::decryptImage,
+                    linkedCrypto::decryptVoice)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
             val transport = DeviceTransportSessionStore(database, roster)
-            val chatPayloads = DeviceChatPayloadStore(keyManager::encryptDeviceSyncContent)
+            val chatPayloads = DeviceChatPayloadStore(
+                if (primary) keyManager::encryptDeviceSyncContent else linkedCrypto!!::encryptText,
+                mediaFiles::storeRaw)
             val peerCapabilities = HashMap<String, Set<String>>()
             val lastHelloMs = HashMap<String, Long>()
             val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)
@@ -104,16 +128,16 @@ internal class DeviceRosterRuntime(private val context: Context) {
             var nextSourceCheckMs = 0L
             var lastSourceSequence = sourceSequence(database)
             try {
-                runCatching { settingsPublisher.capturePrimary(context, keyManager) }
+                if (primary) runCatching { settingsPublisher.capturePrimary(context, keyManager) }
                     .onFailure { Log.w(TAG, "Account setting capture deferred: ${it.message}") }
-                var settingsMaterialized = runCatching {
+                var settingsMaterialized = if (primary) runCatching {
                     settingsReceiver.materializePrimary(context, keyManager)
                 }.onFailure {
                     Log.w(TAG, "Account settings materialization deferred: ${it.message}")
-                }.isSuccess
+                }.isSuccess else false
                 while (kotlin.coroutines.coroutineContext.isActive &&
                     SessionManager.isUnlocked(context) &&
-                    TorService.getCurrentTorState() == TorService.TorState.RUNNING &&
+                    networkReady() &&
                     roster.isLocalAuthorized(account, identity.deviceId, 0x02)) {
                     val frame = RustBridge.pollDeviceOnionFrame()
                     if (frame != null && frame.isNotEmpty()) {
@@ -220,7 +244,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                                 DeviceSyncPushWire.settled(part))
                                                         }
                                                     } else if (topic == "settings") {
-                                                        settingsPublisher.capturePrimary(context,
+                                                        if (primary) settingsPublisher.capturePrimary(context,
                                                             keyManager)
                                                         val part = DeviceSyncPushWire.parse(inner,
                                                             liveNegotiated = false)
@@ -231,7 +255,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                                 identity.deviceId, peerId, peer.onion,
                                                                 DeviceSyncFrameV2.Kind.PULL_RESPONSE,
                                                                 DeviceSyncPushWire.settled(part))
-                                                            settingsReceiver.materializePrimary(
+                                                            if (primary) settingsReceiver.materializePrimary(
                                                                 context, keyManager)
                                                         }
                                                     } else if (topic == "messages" &&
@@ -298,7 +322,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                             lastSourceSequence = sequence
                         }
                     }
-                    if (TorService.getTransportGate()?.isOpenNow() == true &&
+                    if ((directArti || TorService.getTransportGate()?.isOpenNow() == true) &&
                         (now >= nextSendMs || localChangeWake ||
                             DeviceSyncAccountSettingsPublisher.consumeWake())) {
                         for (pending in exchange.pendingNotifications(account, now)) {
@@ -338,10 +362,10 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                 transport.recordSendAttempt(pending.wire, now)
                             }
                         }
-                        runCatching {
+                        if (primary) runCatching {
                             settingsPublisher.capturePrimary(context, keyManager, now)
                         }.onFailure { Log.w(TAG, "Account setting capture deferred: ${it.message}") }
-                        if (!settingsMaterialized) {
+                        if (primary && !settingsMaterialized) {
                             settingsMaterialized = runCatching {
                                 settingsReceiver.materializePrimary(context, keyManager)
                             }.isSuccess
@@ -447,7 +471,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 RustBridge.stopDeviceOnionListener()
                 DeviceEnrollmentOwnerCoordinator.cancel()
             }
-        } finally { identity.close() }
+        } finally { linkedCrypto?.close(); identity.close() }
     }
 
     private fun cursorSnapshot(database: SecureLegionDatabase,
@@ -468,6 +492,9 @@ internal class DeviceRosterRuntime(private val context: Context) {
         database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
             "SELECT COALESCE(MAX(seq),0) FROM device_sync_source_changes"
         )).use { cursor -> check(cursor.moveToFirst()); cursor.getLong(0) }
+
+    private fun networkReady(): Boolean = directArti ||
+        TorService.getCurrentTorState() == TorService.TorState.RUNNING
 
     private fun sendSyncApplication(host: DeviceSyncFsHost, roster: DeviceRosterStore,
                                     account: ByteArray, localId: String, peerId: String,

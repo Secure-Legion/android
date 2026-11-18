@@ -10,6 +10,9 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.NLx402Manager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.DeviceRosterStore
+import com.securelegion.database.DeviceChatOutboundStore
+import com.securelegion.sync.DeviceSyncMediaFiles
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.Message
 import com.securelegion.models.AckState
@@ -1032,6 +1035,32 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending voice to: ${contact.displayName} (${contact.messagingOnion})")
 
+            val voiceAccount = runCatching {
+                Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+            }.getOrNull()
+            val voiceRoster = DeviceRosterStore(database)
+            if (voiceAccount?.size == 32 &&
+                voiceRoster.fetchSignedRoster(voiceAccount) != null) {
+                require(durationSeconds in 1..600 && audioBytes.isNotEmpty() &&
+                    audioBytes.size <= 5 * 1024 * 1024)
+                val body = ByteArray(4 + audioBytes.size)
+                for (i in 0..3) body[i] =
+                    (durationSeconds ushr ((3 - i) * 8)).toByte()
+                audioBytes.copyInto(body, 4)
+                try {
+                    val path = DeviceSyncMediaFiles(context, keyManager).storeRaw(
+                        "VOICE", UUID.randomUUID().toString(), audioBytes.copyOf())
+                    val logical = DeviceChatOutboundStore(context, database,
+                        voiceRoster, keyManager).queueApplication(contact, "", body, 0x01,
+                        selfDestructDurationMs, false, mediaPath = path,
+                        voiceDuration = durationSeconds)
+                    val saved = database.messageDao().getMessageByMessageId(logical)
+                        ?: throw IllegalStateException("Committed C0 voice unavailable")
+                    runCatching { onMessageSaved?.invoke(saved) }
+                    return@withContext Result.success(saved)
+                } finally { body.fill(0) }
+            }
+
             // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
@@ -1231,6 +1260,27 @@ class MessageService(private val context: Context) {
                 ?: return@withContext Result.failure(Exception("Contact not found"))
 
             Log.d(TAG, "Sending image to: ${contact.displayName} (${contact.messagingOnion})")
+
+            val imageAccount = runCatching {
+                Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+            }.getOrNull()
+            val imageRoster = DeviceRosterStore(database)
+            if (imageAccount?.size == 32 &&
+                imageRoster.fetchSignedRoster(imageAccount) != null) {
+                val body = Base64.decode(imageBase64, Base64.NO_WRAP)
+                try {
+                    require(body.size in 1..4 * 1024 * 1024)
+                    val path = DeviceSyncMediaFiles(context, keyManager).storeRaw(
+                        "IMAGE", UUID.randomUUID().toString(), body.copyOf())
+                    val logical = DeviceChatOutboundStore(context, database,
+                        imageRoster, keyManager).queueApplication(contact, "", body, 0x02,
+                        selfDestructDurationMs, false, mediaPath = path)
+                    val saved = database.messageDao().getMessageByMessageId(logical)
+                        ?: throw IllegalStateException("Committed C0 image unavailable")
+                    runCatching { onMessageSaved?.invoke(saved) }
+                    return@withContext Result.success(saved)
+                } finally { body.fill(0) }
+            }
 
             // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
@@ -2199,6 +2249,35 @@ class MessageService(private val context: Context) {
                 ?: return@withContext Result.failure(Exception("Contact not found"))
 
             Log.d(TAG, "Sending to: ${contact.displayName} (${contact.messagingOnion})")
+
+            val contactAccount = runCatching {
+                Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+            }.getOrNull()
+            val roster = DeviceRosterStore(database)
+            if (contactAccount?.size == 32 &&
+                roster.fetchSignedRoster(contactAccount) != null) {
+                require(!isEditMessage) { "C0 edit control is not available" }
+                val original = replyToMessageId?.let {
+                    database.messageDao().getMessageByMessageId(it)
+                }
+                val body = if (replyToMessageId == null) plaintext.toByteArray(Charsets.UTF_8)
+                    else JSONObject().put("text", plaintext)
+                        .put("reply_to_message_id", replyToMessageId)
+                        .put("reply_to_text", original?.let {
+                            runCatching { keyManager.decryptMessageContent(it.encryptedContent) }
+                                .getOrNull()?.take(1_024)
+                        } ?: "")
+                        .put("reply_to_self", original?.isSentByMe == true)
+                        .toString().toByteArray(Charsets.UTF_8)
+                val logical = DeviceChatOutboundStore(context, database, roster, keyManager)
+                    .queueApplication(contact, plaintext, body,
+                        if (replyToMessageId == null) 0x00 else 0x11,
+                        selfDestructDurationMs, enableReadReceipt, replyToMessageId)
+                val saved = database.messageDao().getMessageByMessageId(logical)
+                    ?: throw IllegalStateException("Committed C0 message unavailable")
+                runCatching { onMessageSaved?.invoke(saved) }
+                return@withContext Result.success(saved)
+            }
 
             // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()

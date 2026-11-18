@@ -17,8 +17,14 @@ internal class DeviceSyncLivePublisher(
     private val context: Context,
     private val database: SecureLegionDatabase,
     private val roster: DeviceRosterStore,
-    private val keyManager: KeyManager
+    private val decryptText: (String) -> String,
+    private val decryptImage: (ByteArray) -> ByteArray,
+    private val decryptVoice: (ByteArray) -> ByteArray
 ) {
+    constructor(context: Context, database: SecureLegionDatabase,
+                roster: DeviceRosterStore, keyManager: KeyManager) : this(context,
+        database, roster, keyManager::decryptMessageContent,
+        keyManager::decryptImageFile, keyManager::decryptVoiceFile)
     private val capture = DeviceSyncLiveCaptureStore(database, roster)
     private val outbox = DeviceSyncOutboxStore(database, roster)
 
@@ -90,11 +96,11 @@ internal class DeviceSyncLivePublisher(
             .put("is_read", row.read).put("is_edited", row.edited)
             .put("ping_delivered", row.ping).put("message_delivered", row.delivered)
         when (row.type) {
-            "TEXT" -> delta.put("content", keyManager.decryptMessageContent(row.encrypted))
+            "TEXT" -> delta.put("content", decryptText(row.encrypted))
             "IMAGE" -> {
                 val bytes = readMedia(row.attachmentData, "image_messages", 4 * 1024 * 1024)
                 try {
-                    val plain = keyManager.decryptImageFile(bytes)
+                    val plain = decryptImage(bytes)
                     try { delta.put("attachment_type", "image")
                         .put("attachment_data", Base64.encodeToString(plain, Base64.NO_WRAP)) }
                     finally { plain.fill(0) }
@@ -104,7 +110,7 @@ internal class DeviceSyncLivePublisher(
                 require(row.voiceDuration != null && row.voiceDuration in 0..86_400)
                 val bytes = readMedia(row.voicePath, "voice_messages", 5_242_880)
                 try {
-                    val plain = keyManager.decryptVoiceFile(bytes)
+                    val plain = decryptVoice(bytes)
                     try { delta.put("voice_duration", row.voiceDuration)
                         .put("voice_data", Base64.encodeToString(plain, Base64.NO_WRAP)) }
                     finally { plain.fill(0) }

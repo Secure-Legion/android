@@ -10,17 +10,25 @@ import java.security.MessageDigest
 /** Store validated own-device media as encrypted, immutable private files. */
 internal class DeviceSyncMediaFiles(
     private val context: Context,
-    private val keyManager: KeyManager
+    private val encryptImage: (ByteArray) -> ByteArray,
+    private val encryptVoice: (ByteArray) -> ByteArray
 ) {
+    constructor(context: Context, keyManager: KeyManager) : this(context,
+        keyManager::encryptImageFile, keyManager::encryptVoiceFile)
     fun store(message: DeviceSyncMessageDelta.Message): String {
         require(message.type == "IMAGE" || message.type == "VOICE")
         val bytes = if (message.type == "IMAGE") {
             val encoded = requireNotNull(message.attachmentData)
             android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
         } else requireNotNull(message.voiceData)
+        return storeRaw(message.type, message.id, bytes)
+    }
+
+    fun storeRaw(type: String, messageId: String, bytes: ByteArray): String {
+        require(type == "IMAGE" || type == "VOICE")
         try {
             require(bytes.isNotEmpty())
-            if (message.type == "IMAGE") {
+            if (type == "IMAGE") {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 require(bounds.outWidth in 1..8192 && bounds.outHeight in 1..8192 &&
@@ -28,16 +36,16 @@ internal class DeviceSyncMediaFiles(
                         "image/gif", "image/heif", "image/heic"))
             }
             val directory = File(context.filesDir,
-                if (message.type == "IMAGE") "image_messages" else "voice_messages")
+                if (type == "IMAGE") "image_messages" else "voice_messages")
             check(directory.isDirectory || directory.mkdirs())
-            val filename = "sync_${sha(message.id.toByteArray())}_${sha(bytes)}.enc"
+            val filename = "sync_${sha(messageId.toByteArray())}_${sha(bytes)}.enc"
             val target = File(directory, filename)
             if (target.exists()) {
                 require(target.isFile && target.length() > 28)
                 return target.absolutePath
             }
-            val encrypted = if (message.type == "IMAGE") keyManager.encryptImageFile(bytes)
-                else keyManager.encryptVoiceFile(bytes)
+            val encrypted = if (type == "IMAGE") encryptImage(bytes)
+                else encryptVoice(bytes)
             try {
                 val temporary = File.createTempFile(".sync_", ".tmp", directory)
                 try {

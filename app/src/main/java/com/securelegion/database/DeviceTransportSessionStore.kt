@@ -439,16 +439,26 @@ internal class DeviceTransportSessionStore(
         db.beginTransaction()
         try {
             val account = encoded(frame.senderAccount)
-            val matched = db.query(SimpleSQLiteQuery(
-                "SELECT session_id,counter,wire_hash FROM device_transport_jobs " +
+            val logicalId = db.query(SimpleSQLiteQuery(
+                "SELECT logical_id,session_id,counter,wire_hash FROM device_transport_jobs " +
                     "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? AND job_id=?",
                 arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId)
-            )).use { c -> c.moveToFirst() && c.getBlob(0).contentEquals(frame.sessionId) &&
-                c.getLong(1) == frame.counter && c.getBlob(2).contentEquals(frame.payload) }
-            require(matched) { "Invalid transport acknowledgment" }
+            )).use { c -> if (c.moveToFirst() && c.getBlob(1).contentEquals(frame.sessionId) &&
+                c.getLong(2) == frame.counter && c.getBlob(3).contentEquals(frame.payload))
+                c.getString(0) else null }
+                ?: throw IllegalArgumentException("Invalid transport acknowledgment")
             db.execSQL("DELETE FROM device_transport_jobs WHERE account_ed=? AND " +
                 "peer_device_id=? AND local_device_id=? AND job_id=?",
                 arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId))
+            db.execSQL("UPDATE messages SET status=MAX(status,2),messageDelivered=1 " +
+                "WHERE messageId=? AND isSentByMe=1", arrayOf(logicalId))
+            if (frame.kind == DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK) {
+                db.execSQL("DELETE FROM device_transport_jobs WHERE account_ed=? " +
+                    "AND local_device_id=? AND logical_id=? AND peer_device_id IN " +
+                    "(SELECT deviceId FROM authorized_devices WHERE accountEd=? " +
+                    "AND (capabilities & 3)=3)",
+                    arrayOf(account, identity.deviceId, logicalId, account))
+            }
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
