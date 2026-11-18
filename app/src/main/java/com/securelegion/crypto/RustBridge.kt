@@ -76,6 +76,10 @@ object RustBridge {
     external fun pollDeviceOnionFrame(): ByteArray?
     external fun stopDeviceOnionListener()
 
+    /** digest[32] || event_id[32] || canonical JSON delta, with topic bounds. */
+    external fun deviceHistoryIdentity(deltaJson: ByteArray, topic: String, objectId: String,
+                                       eventTsMs: Long): ByteArray
+
     /**
      * Encrypt a message using XChaCha20-Poly1305 with X25519 ECDH
      * Uses proper ECDH to derive shared secret for encryption
