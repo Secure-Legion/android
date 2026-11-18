@@ -164,6 +164,9 @@ class ChatActivity : BaseActivity() {
     private val loadMessagesHandler = Handler(Looper.getMainLooper())
     private var pendingLoadMessagesRunnable: Runnable? = null
     private val LOAD_MESSAGES_DEBOUNCE_MS = 150L
+    private val loadGeneration = java.util.concurrent.atomic.AtomicLong()
+    /** Main-thread-only unsaved bubbles, reconciled by stable saved message IDs. */
+    private val optimisticMessages = LinkedHashMap<String, com.securelegion.database.entities.Message>()
 
     // Voice recording
     private lateinit var voiceRecorder: VoiceRecorder
@@ -2097,6 +2100,7 @@ class ChatActivity : BaseActivity() {
     }
 
     private suspend fun loadMessages() {
+        val generation = loadGeneration.incrementAndGet()
         try {
             Log.d(TAG, "Loading messages for contact: $contactId")
 
@@ -2238,6 +2242,10 @@ class ChatActivity : BaseActivity() {
             myReactionByMessageId = myReactionMap
 
             withContext(Dispatchers.Main) {
+                if (generation != loadGeneration.get()) return@withContext
+                val visibleMessages = (messages + optimisticMessages.values)
+                    .distinctBy { it.messageId }
+                    .sortedWith(compareBy({ it.timestamp }, { it.id }))
                 Log.d(TAG, "Updating adapter with ${messages.size} messages + ${pingsForAdapter.size} pending")
                 updatePinnedBanner(messages)
                 messageAdapter.setReactionSummaries(
@@ -2248,12 +2256,12 @@ class ChatActivity : BaseActivity() {
                 val oldItemCount = messageAdapter.itemCount
                 val wasAtBottom = lastVisiblePosition >= (oldItemCount - 1)
 
-                val totalItems = messages.size + pingsForAdapter.size
+                val totalItems = visibleMessages.size + pingsForAdapter.size
                 // Always scroll on first load (opening chat), otherwise only if at bottom or new items
                 val shouldScroll = isFirstLoad || wasAtBottom || oldItemCount < totalItems
 
                 messageAdapter.updateMessages(
-                    messages,
+                    visibleMessages,
                     pingsForAdapter,
                     showTyping
                 ) {
@@ -2409,7 +2417,7 @@ class ChatActivity : BaseActivity() {
             return
         }
 
-        Log.d(TAG, "Sending message: $messageText (self-destruct=$enableSelfDestruct, read-receipt=$enableReadReceipt)")
+        Log.d(TAG, "Sending message (self-destruct=$enableSelfDestruct, read-receipt=$enableReadReceipt)")
 
         // Clear input synchronously on main thread before any async work.
         // restartInput() MUST come before clear() — it tells the IME to discard its in-flight
@@ -2422,6 +2430,22 @@ class ChatActivity : BaseActivity() {
         val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
         imm.restartInput(messageInput)
         messageInput.text.clear()
+        val optimisticId = "pending_ui_${java.util.UUID.randomUUID()}"
+        val optimistic = com.securelegion.database.entities.Message(
+            contactId = contactId,
+            messageId = optimisticId,
+            encryptedContent = messageText,
+            isSentByMe = true,
+            timestamp = System.currentTimeMillis(),
+            status = com.securelegion.database.entities.Message.STATUS_PENDING,
+            signatureBase64 = "",
+            nonceBase64 = "",
+            messageNonce = 0,
+            replyToMessageId = currentReplyId
+        )
+        optimisticMessages[optimisticId] = optimistic
+        messageAdapter.upsertLocalMessage(optimistic) { scrollToBottom(smooth = true) }
+        val savedToDatabase = java.util.concurrent.atomic.AtomicBoolean(false)
 
         // Post to ensure the cleared-text frame renders before the send coroutine
         // runs on Main.immediate (which would otherwise delay the draw pass)
@@ -2442,17 +2466,26 @@ class ChatActivity : BaseActivity() {
                     selfDestructDurationMs = ttlSeconds?.let { (it * 1000).toLong() },
                     enableReadReceipt = enableReadReceipt,
                     onMessageSaved = { savedMessage ->
-                        // Message saved to DB - update UI immediately to show PENDING message
-                        Log.d(TAG, "Message saved to DB, updating UI immediately")
-                        lifecycleScope.launch {
-                            loadMessages()
-                            // scrollToBottom is now handled inside loadMessages() via commit callback
+                        savedToDatabase.set(true)
+                        runOnUiThread {
+                            optimisticMessages.remove(optimisticId)
+                            if (savedMessage.id > 0) {
+                                messageAdapter.upsertLocalMessage(savedMessage, optimisticId) {
+                                    scrollToBottom(smooth = true)
+                                }
+                            } else messageAdapter.removeLocalMessage(optimisticId)
+                            lifecycleScope.launch { loadMessages() }
                         }
                     }
                 )
 
                 if (result.isFailure) {
                     Log.e(TAG, "Failed to send message", result.exceptionOrNull())
+                    if (!savedToDatabase.get()) {
+                        optimisticMessages.remove(optimisticId)
+                        messageAdapter.removeLocalMessage(optimisticId)
+                        if (messageInput.text.isNullOrEmpty()) messageInput.setText(messageText)
+                    }
                 }
 
                 // After message send, enqueue the 0x13 SELF_DESTRUCT control
@@ -2480,8 +2513,12 @@ class ChatActivity : BaseActivity() {
                     }
                 }
             } catch (e: Exception) {
-                // Silent failure - message saved to database, will retry later
                 Log.e(TAG, "Failed to send message (will retry later)", e)
+                if (!savedToDatabase.get()) {
+                    optimisticMessages.remove(optimisticId)
+                    messageAdapter.removeLocalMessage(optimisticId)
+                    if (messageInput.text.isNullOrEmpty()) messageInput.setText(messageText)
+                }
 
                 // Reload messages to show the pending message (scroll handled by commit callback)
                 loadMessages()

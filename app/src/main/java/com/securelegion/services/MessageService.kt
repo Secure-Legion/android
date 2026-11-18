@@ -2389,7 +2389,9 @@ class MessageService(private val context: Context) {
                     newSendCounter = newSendCounter,
                     timestamp = System.currentTimeMillis()
                 )
-                database.messageDao().insertMessage(message)
+                database.messageDao().insertMessage(message).also {
+                    check(it > 0) { "Message identity already exists; send state rolled back" }
+                }
             }
             val savedMessage = message.copy(id = savedMessageId)
 

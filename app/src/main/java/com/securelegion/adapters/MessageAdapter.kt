@@ -2018,6 +2018,30 @@ class MessageAdapter(
         }
     }
 
+    /** Keep the sent bubble visible while the full chat query is still running. */
+    fun upsertLocalMessage(message: Message, replaceMessageId: String? = null,
+                           onCommitted: (() -> Unit)? = null) {
+        val updated = currentList.filterNot {
+            it is ChatListItem.MessageItem &&
+                (it.message.messageId == message.messageId ||
+                    it.message.messageId == replaceMessageId)
+        }.toMutableList()
+        val firstPing = updated.indexOfFirst { it is ChatListItem.PendingPingItem }
+        updated.add(if (firstPing < 0) updated.size else firstPing,
+            ChatListItem.MessageItem(message, reactionSummaries[message.messageId]))
+        submitList(updated) {
+            scheduleDeliveryStatusRefresh()
+            onCommitted?.invoke()
+        }
+    }
+
+    fun removeLocalMessage(messageId: String) {
+        val updated = currentList.filterNot {
+            it is ChatListItem.MessageItem && it.message.messageId == messageId
+        }
+        submitList(updated) { scheduleDeliveryStatusRefresh() }
+    }
+
     private fun scheduleDeliveryStatusRefresh() {
         deliveryStatusHandler.removeCallbacks(deliveryStatusRefreshRunnable)
         val nowMs = System.currentTimeMillis()
