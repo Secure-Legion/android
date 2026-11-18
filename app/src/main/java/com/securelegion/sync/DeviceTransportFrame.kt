@@ -3,6 +3,7 @@ package com.securelegion.sync
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Base64
 
 /** Strict C0v2 frame syntax. Roster authorization is a separate required step. */
@@ -21,6 +22,17 @@ internal class DeviceTransportFrame private constructor(
 
     val signature: ByteArray get() = wire.copyOfRange(wire.size - SIGNATURE_SIZE, wire.size)
     val exactWireHash: ByteArray get() = MessageDigest.getInstance("SHA-256").digest(wire)
+    val keyContext: String get() {
+        val prekeyHash = exactHash(payload).joinToString("") {
+            "%02x".format(it.toInt() and 0xff)
+        }
+        val generation = if (version == 1) "" else "$counter/"
+        return "Secure-DEVICE-TRANSPORT-v$version/session/" +
+            "${Base64.getEncoder().encodeToString(senderAccount)}/" +
+            "${Base64.getEncoder().encodeToString(recipientAccount)}/" +
+            "$senderDeviceId/$recipientDeviceId/${deviceId(sessionId)}/" +
+            "$generation$prekeyHash"
+    }
 
     fun verify(signingPublicKey: ByteArray): Boolean = signingPublicKey.size == 32 &&
         RustBridge.verifySignature(domain(version) +
@@ -114,6 +126,16 @@ internal class DeviceTransportFrame private constructor(
                     account + decodeDeviceId(deviceId) + jobId)
             return "dev_" + deviceId(hash)
         }
+
+        fun randomId(): ByteArray = ByteArray(32).also { SecureRandom().nextBytes(it) }
+
+        fun sessionIdForGeneration(generation: Long): ByteArray {
+            require(generation in 2..MAX_COUNTER)
+            return randomId().also { writeU64(it, 0, generation) }
+        }
+
+        private fun exactHash(bytes: ByteArray) =
+            MessageDigest.getInstance("SHA-256").digest(bytes)
 
         private fun domain(version: Int) =
             "Secure-DEVICE-TRANSPORT-v$version\u0000".toByteArray(Charsets.UTF_8)
