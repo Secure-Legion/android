@@ -47,6 +47,10 @@ bulk history and full groups remain Nearby-only.
   available for the future importer. Per-peer state selects at most 50 initial
   IDs once, then discovers later changes by durable sequence in bounded work
   queues with independent retry. No live dispatcher consumes this work yet.
+- Direct receipt deltas have an exact-key parser, small export query, and
+  transactional import that preserves monotonic delivery/read state and
+  suppresses outbound recapture. Missing messages remain a dependency rather
+  than receiving a successful commit response.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
@@ -67,7 +71,8 @@ bulk history and full groups remain Nearby-only.
 5. Implement exact metadata payload import/export, cursors, deferral, chunks,
    authenticated settlements, capability exchange, and bounded retries.
    Include the new live direct-message payload preparation, full import
-   suppression, receipt-only payloads, and no timestamp-based delivery cutoff. Do not
+   suppression, end-to-end receipt dispatch, and no timestamp-based delivery
+   cutoff. Do not
    advertise `live_message_sync_v1` until both sender and receiver pass.
 6. Keep group-link Tor work disabled until every signed operation is validated
    before both import and re-export, including indirect pull paths.
