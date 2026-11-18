@@ -6,13 +6,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.LinkedChatStore
 import com.securelegion.crypto.RustBridge
 import org.json.JSONObject
 
 /** Applies only contacts whose account keys are already pinned on this install. */
 internal class DeviceSyncContactReceiver(
     private val database: SecureLegionDatabase,
-    private val roster: DeviceRosterStore
+    private val roster: DeviceRosterStore,
+    private val linked: LinkedChatStore? = null
 ) {
     private val chunks = DeviceSyncChunkStore(database, roster)
     private var pendingScanAfterId = 0L
@@ -160,6 +162,7 @@ internal class DeviceSyncContactReceiver(
                                    contact: DeviceSyncContactDelta.Contact,
                                    canonical: ByteArray, digest: ByteArray,
                                    nowMs: Long): Boolean {
+        if (linked != null) return linked.applyContact(db, contact, nowMs)
         val existing = db.query(SimpleSQLiteQuery(
             "SELECT id,x25519PublicKeyBase64 FROM contacts WHERE publicKeyBase64=? LIMIT 1",
             arrayOf(part.objectId)

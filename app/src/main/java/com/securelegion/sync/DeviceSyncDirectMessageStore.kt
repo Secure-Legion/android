@@ -37,16 +37,17 @@ internal object DeviceSyncDirectMessageStore {
                 "AND friendshipStatus='CONFIRMED' LIMIT 1", arrayOf(contactX)
         )).use { if (it.moveToFirst()) it.getLong(0) else null } ?: return false
         val existing = db.query(SimpleSQLiteQuery(
-            "SELECT contactId,isSentByMe,messageType,status,isDeviceSyncImported " +
+            "SELECT contactId,isSentByMe,messageType,status,isDeviceSyncImported,timestamp " +
                 "FROM messages WHERE messageId=? LIMIT 1", arrayOf(message.id)
         )).use { cursor ->
             if (!cursor.moveToFirst()) null else Existing(cursor.getLong(0),
                 cursor.getInt(1) == 1, cursor.getString(2), cursor.getInt(3),
-                cursor.getInt(4) == 1)
+                cursor.getInt(4) == 1, cursor.getLong(5))
         }
         if (existing != null) {
             require(existing.contactId == contactId &&
-                existing.sentByMe == message.sentByMe && existing.type == message.type) {
+                existing.sentByMe == message.sentByMe && existing.type == message.type &&
+                existing.timestampMs == message.timestampMs) {
                 "Message identity rebind"
             }
             if (existing.status == 8) return true
@@ -106,5 +107,5 @@ internal object DeviceSyncDirectMessageStore {
 
     private data class Existing(val contactId: Long, val sentByMe: Boolean,
                                 val type: String, val status: Int,
-                                val imported: Boolean)
+                                val imported: Boolean, val timestampMs: Long)
 }

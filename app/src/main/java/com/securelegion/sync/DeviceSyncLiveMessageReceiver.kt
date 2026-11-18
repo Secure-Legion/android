@@ -6,6 +6,7 @@ import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.LinkedChatStore
 import org.json.JSONObject
 
 /** Authenticated live message import; missing pinned contacts remain durable. */
@@ -15,7 +16,8 @@ internal class DeviceSyncLiveMessageReceiver(
     private val encryptForLocalProfile: (String) -> String,
     private val storeMedia: (DeviceSyncMessageDelta.Message) -> String = {
         throw IllegalArgumentException("Media storage unavailable")
-    }
+    },
+    private val linked: LinkedChatStore? = null
 ) {
     private val chunks = DeviceSyncChunkStore(database, roster)
     data class Applied(val peerDeviceId: String, val objectId: String,
@@ -126,8 +128,9 @@ internal class DeviceSyncLiveMessageReceiver(
             it.getBlob(2)) else null }
         val incomingWins = local == null || part.eventTimeMs > local.first ||
             part.eventTimeMs == local.first && part.digestHex > local.third.toHex()
-        if (incomingWins && !DeviceSyncDirectMessageStore.applyInTransaction(db, message,
-                encryptForLocalProfile, storeMedia)) {
+        if (incomingWins && !(linked?.applyMessage(db, message) ?:
+                DeviceSyncDirectMessageStore.applyInTransaction(db, message,
+                    encryptForLocalProfile, storeMedia))) {
             defer(db, part, canonical, digest, nowMs)
             return false
         }

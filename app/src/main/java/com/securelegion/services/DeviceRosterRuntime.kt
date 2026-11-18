@@ -9,6 +9,7 @@ import com.securelegion.crypto.LinkedProfileContentCrypto
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
+import com.securelegion.database.LinkedChatStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterExchange
 import com.securelegion.sync.DeviceRosterAuthority
@@ -88,10 +89,9 @@ internal class DeviceRosterRuntime(private val context: Context) {
         val identity = if (primary) LocalDeviceIdentity.loadOrCreate(context)
             else LocalDeviceIdentity.loadExisting(context)
         val linkedCrypto = if (primary) null else LinkedProfileContentCrypto(context)
-        val localCapabilities = if (primary) setOf(
+        val localCapabilities = setOf(
             "tor_metadata_only_v1", "contact_roster_v1", "durable_history_v2",
             "account_profile_v1", DeviceSyncTorPolicy.LIVE_CAPABILITY)
-            else setOf("tor_metadata_only_v1", "contact_roster_v1")
         try {
             val databaseKey = if (primary) keyManager.getDatabasePassphrase()
                 else linkedStore!!.activeDatabaseKey()
@@ -109,26 +109,31 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val exchange = DeviceRosterExchange(database, roster)
             val syncHost = DeviceSyncFsHost(account, identity, roster)
             val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
-            val contactReceiver = DeviceSyncContactReceiver(database, roster)
             val mediaFiles = if (primary) DeviceSyncMediaFiles(context, keyManager)
                 else DeviceSyncMediaFiles(context, linkedCrypto!!::encryptImage,
                     linkedCrypto::encryptVoice)
+            val linkedChat = if (primary) null else LinkedChatStore(database, roster,
+                linkedCrypto!!::encryptText, mediaFiles).also { it.ensureSchema() }
+            val contactReceiver = DeviceSyncContactReceiver(database, roster, linkedChat)
             val messageReceiver = DeviceSyncLiveMessageReceiver(database, roster,
                 if (primary) keyManager::encryptDeviceSyncContent else linkedCrypto!!::encryptText,
-                mediaFiles::store)
-            val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster)
-            val contactPublisher = DeviceSyncContactPublisher(database, roster)
+                mediaFiles::store, linkedChat)
+            val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster,
+                linkedChat)
+            val contactPublisher = DeviceSyncContactPublisher(database, roster,
+                linked = !primary)
             val livePublisher = if (primary)
                 DeviceSyncLivePublisher(context, database, roster, keyManager)
                 else DeviceSyncLivePublisher(context, database, roster,
                     linkedCrypto!!::decryptText, linkedCrypto::decryptImage,
-                    linkedCrypto::decryptVoice)
+                    linkedCrypto::decryptVoice, linked = true,
+                    linkedStore = linkedChat)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
             val transport = DeviceTransportSessionStore(database, roster)
             val chatPayloads = DeviceChatPayloadStore(
                 if (primary) keyManager::encryptDeviceSyncContent else linkedCrypto!!::encryptText,
-                mediaFiles::storeRaw)
+                mediaFiles::storeRaw, linkedChat)
             val peerCapabilities = HashMap<String, Set<String>>()
             val lastHelloMs = HashMap<String, Long>()
             val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)

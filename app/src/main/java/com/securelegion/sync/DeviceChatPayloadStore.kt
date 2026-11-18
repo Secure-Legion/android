@@ -3,6 +3,7 @@ package com.securelegion.sync
 import android.util.Base64
 import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.securelegion.database.LinkedChatStore
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import org.json.JSONObject
@@ -12,7 +13,8 @@ internal class DeviceChatPayloadStore(
     private val encryptForLocalProfile: (String) -> String,
     private val storeMedia: (String, String, ByteArray) -> String = { _, _, _ ->
         throw IllegalArgumentException("C0 media storage unavailable")
-    }
+    },
+    private val linked: LinkedChatStore? = null
 ) {
     fun apply(db: SupportSQLiteDatabase, senderAccount: ByteArray,
               logicalId: String, plaintext: ByteArray,
@@ -25,12 +27,12 @@ internal class DeviceChatPayloadStore(
         require(timestamp in 1..DeviceTransportFrame.MAX_COUNTER &&
             timestamp <= nowMs + 300_000L &&
             (ttl == 0L || ttl in 1_000L..604_800_000L))
-        val contact = db.query(SimpleSQLiteQuery(
+        val contact = if (linked != null) null else db.query(SimpleSQLiteQuery(
             "SELECT id FROM contacts WHERE publicKeyBase64=? AND isBlocked=0 " +
                 "AND friendshipStatus='CONFIRMED' LIMIT 1",
             arrayOf(Base64.encodeToString(senderAccount, Base64.NO_WRAP))
         )).use { if (it.moveToFirst()) it.getLong(0) else null }
-            ?: throw IllegalArgumentException("Unknown C0 contact")
+            ?: if (linked == null) throw IllegalArgumentException("Unknown C0 contact") else null
         val type = plaintext[13].toInt() and 0xff
         val messageType = when (type) {
             0x00, 0x11 -> "TEXT"
@@ -39,14 +41,17 @@ internal class DeviceChatPayloadStore(
             else -> throw IllegalArgumentException("Unsupported C0 payload type")
         }
         val body = plaintext.copyOfRange(14, plaintext.size)
-        val existing = db.query(SimpleSQLiteQuery(
-            "SELECT contactId,isSentByMe,messageType FROM messages WHERE messageId=? LIMIT 1",
+        val existing = if (linked != null) null else db.query(SimpleSQLiteQuery(
+            "SELECT contactId,isSentByMe,messageType,timestamp " +
+                "FROM messages WHERE messageId=? LIMIT 1",
             arrayOf(logicalId)
-        )).use { c -> if (!c.moveToFirst()) null else Triple(c.getLong(0),
-            c.getInt(1), c.getString(2)) }
+        )).use { c -> if (!c.moveToFirst()) null else listOf(c.getLong(0),
+            c.getInt(1).toLong(), c.getString(2), c.getLong(3)) }
         if (existing != null) {
-            require(existing.first == contact && existing.second == 0 &&
-                existing.third == messageType) { "C0 message identity conflict" }
+            require(existing[0] == contact && existing[1] == 0L &&
+                existing[2] == messageType && existing[3] == timestamp) {
+                "C0 message identity conflict"
+            }
             return false
         }
         val content: String
@@ -99,6 +104,8 @@ internal class DeviceChatPayloadStore(
             }
             else -> error("Validated above")
         }
+        if (linked != null) return linked.applyDirect(db, senderAccount,
+            logicalId, content, messageType, timestamp, mediaPath, duration, replyTo)
         db.execSQL("INSERT INTO messages " +
             "(contactId,messageId,encryptedContent,isSentByMe,timestamp,status," +
             "signatureBase64,nonceBase64,messageNonce,messageType,isRead," +
@@ -106,7 +113,7 @@ internal class DeviceChatPayloadStore(
             "attachmentType,attachmentData,voiceDuration,voiceFilePath,replyToMessageId," +
             "selfDestructTtl,isPinned,isDeviceSyncImported) " +
             "VALUES (?,?,?,0,?,2,'','',0,?,0,0,0,0,1,0,0,?,?,?,?,?,?,0,0)",
-            arrayOf(contact, logicalId, if (content.isEmpty()) "" else
+            arrayOf(requireNotNull(contact), logicalId, if (content.isEmpty()) "" else
                 encryptForLocalProfile(content), timestamp, messageType,
                 if (messageType == "IMAGE") "image" else null,
                 if (messageType == "IMAGE") mediaPath else null,

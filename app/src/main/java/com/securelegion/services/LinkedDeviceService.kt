@@ -59,6 +59,13 @@ internal class LinkedDeviceService : Service() {
                     val runtime = DeviceRosterRuntime(this@LinkedDeviceService)
                     rosterRuntime = runtime
                     runtime.start(scope, directArti = true)
+                    notifications.notify(NOTIFICATION_ID,
+                        Notification.Builder(this@LinkedDeviceService, CHANNEL)
+                            .setSmallIcon(com.securelegion.R.mipmap.ic_launcher_secure)
+                            .setContentTitle("Secure Legion linked device")
+                            .setContentText("Secure device sync active")
+                            .setContentIntent(open)
+                            .setOngoing(true).build())
                 } catch (e: Exception) {
                     Log.e(TAG, "Linked device network failed", e)
                     stopSelf()

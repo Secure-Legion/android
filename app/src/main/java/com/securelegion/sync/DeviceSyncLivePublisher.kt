@@ -9,6 +9,7 @@ import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceSyncLiveCaptureStore
 import com.securelegion.database.DeviceSyncOutboxStore
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.LinkedChatStore
 import org.json.JSONObject
 import java.io.File
 
@@ -19,13 +20,15 @@ internal class DeviceSyncLivePublisher(
     private val roster: DeviceRosterStore,
     private val decryptText: (String) -> String,
     private val decryptImage: (ByteArray) -> ByteArray,
-    private val decryptVoice: (ByteArray) -> ByteArray
+    private val decryptVoice: (ByteArray) -> ByteArray,
+    private val linked: Boolean = false,
+    private val linkedStore: LinkedChatStore? = null
 ) {
     constructor(context: Context, database: SecureLegionDatabase,
                 roster: DeviceRosterStore, keyManager: KeyManager) : this(context,
         database, roster, keyManager::decryptMessageContent,
         keyManager::decryptImageFile, keyManager::decryptVoiceFile)
-    private val capture = DeviceSyncLiveCaptureStore(database, roster)
+    private val capture = DeviceSyncLiveCaptureStore(database, roster, linked)
     private val outbox = DeviceSyncOutboxStore(database, roster)
 
     fun prepareBatch(account: ByteArray, local: String, peer: String,
@@ -37,8 +40,9 @@ internal class DeviceSyncLivePublisher(
                 val delta = if (work.kind == "import")
                     relayDelta(work.topic, work.objectId, nowMs)
                     else if (work.topic == "messages") messageDelta(work.objectId, nowMs)
-                    else DeviceSyncReceiptDelta.export(database.openHelper.readableDatabase,
-                        work.objectId)
+                    else linkedStore?.exportReceipt(database.openHelper.readableDatabase,
+                        work.objectId) ?: DeviceSyncReceiptDelta.export(
+                            database.openHelper.readableDatabase, work.objectId)
                 if (delta != null) queue(account, local, peer, work.topic,
                     work.objectId, delta, nowMs)
                 capture.completeWork(peer, work.sequence)
@@ -68,7 +72,14 @@ internal class DeviceSyncLivePublisher(
 
     private fun messageDelta(id: String, nowMs: Long): JSONObject {
         require(id.isNotEmpty() && id.length <= 256)
-        val row = database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+        if (linked) {
+            val imported = database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+                "SELECT imported FROM linked_chat_messages WHERE message_id=?",
+                arrayOf(id))).use { it.moveToFirst() && it.getInt(0) == 1 }
+            if (imported) return relayDelta("messages", id, nowMs)
+        }
+        val row = if (linked) linkedMessageRow(id) else
+            database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
             "SELECT m.encryptedContent,m.isSentByMe,m.timestamp,m.status,m.messageType," +
                 "m.isRead,m.isEdited,m.selfDestructAt,m.selfDestructTtl," +
                 "m.pingDelivered,m.messageDelivered,m.replyToMessageId," +
@@ -84,7 +95,8 @@ internal class DeviceSyncLivePublisher(
                 c.getString(12), if (c.isNull(13)) null else c.getString(13),
                 if (c.isNull(14)) null else c.getString(14),
                 if (c.isNull(15)) null else c.getInt(15))
-        } ?: return JSONObject().put("message_id", id).put("deleted", true)
+        }
+        if (row == null) return JSONObject().put("message_id", id).put("deleted", true)
         if (row.status == 8 || row.expiry != null && row.expiry <= nowMs)
             return JSONObject().put("message_id", id).put("deleted", true)
         require(row.type in setOf("TEXT", "IMAGE", "VOICE") && row.status in 0..7 &&
@@ -123,6 +135,24 @@ internal class DeviceSyncLivePublisher(
         DeviceSyncMessageDelta.parse(delta, nowMs)
         return delta
     }
+
+    private fun linkedMessageRow(id: String): Row? =
+        database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT m.encrypted_content,m.sent_by_me,m.timestamp_ms,m.status,m.type," +
+                "m.read,m.edited,m.reply_to_id,c.x25519,m.media_path," +
+                "m.voice_duration FROM linked_chat_messages m JOIN linked_chat_contacts c " +
+                "ON c.account_ed=m.account_ed WHERE m.message_id=? LIMIT 1",
+            arrayOf(id)
+        )).use { c ->
+            if (!c.moveToFirst()) null else Row(c.getString(0), c.getInt(1) == 1,
+                c.getLong(2), c.getInt(3), c.getString(4), c.getInt(5) == 1,
+                c.getInt(6) == 1, null, null, false, c.getInt(3) >= 2,
+                if (c.isNull(7)) null else c.getString(7),
+                Base64.encodeToString(c.getBlob(8), Base64.NO_WRAP),
+                if (c.getString(4) == "IMAGE" && !c.isNull(9)) c.getString(9) else null,
+                if (c.getString(4) == "VOICE" && !c.isNull(9)) c.getString(9) else null,
+                if (c.isNull(10)) null else c.getInt(10))
+        }
 
     private fun readMedia(path: String?, folder: String, maxBytes: Int): ByteArray {
         require(path != null)

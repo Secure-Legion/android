@@ -452,6 +452,18 @@ internal class DeviceTransportSessionStore(
                 arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId))
             db.execSQL("UPDATE messages SET status=MAX(status,2),messageDelivered=1 " +
                 "WHERE messageId=? AND isSentByMe=1", arrayOf(logicalId))
+            val linkedTable = db.query(SimpleSQLiteQuery(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND " +
+                    "name='linked_chat_messages'"
+            )).use { it.moveToFirst() }
+            if (linkedTable) {
+                db.execSQL("UPDATE linked_chat_messages SET status=MAX(status,2) " +
+                    "WHERE message_id=? AND sent_by_me=1", arrayOf(logicalId))
+                db.execSQL("INSERT INTO device_sync_source_changes " +
+                    "(topic,object_id,kind,changed_at_ms) " +
+                    "VALUES ('messages',?,'receipt',?)",
+                    arrayOf(logicalId, nowMs))
+            }
             if (frame.kind == DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK) {
                 db.execSQL("DELETE FROM device_transport_jobs WHERE account_ed=? " +
                     "AND local_device_id=? AND logical_id=? AND peer_device_id IN " +

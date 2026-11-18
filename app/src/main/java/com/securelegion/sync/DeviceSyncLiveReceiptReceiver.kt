@@ -6,12 +6,14 @@ import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.LinkedChatStore
 import org.json.JSONObject
 
 /** Complete live receipt chunks only; caller supplies authenticated B6/B7 identity. */
 internal class DeviceSyncLiveReceiptReceiver(
     private val database: SecureLegionDatabase,
-    private val roster: DeviceRosterStore
+    private val roster: DeviceRosterStore,
+    private val linked: LinkedChatStore? = null
 ) {
     private val chunks = DeviceSyncChunkStore(database, roster)
     data class Applied(val peerDeviceId: String, val objectId: String,
@@ -113,7 +115,8 @@ internal class DeviceSyncLiveReceiptReceiver(
                 return true
             }
         }
-        if (!DeviceSyncReceiptDelta.applyInTransaction(db, receipt)) {
+        if (!(linked?.applyReceipt(db, receipt) ?:
+                DeviceSyncReceiptDelta.applyInTransaction(db, receipt))) {
             val pending = db.query(SimpleSQLiteQuery(
                 "SELECT event_id,digest,delta_json FROM device_sync_pending " +
                     "WHERE peer_device_id=? AND topic='receipts' AND object_id=? AND event_time_ms=?",

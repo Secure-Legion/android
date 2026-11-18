@@ -6,7 +6,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 /** Per-peer one-time seed and bounded source ID discovery. No message bodies are read here. */
 internal class DeviceSyncLiveCaptureStore(
     private val database: SecureLegionDatabase,
-    private val roster: DeviceRosterStore
+    private val roster: DeviceRosterStore,
+    private val linked: Boolean = false
 ) {
     data class SourceWork(val sequence: Long, val topic: String, val objectId: String,
                           val kind: String, val attempts: Int)
@@ -29,8 +30,11 @@ internal class DeviceSyncLiveCaptureStore(
                 "(peer_device_id,seed_snapshot_seq,discovered_seq,created_at_ms) VALUES (?,?,?,?)",
                 arrayOf(peerDeviceId, snapshot, snapshot, nowMs))
             // This one indexed selection never repeats at reconnect or after ACK.
-            db.query(SimpleSQLiteQuery("SELECT messageId FROM messages " +
-                "ORDER BY timestamp DESC,id DESC LIMIT 50")).use { cursor ->
+            db.query(SimpleSQLiteQuery(if (linked)
+                "SELECT message_id FROM linked_chat_messages " +
+                    "ORDER BY timestamp_ms DESC,message_id DESC LIMIT 50"
+                else "SELECT messageId FROM messages " +
+                    "ORDER BY timestamp DESC,id DESC LIMIT 50")).use { cursor ->
                 var ordinal = 0
                 while (cursor.moveToNext()) {
                     db.execSQL("INSERT INTO device_sync_live_seed " +

@@ -21,6 +21,101 @@ internal class DeviceChatOutboundStore(
         database, roster, keyManager.getSigningPublicKey(),
         keyManager::encryptDeviceSyncContent)
 
+    /** Seedless linked profiles have wallet-free contacts and a separate view. */
+    fun queueLinkedText(recipientAccount: ByteArray, text: String,
+                        nowMs: Long = System.currentTimeMillis()): String =
+        queueLinkedApplication(recipientAccount, text,
+            text.toByteArray(Charsets.UTF_8), 0x00, nowMs = nowMs)
+
+    fun queueLinkedApplication(recipientAccount: ByteArray, text: String,
+                               body: ByteArray, type: Int,
+                               mediaPath: String? = null,
+                               voiceDuration: Int? = null,
+                               nowMs: Long = System.currentTimeMillis()): String {
+        require(localAccount.size == 32 && recipientAccount.size == 32 &&
+            !localAccount.contentEquals(recipientAccount) &&
+            type in setOf(0x00, 0x02, 0x01))
+        val messageType = when (type) {
+            0x00 -> "TEXT"
+            0x02 -> "IMAGE"
+            else -> "VOICE"
+        }
+        if (messageType == "TEXT") require(text.isNotBlank() &&
+            text.toByteArray(Charsets.UTF_8).size <= 65_536 &&
+            body.contentEquals(text.toByteArray(Charsets.UTF_8)) &&
+            mediaPath == null && voiceDuration == null)
+        else require(text.isEmpty() && mediaPath != null &&
+            mediaPath.startsWith(context.filesDir.canonicalPath +
+                java.io.File.separator) &&
+            (messageType == "IMAGE" && body.size in 1..4 * 1024 * 1024 &&
+                voiceDuration == null || messageType == "VOICE" &&
+                body.size in 5..(5 * 1024 * 1024 + 4) &&
+                voiceDuration != null && voiceDuration in 1..600))
+        val signedRoster = roster.fetchSignedRoster(recipientAccount)
+            ?: throw IllegalStateException("Recipient device roster unavailable")
+        val recipient = Base64.encodeToString(recipientAccount, Base64.NO_WRAP)
+        LocalDeviceIdentity.loadExisting(context).use { identity ->
+            require(roster.isLocalAuthorized(localAccount, identity.deviceId, 0x01, nowMs))
+            val peers = roster.listAuthorizedDevices(recipientAccount).filter {
+                it.capabilities and 0x01 != 0 && it.expiresAtMs > nowMs
+            }
+            require(peers.isNotEmpty() && peers.size <= 8)
+            val sessions = DeviceTransportSessionStore(database, roster)
+            val sessionIds = peers.associate { peer ->
+                peer.deviceId to sessions.request(localAccount, recipientAccount,
+                    peer.deviceId, identity, nowMs).sessionId
+            }
+            val job = DeviceTransportFrame.randomId()
+            val logical = DeviceTransportFrame.logicalId(localAccount, identity.deviceId, job)
+            val envelope = ByteArray(14 + body.size)
+            envelope[0] = 1
+            for (i in 0..7) envelope[1 + i] =
+                (nowMs ushr ((7 - i) * 8)).toByte()
+            envelope[13] = type.toByte()
+            body.copyInto(envelope, 14)
+            val db = database.openHelper.writableDatabase
+            db.beginTransaction()
+            try {
+                val current = db.query(SimpleSQLiteQuery(
+                    "SELECT signedRoster FROM device_rosters WHERE accountEd=?",
+                    arrayOf(recipient))).use {
+                    if (it.moveToFirst()) it.getBlob(0) else null
+                }
+                require(current != null && current.contentEquals(signedRoster) &&
+                    roster.isLocalAuthorized(localAccount, identity.deviceId, 0x01, nowMs) &&
+                    peers.all { roster.isAuthorized(recipientAccount, it.deviceId, 0x01, nowMs) })
+                val contact = db.query(SimpleSQLiteQuery(
+                    "SELECT 1 FROM linked_chat_contacts WHERE account_ed=? AND blocked=0",
+                    arrayOf(recipient))).use { it.moveToFirst() }
+                require(contact) { "Linked contact changed while queueing" }
+                val capacity = db.query(SimpleSQLiteQuery(
+                    "SELECT COUNT(*),COALESCE(SUM(COALESCE(length(plaintext),0)+" +
+                        "COALESCE(length(wire),0)),0) FROM device_transport_jobs"
+                )).use { check(it.moveToFirst()); it.getLong(0) to it.getLong(1) }
+                require(capacity.first + peers.size <= 256 &&
+                    capacity.second + envelope.size.toLong() * peers.size <=
+                        64L * 1024 * 1024) { "Transport queue full" }
+                for (peer in peers) db.execSQL("INSERT INTO device_transport_jobs " +
+                    "(account_ed,peer_device_id,local_device_id,job_id,logical_id," +
+                    "session_id,plaintext,created_at_ms) VALUES (?,?,?,?,?,?,?,?)",
+                    arrayOf(recipient, peer.deviceId, identity.deviceId, job, logical,
+                        sessionIds.getValue(peer.deviceId), envelope, nowMs))
+                db.execSQL("INSERT INTO linked_chat_messages (message_id,account_ed," +
+                    "encrypted_content,type,sent_by_me,timestamp_ms,status," +
+                    "media_path,voice_duration,read,edited,imported) " +
+                    "VALUES (?,?,?,?,1,?,0,?,?,0,0,0)",
+                    arrayOf(logical, recipient,
+                        if (messageType == "TEXT") encryptText(text) else "",
+                        messageType, nowMs, mediaPath, voiceDuration))
+                db.execSQL("INSERT INTO device_sync_source_changes " +
+                    "(topic,object_id,kind,changed_at_ms) " +
+                    "VALUES ('messages',?,'body',?)", arrayOf(logical, nowMs))
+                db.setTransactionSuccessful()
+                return logical
+            } finally { db.endTransaction(); envelope.fill(0) }
+        }
+    }
+
     fun queueApplication(contact: Contact, text: String, body: ByteArray,
                   type: Int, ttlMs: Long?, readReceipt: Boolean,
                   replyTo: String? = null,

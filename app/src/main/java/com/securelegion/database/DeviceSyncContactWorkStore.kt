@@ -5,7 +5,8 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 /** Fresh contact captures precede a bounded initial seed; both are durable. */
 internal class DeviceSyncContactWorkStore(
     private val database: SecureLegionDatabase,
-    private val roster: DeviceRosterStore
+    private val roster: DeviceRosterStore,
+    private val linked: Boolean = false
 ) {
     data class Change(val sequence: Long, val objectId: String,
                       val kind: String, val attempts: Int)
@@ -100,8 +101,10 @@ internal class DeviceSyncContactWorkStore(
             "SELECT seed_after_id FROM device_sync_contact_peers WHERE peer_device_id=?",
             arrayOf(peerId))).use { if (it.moveToFirst()) it.getLong(0) else return null }
         if (afterId == Long.MAX_VALUE) return null
-        return db.query(SimpleSQLiteQuery(
-            "SELECT id,publicKeyBase64 FROM contacts WHERE id>? ORDER BY id LIMIT 1",
+        return db.query(SimpleSQLiteQuery(if (linked)
+            "SELECT rowid,account_ed FROM linked_chat_contacts " +
+                "WHERE rowid>? ORDER BY rowid LIMIT 1"
+            else "SELECT id,publicKeyBase64 FROM contacts WHERE id>? ORDER BY id LIMIT 1",
             arrayOf(afterId)
         )).use { if (it.moveToFirst()) Seed(it.getLong(0), it.getString(1)) else null }
     }

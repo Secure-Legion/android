@@ -13,9 +13,10 @@ import java.security.MessageDigest
 /** Bounded contact metadata preparation; a socket write never clears its outbox. */
 internal class DeviceSyncContactPublisher(
     private val database: SecureLegionDatabase,
-    private val roster: DeviceRosterStore
+    private val roster: DeviceRosterStore,
+    private val linked: Boolean = false
 ) {
-    private val work = DeviceSyncContactWorkStore(database, roster)
+    private val work = DeviceSyncContactWorkStore(database, roster, linked)
     private val outbox = DeviceSyncOutboxStore(database, roster)
     private val onion = Regex("[a-z2-7]{56}\\.onion")
 
@@ -62,7 +63,19 @@ internal class DeviceSyncContactPublisher(
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
         try {
-            val row = db.query(SimpleSQLiteQuery(
+            val row = if (linked) db.query(SimpleSQLiteQuery(
+                "SELECT rowid,display_name,account_ed,x25519," +
+                    "friend_request_onion,messaging_onion,created_at_ms " +
+                    "FROM linked_chat_contacts WHERE account_ed=? LIMIT 1",
+                arrayOf(objectId)
+            )).use { cursor ->
+                if (!cursor.moveToFirst()) null else ContactRow(cursor.getLong(0),
+                    cursor.getString(1), cursor.getString(2),
+                    Base64.encodeToString(cursor.getBlob(3), Base64.NO_WRAP),
+                    if (cursor.isNull(4)) null else cursor.getString(4),
+                    if (cursor.isNull(5)) null else cursor.getString(5),
+                    null, cursor.getLong(6), "CONFIRMED")
+            } else db.query(SimpleSQLiteQuery(
                 "SELECT id,displayName,publicKeyBase64,x25519PublicKeyBase64," +
                     "friendRequestOnion,messagingOnion,profilePictureBase64," +
                     "addedTimestamp,friendshipStatus FROM contacts " +
@@ -78,6 +91,13 @@ internal class DeviceSyncContactPublisher(
                     "WHERE topic='contacts' AND object_id=?", arrayOf(objectId)
             )).use { if (it.moveToFirst()) Revision(objectId, it.getLong(0),
                 it.getLong(1), it.getBlob(2), it.getBlob(3)) else null }
+            if (linked && old != null) {
+                // Linked contacts are controlled by authenticated own-device
+                // revisions. Relay their exact canonical snapshot, including
+                // avatar fields that this wallet-free projection does not need.
+                db.setTransactionSuccessful()
+                return old
+            }
             val delta = if (row == null) {
                 val deletedAt = db.query(SimpleSQLiteQuery(
                     "SELECT event_time_ms FROM device_sync_deletions WHERE " +
