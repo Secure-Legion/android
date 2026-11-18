@@ -13,6 +13,40 @@ import org.json.JSONObject
 class DeviceRosterStore(private val database: SecureLegionDatabase) {
     data class AcceptedRoster(val epoch: Long, val primaryDeviceId: String, val deviceIds: List<String>)
 
+    data class DeviceView(
+        val deviceId: String,
+        val displayName: String,
+        val onion: String,
+        val capabilities: Int,
+        val expiresAtMs: Long,
+        val isSelf: Boolean
+    )
+
+    fun fetchSignedRoster(pinnedAccount: ByteArray): ByteArray? {
+        require(pinnedAccount.size == 32)
+        val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT signedRoster FROM device_rosters WHERE accountEd = ?", arrayOf(account)
+        )).use { if (it.moveToFirst()) it.getBlob(0) else null }
+    }
+
+    fun listAuthorizedDevices(pinnedAccount: ByteArray): List<DeviceView> {
+        require(pinnedAccount.size == 32)
+        val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT deviceId,displayName,syncOnion,capabilities,expiresAtMs,isSelf " +
+                "FROM authorized_devices WHERE accountEd = ? ORDER BY isSelf DESC,displayName",
+            arrayOf(account)
+        )).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(DeviceView(
+                    cursor.getString(0), cursor.getString(1), cursor.getString(2),
+                    cursor.getInt(3), cursor.getLong(4), cursor.getInt(5) != 0
+                ))
+            }
+        }
+    }
+
     fun acceptSignedRoster(
         signedRoster: ByteArray,
         pinnedAccount: ByteArray,
@@ -61,7 +95,7 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
                 ids.add(id)
                 db.execSQL("INSERT INTO authorized_devices (deviceId,accountEd,displayName,syncOnion,deviceEd,deviceX,mlKemPublic,certificate,capabilities,issuedAtMs,expiresAtMs,rosterEpoch,isSelf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     arrayOf(
-                        id, account, entry.getString("name"), cert.getString("onion"),
+                        id, account, entry.getString("name"), cert.getString("onion") + ".onion",
                         Base64.decode(cert.getString("device_ed"), Base64.DEFAULT),
                         Base64.decode(cert.getString("device_x"), Base64.DEFAULT),
                         Base64.decode(entry.getString("ml_kem_public"), Base64.DEFAULT),
@@ -91,5 +125,15 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
             return it.moveToFirst() && it.getInt(0) and capability == capability &&
                 nowMs in 1 until it.getLong(1)
         }
+    }
+
+    fun isLocalAuthorized(pinnedAccount: ByteArray, deviceId: String, capability: Int,
+                          nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (!isAuthorized(pinnedAccount, deviceId, capability, nowMs)) return false
+        val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT isSelf FROM authorized_devices WHERE accountEd = ? AND deviceId = ?",
+            arrayOf(account, deviceId)
+        )).use { it.moveToFirst() && it.getInt(0) == 1 }
     }
 }
