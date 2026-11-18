@@ -2334,6 +2334,12 @@ impl TorManager {
             MSG_TYPE_CONTACT_LIST_PUSH => {
                 // Valid type, continue to length check
             }
+            0xA3..=0xA5 | 0xB0..=0xB7 => {
+                // Independent-device frames require a dedicated authorized
+                // endpoint. Never reinterpret one as a contact Ping.
+                log::warn!("Reserved device frame rejected on legacy listener: 0x{:02x}", msg_type);
+                return Err(format!("Reserved device frame: 0x{:02x}", msg_type).into());
+            }
             _ => {
                 log::error!("INVALID_MSG_TYPE_DROP: 0x{:02x} (not in known protocol types)", msg_type);
                 log::error!("Connection {}, {} bytes, first 4 bytes: {:02x} {:02x} {:02x} {:02x}",
