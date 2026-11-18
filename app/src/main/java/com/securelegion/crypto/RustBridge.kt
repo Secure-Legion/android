@@ -80,6 +80,9 @@ object RustBridge {
     external fun deviceHistoryIdentity(deltaJson: ByteArray, topic: String, objectId: String,
                                        eventTsMs: Long): ByteArray
 
+    /** Checks each signed CRDT envelope's real type before own-device group-link relay. */
+    external fun validateDeviceGroupLinkOps(packedOps: ByteArray): Boolean
+
     /**
      * Encrypt a message using XChaCha20-Poly1305 with X25519 ECDH
      * Uses proper ECDH to derive shared secret for encryption
