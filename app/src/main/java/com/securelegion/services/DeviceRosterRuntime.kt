@@ -21,6 +21,7 @@ import com.securelegion.sync.DeviceSyncTorPolicy
 import com.securelegion.sync.DeviceSyncAccountSettingsReceiver
 import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.DeviceSyncOutboxStore
+import com.securelegion.database.DeviceTransportSessionStore
 import com.securelegion.sync.DeviceSyncAccountSettingsPublisher
 import com.securelegion.sync.DeviceSyncOutboundWire
 import com.securelegion.sync.DeviceSyncContactReceiver
@@ -29,6 +30,8 @@ import com.securelegion.sync.DeviceSyncLiveMessageReceiver
 import com.securelegion.sync.DeviceSyncLiveReceiptReceiver
 import com.securelegion.sync.DeviceSyncMediaFiles
 import com.securelegion.sync.DeviceSyncLivePublisher
+import com.securelegion.sync.DeviceTransportFrame
+import com.securelegion.sync.DeviceChatPayloadStore
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -89,6 +92,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val livePublisher = DeviceSyncLivePublisher(context, database, roster, keyManager)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
+            val transport = DeviceTransportSessionStore(database, roster)
+            val chatPayloads = DeviceChatPayloadStore(keyManager::encryptDeviceSyncContent)
             val peerCapabilities = HashMap<String, Set<String>>()
             val lastHelloMs = HashMap<String, Long>()
             val receiptVerifier = DeviceEnrollmentReceiptVerifier(roster)
@@ -131,6 +136,39 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     }
                                 }
                                 0xA5 -> exchange.acceptAcknowledgment(frame, account)
+                                0xC0 -> {
+                                    val incoming = DeviceTransportFrame.parse(frame)
+                                    require(incoming.recipientAccount.contentEquals(account) &&
+                                        incoming.recipientDeviceId == identity.deviceId)
+                                    val peer = roster.authorizedPeer(incoming.senderAccount,
+                                        incoming.senderDeviceId, 0x01)
+                                        ?: throw IllegalArgumentException("Unknown C0 sender")
+                                    val reply = when (incoming.kind) {
+                                        DeviceTransportFrame.Kind.SESSION_REQUEST ->
+                                            transport.acceptRequest(incoming, identity)
+                                        DeviceTransportFrame.Kind.PREKEY -> {
+                                            transport.acceptPrekey(incoming, identity)
+                                            null
+                                        }
+                                        DeviceTransportFrame.Kind.DATA ->
+                                            transport.acceptData(incoming, identity,
+                                                { db, logicalId, plaintext ->
+                                                    chatPayloads.apply(db,
+                                                        incoming.senderAccount, logicalId, plaintext)
+                                                })
+                                        DeviceTransportFrame.Kind.DEVICE_STORAGE_ACK,
+                                        DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK -> {
+                                            transport.acceptAcknowledgment(incoming, identity)
+                                            null
+                                        }
+                                        else -> throw IllegalArgumentException("Unsupported C0 kind")
+                                    }
+                                    if (reply != null && SessionManager.isUnlocked(context) &&
+                                        roster.authorizedPeer(incoming.senderAccount,
+                                            incoming.senderDeviceId, 0x01)?.onion == peer.onion) {
+                                        RustBridge.sendDeviceOnionFrame(peer.onion, reply)
+                                    }
+                                }
                                 0xB6, 0xB7 -> {
                                     val peerId = DeviceSyncWireRoute.peerId(frame,
                                         identity.deviceId, account)
@@ -156,13 +194,15 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                     // Android advertises only the Tor skip policy until
                                                     // its transactional topic importers are live.
                                                     syncHost.noteCapabilities(peerId, hello.capabilities,
-                                                        setOf("tor_metadata_only_v1"))
+                                                        setOf("tor_metadata_only_v1",
+                                                            "contact_roster_v1"))
                                                     if (inner.kind == DeviceSyncFrameV2.Kind.HELLO) {
                                                         sendSyncApplication(syncHost, roster, account,
                                                             identity.deviceId, peerId, peer.onion,
                                                             DeviceSyncFrameV2.Kind.HELLO_ACK,
                                                             DeviceSyncHelloWire.payload(
-                                                                setOf("tor_metadata_only_v1"),
+                                                                setOf("tor_metadata_only_v1",
+                                                                    "contact_roster_v1"),
                                                                 cursorSnapshot(database, peerId)))
                                                     }
                                                 }
@@ -279,6 +319,25 @@ internal class DeviceRosterRuntime(private val context: Context) {
                             }
                         }
                         nextSendMs = now + 10_000L
+                        if (roster.isLocalAuthorized(account, identity.deviceId, 0x01, now)) {
+                            repeat(3) {
+                                if (transport.nextDataWire(account, identity,
+                                        draftOnly = true) == null) return@repeat
+                            }
+                            for (pending in transport.dueSends(identity, now)) {
+                                if (!SessionManager.isUnlocked(context) ||
+                                    !roster.isLocalAuthorized(account, identity.deviceId,
+                                        0x01, now)) break
+                                val frame = DeviceTransportFrame.parse(pending.wire)
+                                if (!frame.senderAccount.contentEquals(account) ||
+                                    roster.authorizedPeer(frame.recipientAccount,
+                                        pending.peerId, 0x01, now)?.onion != pending.onion) continue
+                                runCatching {
+                                    RustBridge.sendDeviceOnionFrame(pending.onion, pending.wire)
+                                }.onFailure { Log.w(TAG, "C0 send deferred: ${it.message}") }
+                                transport.recordSendAttempt(pending.wire, now)
+                            }
+                        }
                         runCatching {
                             settingsPublisher.capturePrimary(context, keyManager, now)
                         }.onFailure { Log.w(TAG, "Account setting capture deferred: ${it.message}") }
@@ -339,7 +398,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                             identity.deviceId, peer.deviceId, peer.onion,
                                             DeviceSyncFrameV2.Kind.HELLO,
                                             DeviceSyncHelloWire.payload(
-                                                setOf("tor_metadata_only_v1"),
+                                                setOf("tor_metadata_only_v1",
+                                                    "contact_roster_v1"),
                                                 cursorSnapshot(database, peer.deviceId)))) {
                                         lastHelloMs[peer.deviceId] = now
                                     }
@@ -347,7 +407,9 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                 if (control.ready && peerCapabilities[peer.deviceId]
                                         ?.contains("durable_history_v2") == true) {
                                     contactPublisher.prepareBatch(account, identity.deviceId,
-                                        peer.deviceId, now)
+                                        peer.deviceId, now,
+                                        peerCapabilities[peer.deviceId]
+                                            ?.contains("contact_roster_v1") == true)
                                     if (syncHost.liveNegotiated(peer.deviceId)) {
                                         livePublisher.prepareBatch(account, identity.deviceId,
                                             peer.deviceId, now)

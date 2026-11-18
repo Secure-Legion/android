@@ -130,6 +130,26 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
         nowMs: Long = System.currentTimeMillis(),
         pendingGrant: PendingGrant? = null
     ): AcceptedRoster {
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val result = acceptSignedRosterInTransaction(db, signedRoster,
+                pinnedAccount, localDeviceId, nowMs, pendingGrant)
+            db.setTransactionSuccessful()
+            return result
+        } finally { db.endTransaction() }
+    }
+
+    /** Verify and replace a pinned roster in the caller's contact import transaction. */
+    fun acceptSignedRosterInTransaction(
+        db: androidx.sqlite.db.SupportSQLiteDatabase,
+        signedRoster: ByteArray,
+        pinnedAccount: ByteArray,
+        localDeviceId: String?,
+        nowMs: Long,
+        pendingGrant: PendingGrant? = null
+    ): AcceptedRoster {
+        require(db.inTransaction())
         require(pinnedAccount.size == 32 && signedRoster.isNotEmpty() && signedRoster.size <= 32 * 1024)
         require(localDeviceId == null || localDeviceId.length == 43)
         require(nowMs in 1..9_007_199_254_740_991L)
@@ -137,9 +157,6 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
             pendingGrant.candidateDeviceId.length == 43 && pendingGrant.wireFrame.isNotEmpty() &&
             pendingGrant.wireFrame.size <= 393_221 && pendingGrant.expiresAtMs > nowMs))
         val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
-        val db = database.openHelper.writableDatabase
-        db.beginTransaction()
-        try {
             val previous = db.query(SimpleSQLiteQuery(
                 "SELECT signedRoster FROM device_rosters WHERE accountEd = ?", arrayOf(account)
             )).use { if (it.moveToFirst()) it.getBlob(0) else null }
@@ -233,11 +250,17 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
                         pendingGrant.candidateDeviceId, pendingGrant.wireFrame,
                         pendingGrant.expiresAtMs, nowMs))
             }
-            db.setTransactionSuccessful()
+            if (localDeviceId == null &&
+                (previous == null || !previous.contentEquals(signedRoster))) {
+                val pinnedContact = db.query(SimpleSQLiteQuery(
+                    "SELECT 1 FROM contacts WHERE publicKeyBase64=? LIMIT 1",
+                    arrayOf(account)
+                )).use { it.moveToFirst() }
+                if (pinnedContact) db.execSQL("INSERT INTO device_sync_source_changes " +
+                    "(topic,object_id,kind,changed_at_ms) VALUES ('contacts',?,'upsert',?)",
+                    arrayOf(account, nowMs))
+            }
             return AcceptedRoster(epoch, primary, ids)
-        } finally {
-            db.endTransaction()
-        }
     }
 
     /** Check immediately before a send, receive, retry, ACK, or sync apply. */

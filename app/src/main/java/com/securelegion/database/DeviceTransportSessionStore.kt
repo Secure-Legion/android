@@ -184,20 +184,26 @@ internal class DeviceTransportSessionStore(
                      nowMs: Long = System.currentTimeMillis()): ByteArray {
         require(localAccount.size == 32 && recipientAccount.size == 32 &&
             plaintext.isNotEmpty() && plaintext.size <= 5 * 1024 * 1024)
+        val sessionId = request(localAccount, recipientAccount, peerId, identity, nowMs).sessionId
         authorize(localAccount, identity.deviceId, recipientAccount, peerId, nowMs)
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
         try {
             authorize(localAccount, identity.deviceId, recipientAccount, peerId, nowMs)
             val session = db.query(SimpleSQLiteQuery(
-                "SELECT session_id,prekey_wire FROM device_transport_sessions WHERE account_ed=? " +
-                    "AND peer_device_id=? AND local_device_id=? AND direction='tx' " +
-                    "AND state='ready' ORDER BY generation DESC LIMIT 1",
-                arrayOf(encoded(recipientAccount), peerId, identity.deviceId)
+                "SELECT session_id,prekey_wire,state FROM device_transport_sessions WHERE account_ed=? " +
+                    "AND peer_device_id=? AND local_device_id=? AND session_id=? AND direction='tx' " +
+                    "AND state IN ('requested','ready') LIMIT 1",
+                arrayOf(encoded(recipientAccount), peerId, identity.deviceId, sessionId)
             )).use { if (it.moveToFirst()) it.getBlob(0) to it.getBlob(1) else null }
-                ?: throw IllegalStateException("No ready transport session")
-            require(DeviceTransportFrame.parse(session.second).recipientAccount
-                .contentEquals(localAccount)) { "Account does not own transport session" }
+                ?: throw IllegalStateException("No active transport session")
+            val sessionFrame = DeviceTransportFrame.parse(session.second)
+            require((sessionFrame.kind == DeviceTransportFrame.Kind.SESSION_REQUEST &&
+                sessionFrame.senderAccount.contentEquals(localAccount)) ||
+                (sessionFrame.kind == DeviceTransportFrame.Kind.PREKEY &&
+                    sessionFrame.recipientAccount.contentEquals(localAccount))) {
+                "Account does not own transport session"
+            }
             val jobId = DeviceTransportFrame.randomId()
             val logicalId = DeviceTransportFrame.logicalId(localAccount, identity.deviceId, jobId)
             db.execSQL("INSERT INTO device_transport_jobs " +
@@ -211,7 +217,8 @@ internal class DeviceTransportSessionStore(
     }
 
     /** Return the oldest exact wire for retry, sealing a queued draft when necessary. */
-    fun nextDataWire(localAccount: ByteArray, identity: LocalDeviceIdentity): ByteArray? {
+    fun nextDataWire(localAccount: ByteArray, identity: LocalDeviceIdentity,
+                     draftOnly: Boolean = false): ByteArray? {
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
         try {
@@ -222,8 +229,9 @@ internal class DeviceTransportSessionStore(
                     "s.account_ed=j.account_ed AND s.peer_device_id=j.peer_device_id AND " +
                     "s.local_device_id=j.local_device_id AND s.session_id=j.session_id " +
                     "AND s.direction='tx' WHERE j.local_device_id=? AND s.state='ready' " +
+                    "AND (?=0 OR j.wire IS NULL) " +
                     "ORDER BY j.created_at_ms LIMIT 1",
-                arrayOf(identity.deviceId)
+                arrayOf(identity.deviceId, if (draftOnly) 1 else 0)
             )).use { c ->
                 if (!c.moveToFirst()) null else DataDraft(c.getString(0), c.getString(1),
                     c.getBlob(2), c.getBlob(3), if (c.isNull(4)) null else c.getBlob(4),
@@ -264,6 +272,68 @@ internal class DeviceTransportSessionStore(
                 db.setTransactionSuccessful()
                 return frame.wire
             } finally { encrypted.evolvedChainKey.fill(0) }
+        } finally { db.endTransaction() }
+    }
+
+    data class PendingSend(val peerId: String, val onion: String, val wire: ByteArray)
+
+    fun dueSends(identity: LocalDeviceIdentity, nowMs: Long = System.currentTimeMillis(),
+                 limit: Int = 24): List<PendingSend> {
+        require(limit in 1..64)
+        val db = database.openHelper.readableDatabase
+        val requests = db.query(SimpleSQLiteQuery(
+            "SELECT s.account_ed,s.peer_device_id,a.syncOnion,s.prekey_wire " +
+                "FROM device_transport_sessions s JOIN authorized_devices a " +
+                "ON a.accountEd=s.account_ed AND a.deviceId=s.peer_device_id " +
+                "WHERE s.local_device_id=? AND s.direction='tx' AND s.state='requested' " +
+                "AND a.expiresAtMs>? AND (a.capabilities & 1)=1 " +
+                "ORDER BY s.created_at_ms LIMIT ?",
+            arrayOf(identity.deviceId, nowMs, limit)
+        )).use { c -> buildList {
+            while (c.moveToNext()) {
+                val account = Base64.getDecoder().decode(c.getString(0))
+                if (roster.isAuthorized(account, c.getString(1), 0x01, nowMs))
+                    add(PendingSend(c.getString(1), c.getString(2), c.getBlob(3)))
+            }
+        } }
+        if (requests.size >= limit) return requests
+        val jobs = db.query(SimpleSQLiteQuery(
+            "SELECT j.account_ed,j.peer_device_id,a.syncOnion,j.wire " +
+                "FROM device_transport_jobs j JOIN authorized_devices a " +
+                "ON a.accountEd=j.account_ed AND a.deviceId=j.peer_device_id " +
+                "WHERE j.local_device_id=? AND j.wire IS NOT NULL " +
+                "AND j.next_try_at_ms<=? AND a.expiresAtMs>? AND (a.capabilities & 1)=1 " +
+                "ORDER BY j.next_try_at_ms,j.created_at_ms LIMIT ?",
+            arrayOf(identity.deviceId, nowMs, nowMs, limit - requests.size)
+        )).use { c -> buildList {
+            while (c.moveToNext()) {
+                val account = Base64.getDecoder().decode(c.getString(0))
+                if (roster.isAuthorized(account, c.getString(1), 0x01, nowMs))
+                    add(PendingSend(c.getString(1), c.getString(2), c.getBlob(3)))
+            }
+        } }
+        return requests + jobs
+    }
+
+    fun recordSendAttempt(wire: ByteArray, nowMs: Long = System.currentTimeMillis()) {
+        val frame = DeviceTransportFrame.parse(wire)
+        if (frame.kind != DeviceTransportFrame.Kind.DATA) return
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val account = encoded(frame.recipientAccount)
+            val attempts = db.query(SimpleSQLiteQuery(
+                "SELECT attempts FROM device_transport_jobs WHERE account_ed=? " +
+                    "AND peer_device_id=? AND job_id=? AND wire_hash=?",
+                arrayOf(account, frame.recipientDeviceId, frame.jobId, frame.exactWireHash)
+            )).use { if (it.moveToFirst()) it.getInt(0) else null } ?: return
+            val delays = longArrayOf(2_000, 5_000, 10_000, 30_000, 60_000, 120_000)
+            db.execSQL("UPDATE device_transport_jobs SET attempts=attempts+1," +
+                "next_try_at_ms=? WHERE account_ed=? AND peer_device_id=? " +
+                "AND job_id=? AND wire_hash=?",
+                arrayOf(nowMs + delays[attempts.coerceIn(0, delays.lastIndex)], account,
+                    frame.recipientDeviceId, frame.jobId, frame.exactWireHash))
+            db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
 

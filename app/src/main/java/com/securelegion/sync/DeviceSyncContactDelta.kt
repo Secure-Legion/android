@@ -11,7 +11,8 @@ internal object DeviceSyncContactDelta {
                        val displayName: String?, val messagingOnion: String?,
                        val friendRequestOnion: String?, val createdAtMs: Long?,
                        val avatar: String?, val avatarPresent: Boolean,
-                       val profileVersion: Version?, val deleted: Boolean)
+                       val profileVersion: Version?, val deviceRoster: ByteArray?,
+                       val deleted: Boolean)
 
     private val upsertFields = setOf("public_key", "x25519_pub", "display_name",
         "messaging_onion", "friend_request_onion", "friendship_status", "created_at")
@@ -24,10 +25,11 @@ internal object DeviceSyncContactDelta {
         if (delta.opt("deleted") == true) {
             require(fields == setOf("public_key", "deleted"))
             return Contact(publicKey, null, null, null, null, null,
-                null, false, null, true)
+                null, false, null, null, true)
         }
         require(fields.containsAll(upsertFields) &&
-            fields.all { it in upsertFields || it == "avatar" || it == "profile_version" })
+            fields.all { it in upsertFields || it in setOf("avatar",
+                "profile_version", "device_roster") })
         require(delta.opt("x25519_pub") is String && delta.opt("display_name") is String)
         val x = decodeKey(delta.getString("x25519_pub"))
         val name = delta.getString("display_name")
@@ -65,8 +67,16 @@ internal object DeviceSyncContactDelta {
                 eventId.isNotEmpty() && eventId.length <= 256)
             Version(timestamp, eventId)
         } else null
+        val deviceRoster = if (delta.has("device_roster")) {
+            val encoded = delta.getString("device_roster")
+            require(encoded.length in 1..43_692)
+            Base64.getDecoder().decode(encoded).also {
+                require(it.isNotEmpty() && it.size <= 32 * 1024 &&
+                    Base64.getEncoder().encodeToString(it) == encoded)
+            }
+        } else null
         return Contact(publicKey, x, name, messaging, friendRequest,
-            createdAt, avatar, avatarPresent, profileVersion, false)
+            createdAt, avatar, avatarPresent, profileVersion, deviceRoster, false)
     }
 
     private fun decodeKey(encoded: String): ByteArray {

@@ -7,6 +7,8 @@ import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceTransportSessionStore
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.entities.Contact
+import com.securelegion.sync.DeviceChatPayloadStore
 import com.securelegion.sync.DeviceTransportFrame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
@@ -14,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.Base64
+import kotlinx.coroutines.runBlocking
 
 @RunWith(AndroidJUnit4::class)
 class DeviceTransportHandshakeDeviceTest {
@@ -22,10 +25,16 @@ class DeviceTransportHandshakeDeviceTest {
         val database = SecureLegionDatabase.getInstance(instrument.targetContext,
             ByteArray(32) { 0x53 })
         val db = database.openHelper.writableDatabase
-        val accountA = ByteArray(32) { 0x21 }
-        val accountB = ByteArray(32) { 0x22 }
+        val accountA = DeviceTransportFrame.randomId()
+        val accountB = DeviceTransportFrame.randomId()
         val now = System.currentTimeMillis()
-        LocalDeviceIdentity.loadOrCreate(instrument.targetContext).use { sender ->
+        val contactId = runBlocking { database.contactDao().insertContact(Contact(
+            displayName = "C0 Test", solanaAddress = "test_" +
+                Base64.getUrlEncoder().withoutPadding().encodeToString(accountA),
+            publicKeyBase64 = Base64.getEncoder().encodeToString(accountA),
+            x25519PublicKeyBase64 = Base64.getEncoder().encodeToString(ByteArray(32) { 4 }),
+            addedTimestamp = now, friendshipStatus = "CONFIRMED")) }
+        try { LocalDeviceIdentity.loadOrCreate(instrument.targetContext).use { sender ->
             LocalDeviceIdentity.createEphemeral().use { receiver ->
                 require(sender.deviceId != receiver.deviceId)
                 try {
@@ -52,11 +61,15 @@ class DeviceTransportHandshakeDeviceTest {
                         .contentEquals(prekeyWire))
                     val prekey = DeviceTransportFrame.parse(prekeyWire)
                     assertTrue(prekey.verify(receiver.signingPublicKey))
-                    sessions.acceptPrekey(prekey, sender, now)
-                    sessions.acceptPrekey(prekey, sender, now)
-                    val payload = byteArrayOf(0, 1, 2, -1, 0, 9)
+                    val payload = ByteArray(19)
+                    payload[0] = 1
+                    for (i in 0..7) payload[1 + i] = (now ushr ((7 - i) * 8)).toByte()
+                    "hello".toByteArray().copyInto(payload, 14)
                     val job = sessions.queuePayload(accountA, accountB,
                         receiver.deviceId, payload, sender, now)
+                    assertEquals(null, sessions.nextDataWire(accountA, sender))
+                    sessions.acceptPrekey(prekey, sender, now)
+                    sessions.acceptPrekey(prekey, sender, now)
                     val dataWire = sessions.nextDataWire(accountA, sender)!!
                     assertArrayEquals(dataWire, sessions.nextDataWire(accountA, sender))
                     val data = DeviceTransportFrame.parse(dataWire)
@@ -65,11 +78,19 @@ class DeviceTransportHandshakeDeviceTest {
                     val ackWire = sessions.acceptData(data, receiver, { _, _, plain ->
                         assertArrayEquals(payload, plain)
                         commits++
-                        true
+                        DeviceChatPayloadStore { "ENC1:test-$it" }.apply(db,
+                            accountA, DeviceTransportFrame.logicalId(accountA,
+                                sender.deviceId, job), plain, now)
                     }, now)
                     assertArrayEquals(ackWire, sessions.acceptData(data, receiver,
                         { _, _, _ -> error("Duplicate commit") }, now))
                     assertEquals(1, commits)
+                    db.query(SimpleSQLiteQuery("SELECT encryptedContent FROM messages " +
+                        "WHERE messageId=?", arrayOf(DeviceTransportFrame.logicalId(
+                            accountA, sender.deviceId, job)))).use {
+                        assertTrue(it.moveToFirst())
+                        assertEquals("ENC1:test-hello", it.getString(0))
+                    }
                     val ack = DeviceTransportFrame.parse(ackWire)
                     assertEquals(DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK, ack.kind)
                     sessions.acceptAcknowledgment(ack, sender, now)
@@ -112,5 +133,6 @@ class DeviceTransportHandshakeDeviceTest {
                 }
             }
         }
+        } finally { db.execSQL("DELETE FROM contacts WHERE id=?", arrayOf(contactId)) }
     }
 }

@@ -9,7 +9,9 @@ plugins {
 }
 
 // Load keystore properties
-val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystorePropertiesFile = rootProject.file("keystore.properties").let { local ->
+    if (local.exists()) local else rootProject.projectDir.parentFile.resolve("keystore.properties")
+}
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
@@ -33,7 +35,7 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 36
+        versionCode = 38
         versionName = "1.0.0"
 
         // Keep the package aligned with the native build matrix. The removed legacy x86 binary
@@ -52,7 +54,8 @@ android {
     signingConfigs {
         create("release") {
             if (keystorePropertiesFile.exists()) {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storeFile = keystorePropertiesFile.parentFile.resolve(
+                    keystoreProperties.getProperty("storeFile"))
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")

@@ -20,13 +20,15 @@ internal class DeviceSyncContactPublisher(
     private val onion = Regex("[a-z2-7]{56}\\.onion")
 
     fun prepareBatch(accountEd: ByteArray, localId: String, peerId: String,
-                     nowMs: Long = System.currentTimeMillis()) {
+                     nowMs: Long = System.currentTimeMillis(),
+                     contactRosterNegotiated: Boolean = false) {
         work.initialize(accountEd, localId, peerId, nowMs)
         work.discover(accountEd, localId, peerId, nowMs)
         for (change in work.due(peerId, nowMs)) {
             try {
                 val revision = capture(change.objectId, nowMs)
-                if (revision != null) queue(accountEd, localId, peerId, revision, nowMs)
+                if (revision != null) queue(accountEd, localId, peerId, revision, nowMs,
+                    contactRosterNegotiated)
                 work.completeChange(peerId, change.sequence)
             } catch (_: Exception) {
                 work.defer(peerId, change.sequence, change.attempts, nowMs)
@@ -36,7 +38,8 @@ internal class DeviceSyncContactPublisher(
         if (seed != null) {
             try {
                 val revision = capture(seed.objectId, nowMs)
-                if (revision != null) queue(accountEd, localId, peerId, revision, nowMs)
+                if (revision != null) queue(accountEd, localId, peerId, revision, nowMs,
+                    contactRosterNegotiated)
                 work.completeSeed(peerId, seed.contactId)
             } catch (_: Exception) {
                 // Keep the seed cursor: a transient failure must not lose this contact.
@@ -45,7 +48,8 @@ internal class DeviceSyncContactPublisher(
             val deletion = work.nextDeletionSeed(peerId) ?: return
             try {
                 val revision = capture(deletion, nowMs)
-                if (revision != null) queue(accountEd, localId, peerId, revision, nowMs)
+                if (revision != null) queue(accountEd, localId, peerId, revision, nowMs,
+                    contactRosterNegotiated)
                 work.completeDeletionSeed(peerId, deletion)
             } catch (_: Exception) {
                 // Retain this tombstone for the next old-work turn.
@@ -155,15 +159,26 @@ internal class DeviceSyncContactPublisher(
     }
 
     private fun queue(accountEd: ByteArray, localId: String, peerId: String,
-                      revision: Revision, nowMs: Long) {
+                      revision: Revision, nowMs: Long,
+                      contactRosterNegotiated: Boolean) {
         require(roster.isLocalAuthorized(accountEd, localId, 0x02, nowMs) &&
             roster.isAuthorized(accountEd, peerId, 0x02, nowMs))
         val db = database.openHelper.readableDatabase
-        val identity = RustBridge.deviceHistoryIdentity(revision.delta, "contacts",
+        val publicRoster = if (contactRosterNegotiated &&
+            runCatching { java.util.Base64.getDecoder().decode(revision.objectId).size == 32 }
+                .getOrDefault(false)) roster.fetchSignedRoster(
+                    java.util.Base64.getDecoder().decode(revision.objectId)) else null
+        val delta = if (publicRoster != null &&
+            !JSONObject(revision.delta.toString(Charsets.UTF_8)).optBoolean("deleted")) {
+            JSONObject(revision.delta.toString(Charsets.UTF_8))
+                .put("device_roster", java.util.Base64.getEncoder().encodeToString(publicRoster))
+                .toString().toByteArray(Charsets.UTF_8)
+        } else revision.delta
+        val identity = RustBridge.deviceHistoryIdentity(delta, "contacts",
             revision.objectId, revision.eventTimeMs)
         try {
-            require(identity.size >= 66 && identity.copyOfRange(0, 32)
-                .contentEquals(revision.digest))
+            require(identity.size >= 66)
+            val digest = identity.copyOfRange(0, 32)
             val eventId = identity.copyOfRange(32, 64).toHex()
             val pending = db.query(SimpleSQLiteQuery(
                 "SELECT event_id FROM device_sync_outbox WHERE peer_device_id=? " +
@@ -183,9 +198,9 @@ internal class DeviceSyncContactPublisher(
                 arrayOf(peerId, revision.objectId)
             )).use { if (it.moveToFirst()) it.getLong(0) to it.getBlob(1) else null }
             if (observed != null && observed.first == revision.eventTimeMs &&
-                observed.second.contentEquals(revision.digest)) return
+                observed.second.contentEquals(digest)) return
             outbox.enqueue(accountEd, localId, peerId, "contacts", revision.objectId,
-                revision.eventTimeMs, revision.sequence, revision.delta,
+                revision.eventTimeMs, revision.sequence, identity.copyOfRange(64, identity.size),
                 DeviceSyncOutboxStore.Transport.TOR, nowMs = nowMs)
         } finally { identity.fill(0) }
     }

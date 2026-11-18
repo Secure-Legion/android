@@ -26,6 +26,7 @@ internal class DeviceSyncContactReceiver(
             val contact = DeviceSyncContactDelta.parse(
                 JSONObject(canonical.toString(Charsets.UTF_8)), nowMs)
             require(Base64.encodeToString(contact.publicKey, Base64.NO_WRAP) == part.objectId)
+            require(!contact.publicKey.contentEquals(accountEd))
             applyVersioned(db, part, contact, canonical, nowMs)
         }
     }
@@ -71,6 +72,7 @@ internal class DeviceSyncContactReceiver(
                 val contact = DeviceSyncContactDelta.parse(
                     JSONObject(row.delta.toString(Charsets.UTF_8)), nowMs)
                 require(Base64.encodeToString(contact.publicKey, Base64.NO_WRAP) == row.objectId)
+                require(!contact.publicKey.contentEquals(accountEd))
                 val part = DeviceSyncChunkStore.Part(row.peer, "contacts", row.objectId,
                     row.eventId, row.digest.toHex(), row.eventTimeMs, row.sequence,
                     0, 1, row.delta)
@@ -112,6 +114,12 @@ internal class DeviceSyncContactReceiver(
             )).use { if (it.moveToFirst()) it.getString(0) else null }
             if (pinnedX != null) require(Base64.decode(pinnedX, Base64.NO_WRAP)
                 .contentEquals(contact.x25519Key!!)) { "Contact account key rebind" }
+            if (contact.deviceRoster != null && pinnedX != null) {
+                // The contact identity was pinned independently. The signed
+                // roster is verified and replaced under this same SQL transaction.
+                roster.acceptSignedRosterInTransaction(db, contact.deviceRoster,
+                    contact.publicKey, null, nowMs)
+            }
         }
         val digest = ByteArray(32) { i ->
             part.digestHex.substring(i * 2, i * 2 + 2).toInt(16).toByte()

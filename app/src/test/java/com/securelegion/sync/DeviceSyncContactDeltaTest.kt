@@ -2,6 +2,7 @@ package com.securelegion.sync
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.util.Base64
@@ -30,6 +31,20 @@ class DeviceSyncContactDeltaTest {
         assertThrows(IllegalArgumentException::class.java) {
             DeviceSyncContactDelta.parse(upsert().put("profile_version",
                 JSONObject().put("timestamp", now).put("event_id", "v1")), now)
+        }
+    }
+
+    @Test fun acceptsOnlyCanonicalBoundedPublicRosterBytes() {
+        val roster = ByteArray(64) { it.toByte() }
+        val encoded = Base64.getEncoder().encodeToString(roster)
+        assertArrayEquals(roster, DeviceSyncContactDelta.parse(
+            upsert().put("device_roster", encoded), now).deviceRoster)
+        assertThrows(IllegalArgumentException::class.java) {
+            DeviceSyncContactDelta.parse(upsert().put("device_roster", encoded.trimEnd('=')), now)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DeviceSyncContactDelta.parse(upsert().put("device_roster",
+                Base64.getEncoder().encodeToString(ByteArray(32 * 1024 + 1))), now)
         }
     }
 

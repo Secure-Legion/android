@@ -8,7 +8,8 @@ internal object OwnDeviceSyncPolicy {
         "MemberRemove", "MemberUnban", "MetadataSet", "RoleSet"
     )
 
-    fun isReservedNetworkType(type: Int): Boolean = type in 0xA3..0xA5 || type in 0xB0..0xB7
+    fun isReservedNetworkType(type: Int): Boolean =
+        type in 0xA3..0xA5 || type in 0xB0..0xB7 || type == 0xC0
 
     fun canSendTorTopic(topic: String): Boolean = topic in torTopics
 
