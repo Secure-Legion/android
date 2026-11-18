@@ -54,7 +54,8 @@ bulk history and full groups remain Nearby-only.
 - Complete receipt chunks can now be applied under the authenticated roster
   check with exact version/cursor storage; missing-message receipts are kept
   in an encrypted pending row with `is_live=1` and receive no settlement. A
-  pending-row replay worker is still required after message import.
+  bounded replay method rechecks authorization and the event identity after
+  message import; its network worker and settlement dispatch are not wired yet.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.

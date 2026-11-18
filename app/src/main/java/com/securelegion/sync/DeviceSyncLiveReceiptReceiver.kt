@@ -2,6 +2,7 @@ package com.securelegion.sync
 
 import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.SecureLegionDatabase
@@ -10,9 +11,11 @@ import org.json.JSONObject
 /** Complete live receipt chunks only; caller supplies authenticated B6/B7 identity. */
 internal class DeviceSyncLiveReceiptReceiver(
     private val database: SecureLegionDatabase,
-    roster: DeviceRosterStore
+    private val roster: DeviceRosterStore
 ) {
     private val chunks = DeviceSyncChunkStore(database, roster)
+    data class Applied(val peerDeviceId: String, val objectId: String,
+                       val eventId: String, val digestHex: String, val eventTimeMs: Long)
 
     fun receive(accountEd: ByteArray, localDeviceId: String,
                 part: DeviceSyncChunkStore.Part, liveNegotiated: Boolean,
@@ -25,6 +28,65 @@ internal class DeviceSyncLiveReceiptReceiver(
             require(receipt.messageId == part.objectId)
             applyVersioned(db, part, receipt, canonical, nowMs)
         }
+    }
+
+    /** Missing-message rows are retried after imports; each row is independent. */
+    fun drainPending(accountEd: ByteArray, localDeviceId: String,
+                     liveNegotiated: (String) -> Boolean,
+                     nowMs: Long = System.currentTimeMillis()): List<Applied> {
+        val db = database.openHelper.writableDatabase
+        val committed = ArrayList<Applied>()
+        var lastId = 0L
+        while (true) {
+            val rows = db.query(SimpleSQLiteQuery(
+                "SELECT id,peer_device_id,object_id,sequence,event_time_ms,delta_json,event_id,digest " +
+                    "FROM device_sync_pending WHERE id>? AND topic='receipts' AND is_live=1 " +
+                    "ORDER BY id LIMIT 25", arrayOf(lastId)
+            )).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) add(Pending(cursor.getLong(0), cursor.getString(1),
+                        cursor.getString(2), cursor.getLong(3), cursor.getLong(4),
+                        cursor.getBlob(5), cursor.getString(6), cursor.getBlob(7)))
+                }
+            }
+            if (rows.isEmpty()) break
+            for (row in rows) {
+                lastId = row.id
+                if (!liveNegotiated(row.peer) ||
+                    !roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) ||
+                    !roster.isAuthorized(accountEd, row.peer, 0x02, nowMs)) continue
+                try {
+                    require(row.eventId.matches(Regex("[0-9a-f]{64}")) &&
+                        row.digest.size == 32 && row.delta.size in 2..1024)
+                    val identity = RustBridge.deviceHistoryIdentity(row.delta, "receipts",
+                        row.objectId, row.eventTimeMs)
+                    require(identity.size >= 66 && identity.copyOfRange(0, 32)
+                        .contentEquals(row.digest) && identity.copyOfRange(32, 64)
+                        .toHex() == row.eventId)
+                    val receipt = DeviceSyncReceiptDelta.parse(
+                        JSONObject(row.delta.toString(Charsets.UTF_8)))
+                    require(receipt.messageId == row.objectId)
+                    val part = DeviceSyncChunkStore.Part(row.peer, "receipts", row.objectId,
+                        row.eventId, row.digest.toHex(), row.eventTimeMs, row.sequence,
+                        0, 1, row.delta)
+                    db.beginTransaction()
+                    try {
+                        require(liveNegotiated(row.peer) &&
+                            roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) &&
+                            roster.isAuthorized(accountEd, row.peer, 0x02, nowMs))
+                        val applied = applyVersioned(db, part, receipt, row.delta, nowMs)
+                        if (applied) db.execSQL("DELETE FROM device_sync_pending WHERE id=?",
+                            arrayOf(row.id))
+                        db.setTransactionSuccessful()
+                        if (applied) committed.add(Applied(row.peer, row.objectId,
+                            row.eventId, row.digest.toHex(), row.eventTimeMs))
+                    } finally { db.endTransaction() }
+                } catch (_: Exception) {
+                    // Keep this row for repair while later dependencies proceed.
+                }
+            }
+        }
+        return committed
     }
 
     private fun applyVersioned(db: SupportSQLiteDatabase, part: DeviceSyncChunkStore.Part,
@@ -44,7 +106,12 @@ internal class DeviceSyncLiveReceiptReceiver(
             require(previous.first != part.eventTimeMs || previous.second.contentEquals(digest)) {
                 "Conflicting receipt revision"
             }
-            if (previous.first >= part.eventTimeMs) return true
+            if (previous.first >= part.eventTimeMs) {
+                db.execSQL("DELETE FROM device_sync_pending WHERE peer_device_id=? " +
+                    "AND topic='receipts' AND object_id=? AND event_time_ms<=?",
+                    arrayOf(part.peerDeviceId, part.objectId, part.eventTimeMs))
+                return true
+            }
         }
         if (!DeviceSyncReceiptDelta.applyInTransaction(db, receipt)) {
             val pending = db.query(SimpleSQLiteQuery(
@@ -85,4 +152,10 @@ internal class DeviceSyncLiveReceiptReceiver(
             arrayOf(part.peerDeviceId, part.objectId, part.eventTimeMs))
         return true
     }
+
+    private data class Pending(val id: Long, val peer: String, val objectId: String,
+                               val sequence: Long, val eventTimeMs: Long, val delta: ByteArray,
+                               val eventId: String, val digest: ByteArray)
+
+    private fun ByteArray.toHex() = joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
