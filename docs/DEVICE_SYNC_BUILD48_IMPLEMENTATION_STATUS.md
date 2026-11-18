@@ -9,6 +9,12 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 - Independent protected per-installation keys and signed roster validation.
 - Transactional roster replacement, removed-device queue purge, and pending
   notification/grant storage.
+- Unlocked primary profile bootstraps its independent identity and signed roster.
+- Isolated device-onion A4/A5 listener, roster notification retry, and exact
+  signed receipt verification. Enrollment and Noise frames are still closed.
+- Bounded verified history chunk assembly and exact durable settlement parsing.
+- Tor UI reports connected from verified transport state instead of a fresh
+  own-onion self-test.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
@@ -20,7 +26,7 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 
 1. Complete A3 owner/candidate enrollment and recovery, both user approvals,
    full ML-KEM key proof, exact grant retry, and committed receipt recovery.
-2. Wire A4/A5 roster distribution and receipts to the isolated device onion.
+2. Extend A4/A5 operation to linked profiles after candidate activation works.
 3. Support linked-candidate startup with an independent local DB key and public
    account binding, without copying the account seed or contact ratchets.
 4. Connect the Noise host to a bounded device-onion sender/receiver worker with
