@@ -1,0 +1,81 @@
+package com.securelegion
+
+import androidx.sqlite.db.SimpleSQLiteQuery
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.securelegion.crypto.LocalDeviceIdentity
+import com.securelegion.database.DeviceRosterStore
+import com.securelegion.database.DeviceTransportSessionStore
+import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.sync.DeviceTransportFrame
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.util.Base64
+
+@RunWith(AndroidJUnit4::class)
+class DeviceTransportHandshakeDeviceTest {
+    @Test fun independentIdentitiesPersistRequestPrekeyAndReadyChain() {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        val database = SecureLegionDatabase.getInstance(instrument.targetContext,
+            ByteArray(32) { 0x53 })
+        val db = database.openHelper.writableDatabase
+        val accountA = ByteArray(32) { 0x21 }
+        val accountB = ByteArray(32) { 0x22 }
+        val now = System.currentTimeMillis()
+        LocalDeviceIdentity.loadOrCreate(instrument.targetContext).use { sender ->
+            LocalDeviceIdentity.createEphemeral().use { receiver ->
+                require(sender.deviceId != receiver.deviceId)
+                try {
+                    for ((identity, account) in listOf(sender to accountA,
+                            receiver to accountB)) {
+                        db.execSQL("INSERT OR REPLACE INTO authorized_devices " +
+                            "(deviceId,accountEd,displayName,syncOnion,deviceEd,deviceX," +
+                            "mlKemPublic,certificate,capabilities,issuedAtMs,expiresAtMs," +
+                            "rosterEpoch,isSelf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            arrayOf(identity.deviceId,
+                                Base64.getEncoder().encodeToString(account), "test",
+                                identity.onionAddress, identity.signingPublicKey,
+                                identity.encryptionPublicKey, ByteArray(1), ByteArray(1),
+                                1, now - 1_000, now + 60_000, 1, 1))
+                    }
+                    val sessions = DeviceTransportSessionStore(database,
+                        DeviceRosterStore(database))
+                    val request = sessions.request(accountA, accountB,
+                        receiver.deviceId, sender, now)
+                    val requestFrame = DeviceTransportFrame.parse(request.wire)
+                    assertTrue(requestFrame.verify(sender.signingPublicKey))
+                    val prekeyWire = sessions.acceptRequest(requestFrame, receiver, now)
+                    assertTrue(sessions.acceptRequest(requestFrame, receiver, now)
+                        .contentEquals(prekeyWire))
+                    val prekey = DeviceTransportFrame.parse(prekeyWire)
+                    assertTrue(prekey.verify(receiver.signingPublicKey))
+                    sessions.acceptPrekey(prekey, sender, now)
+                    sessions.acceptPrekey(prekey, sender, now)
+                    db.query(SimpleSQLiteQuery("SELECT state,length(chain_key)," +
+                        "length(initial_cipher) FROM device_transport_sessions " +
+                        "WHERE account_ed=? AND peer_device_id=? AND direction='tx'",
+                        arrayOf(Base64.getEncoder().encodeToString(accountB),
+                            receiver.deviceId))).use {
+                        assertTrue(it.moveToFirst())
+                        assertEquals("ready", it.getString(0))
+                        assertEquals(32, it.getInt(1))
+                        assertEquals(1600, it.getInt(2))
+                    }
+                } finally {
+                    for ((account, peerId) in listOf(accountA to sender.deviceId,
+                            accountB to receiver.deviceId)) {
+                        val encoded = Base64.getEncoder().encodeToString(account)
+                        for (table in listOf("device_transport_sessions",
+                                "device_transport_epochs"))
+                            db.execSQL("DELETE FROM $table WHERE account_ed=?",
+                                arrayOf(encoded))
+                        db.execSQL("DELETE FROM authorized_devices WHERE deviceId=?",
+                            arrayOf(peerId))
+                    }
+                }
+            }
+        }
+    }
+}

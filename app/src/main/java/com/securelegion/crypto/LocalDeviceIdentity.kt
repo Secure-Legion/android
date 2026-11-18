@@ -135,6 +135,24 @@ class LocalDeviceIdentity private constructor(private val seeds: ByteArray) : Cl
         private const val RECORD_KEY = "securelegion_independent_device_identity_v2"
         private val creationLock = Any()
 
+        /** Independent, unpersisted identity for protocol verification and provisioning. */
+        internal fun createEphemeral(): LocalDeviceIdentity {
+            val record = freshRecord()
+            return try { LocalDeviceIdentity(record.copyOf()) }
+                finally { record.fill(0) }
+        }
+
+        private fun freshRecord(): ByteArray {
+            val record = ByteArray(RECORD_SIZE)
+            MAGIC.copyInto(record)
+            val random = ByteArray(4 * 32)
+            try {
+                SecureRandom().nextBytes(random)
+                random.copyInto(record, MAGIC.size)
+            } finally { random.fill(0) }
+            return record
+        }
+
         private fun preferences(context: Context) = EncryptedSharedPreferences.create(
             context.applicationContext, PREFS_NAME,
             MasterKey.Builder(context.applicationContext)
@@ -153,13 +171,7 @@ class LocalDeviceIdentity private constructor(private val seeds: ByteArray) : Cl
             val prefs = preferences(context)
             val existing = prefs.getString(RECORD_KEY, null)
             if (existing != null) return@synchronized LocalDeviceIdentity(Base64.decode(existing, Base64.DEFAULT))
-            val record = ByteArray(RECORD_SIZE)
-            MAGIC.copyInto(record)
-            val random = ByteArray(4 * 32)
-            try {
-                SecureRandom().nextBytes(random)
-                random.copyInto(record, MAGIC.size)
-            } finally { random.fill(0) }
+            val record = freshRecord()
             try {
                 val identity = LocalDeviceIdentity(record.copyOf())
                 val encoded = Base64.encodeToString(record, Base64.NO_WRAP)
