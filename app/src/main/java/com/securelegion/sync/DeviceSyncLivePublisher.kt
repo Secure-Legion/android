@@ -70,6 +70,9 @@ internal class DeviceSyncLivePublisher(
         } finally { bytes.fill(0) }
     }
 
+    internal fun archiveMessageDelta(id: String, nowMs: Long): JSONObject =
+        messageDelta(id, nowMs)
+
     private fun messageDelta(id: String, nowMs: Long): JSONObject {
         require(id.isNotEmpty() && id.length <= 256)
         if (linked) {

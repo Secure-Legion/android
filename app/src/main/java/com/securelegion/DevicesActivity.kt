@@ -18,6 +18,7 @@ import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterAuthority
 import com.securelegion.sync.DeviceEnrollmentOwnerCoordinator
+import com.securelegion.sync.NearbyHistoryClient
 import com.securelegion.utils.SessionManager
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,17 @@ class DevicesActivity : BaseActivity() {
     private var currentRoster: RosterView? = null
     private var busy = false
     private var shownCode: String? = null
+    @Volatile private var historyClient: NearbyHistoryClient? = null
+    private val scanHistory = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        result ->
+        if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
+        val raw = result.data?.getStringExtra("SCANNED_ADDRESS") ?: return@registerForActivityResult
+        AlertDialog.Builder(this).setTitle("Copy history over Wi-Fi?")
+            .setMessage("Send encrypted history to your authorized Desktop on this local network?")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Copy history") { _, _ -> copyNearbyHistory(raw) }
+            .show()
+    }
     private val scanCandidate = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         result ->
         if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
@@ -61,6 +73,11 @@ class DevicesActivity : BaseActivity() {
                         DeviceEnrollmentOwnerCoordinator.cancel()
                     }.show()
             } else scanCandidate.launch(Intent(this, QRScannerActivity::class.java))
+        }
+        findViewById<View>(R.id.copyHistoryButton).setOnClickListener {
+            if (busy) {
+                historyClient?.cancel()
+            } else scanHistory.launch(Intent(this, QRScannerActivity::class.java))
         }
         lifecycleScope.launch {
             DeviceEnrollmentOwnerCoordinator.state.collect { renderEnrollment(it) }
@@ -117,6 +134,11 @@ class DevicesActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         refreshRoster()
+    }
+
+    override fun onStop() {
+        historyClient?.cancel()
+        super.onStop()
     }
 
     private fun store(keys: KeyManager) = DeviceRosterStore(
@@ -188,6 +210,38 @@ class DevicesActivity : BaseActivity() {
             ThemedToast.show(this@DevicesActivity, if (result.isSuccess) "Other devices revoked"
                 else "Could not revoke devices")
             refreshRoster()
+        }
+    }
+
+    private fun copyNearbyHistory(raw: String) {
+        if (busy) return
+        busy = true
+        findViewById<TextView>(R.id.copyHistoryButton).text = "Connecting securely…"
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    check(SessionManager.isUnlocked(this@DevicesActivity))
+                    val keys = KeyManager.getInstance(this@DevicesActivity)
+                    val database = SecureLegionDatabase.getInstance(this@DevicesActivity,
+                        keys.getDatabasePassphrase())
+                    val client = NearbyHistoryClient(this@DevicesActivity, keys, database)
+                    historyClient = client
+                    client.run(raw) { message ->
+                        runOnUiThread {
+                            findViewById<TextView>(R.id.copyHistoryButton).text =
+                                "Stop transfer · $message"
+                        }
+                    }
+                }
+            }
+            busy = false
+            historyClient = null
+            findViewById<TextView>(R.id.copyHistoryButton).text = "Copy history over Wi-Fi"
+            val message = result.fold(
+                onSuccess = { "Copied ${it.copied} updates; ${it.remaining} remain." },
+                onFailure = { it.message?.take(120) ?: "History transfer failed" })
+            AlertDialog.Builder(this@DevicesActivity).setTitle("History transfer")
+                .setMessage(message).setPositiveButton("OK", null).show()
         }
     }
 

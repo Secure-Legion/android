@@ -28,6 +28,30 @@ class DeviceSyncOutboxStore(
 
     enum class Transport { TOR, NEARBY }
 
+    /** Nearby ignores Tor retry deadlines and pages by a stable object key. */
+    fun nearbyPage(accountEd: ByteArray, localDeviceId: String, peerDeviceId: String,
+                   afterTopic: String, afterObject: String,
+                   nowMs: Long = System.currentTimeMillis()): Event? {
+        require(roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) &&
+            roster.isAuthorized(accountEd, peerDeviceId, 0x02, nowMs))
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT topic,object_id,event_id,event_time_ms,digest,sequence,delta_json," +
+                "transport,attempts,is_live FROM device_sync_outbox WHERE peer_device_id=? " +
+                "AND topic<>'group_links' AND (topic>? OR (topic=? AND object_id>?)) " +
+                "ORDER BY topic,object_id LIMIT 1",
+            arrayOf(peerDeviceId, afterTopic, afterTopic, afterObject)
+        )).use { c -> if (!c.moveToFirst()) null else Event(peerDeviceId,
+            c.getString(0), c.getString(1), c.getString(2), c.getLong(3),
+            c.getBlob(4), c.getLong(5), c.getBlob(6),
+            Transport.valueOf(c.getString(7)), c.getInt(8), c.getInt(9) == 1) }
+    }
+
+    fun nearbyPendingCount(peerDeviceId: String): Int =
+        database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT COUNT(*) FROM device_sync_outbox WHERE peer_device_id=? " +
+                "AND topic<>'group_links'", arrayOf(peerDeviceId)
+        )).use { c -> check(c.moveToFirst()); c.getInt(0) }
+
     /** A small, revision-stable batch. Application settlement alone removes rows. */
     fun dueTor(accountEd: ByteArray, localDeviceId: String, peerDeviceId: String,
                nowMs: Long = System.currentTimeMillis(), limit: Int = 3,

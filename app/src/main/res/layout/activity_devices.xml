@@ -126,6 +126,19 @@
             </LinearLayout>
 
             <TextView
+                android:id="@+id/copyHistoryButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                android:background="@drawable/device_card_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="18dp"
+                android:text="Copy history over Wi-Fi"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="THIS DEVICE"
