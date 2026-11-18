@@ -97,6 +97,7 @@ class TorService : Service() {
 
     // Reconnection state
     private var isReconnecting = false
+    private var deviceRosterRuntime: DeviceRosterRuntime? = null
 
     // Transport gate (blocks all Tor operations during network switch)
     private lateinit var gate: TransportGate
@@ -535,6 +536,11 @@ class TorService : Service() {
         // Start services ONCE (latch prevents repeated resets)
         Log.w(TAG, "Calling ensureStartedOnce() to start listeners...")
         ensureStartedOnce()
+
+        // Independent-device roster exchange is activated only for an unlocked,
+        // signed-roster-authorized installation. Its own loop stops on lock.
+        if (deviceRosterRuntime == null) deviceRosterRuntime = DeviceRosterRuntime(this)
+        deviceRosterRuntime?.start(serviceScope)
 
         // Converge any offline friend-request phases now that Tor is ready.
         triggerFriendRequestRetryConvergence("tor_ready")
@@ -10112,6 +10118,8 @@ class TorService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        deviceRosterRuntime?.stop()
+        deviceRosterRuntime = null
         Log.d(TAG, "TorService destroyed")
 
         running = false
