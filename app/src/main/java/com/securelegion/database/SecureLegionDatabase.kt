@@ -63,7 +63,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, PendingGroupApplyAck::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class, DeviceRoster::class, AuthorizedDevice::class],
-    version = 58,
+    version = 59,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -1240,6 +1240,38 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_58_59 = object : Migration(58, 59) {
+            override fun migrate(db: SupportSQLiteDatabase) = createDeviceSyncTables(db)
+        }
+
+        /** Room owns the roster entities; these bounded protocol queues are managed by SQL. */
+        private fun createDeviceSyncTables(db: SupportSQLiteDatabase) {
+            val statements = arrayOf(
+                "CREATE TABLE IF NOT EXISTS device_roster_notifications (account_ed TEXT NOT NULL, peer_device_id TEXT NOT NULL, onion TEXT NOT NULL, signing_key BLOB NOT NULL, roster_hash BLOB NOT NULL, next_try_at_ms INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(account_ed,peer_device_id))",
+                "CREATE TABLE IF NOT EXISTS enrollment_grant_outbox (transcript_id TEXT NOT NULL PRIMARY KEY, account_ed TEXT NOT NULL, candidate_device_id TEXT NOT NULL, wire_frame BLOB NOT NULL, expires_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS device_transport_epochs (account_ed TEXT NOT NULL, peer_device_id TEXT NOT NULL, local_device_id TEXT NOT NULL, direction TEXT NOT NULL, next_generation INTEGER NOT NULL DEFAULT 2, retired_through INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(account_ed,peer_device_id,local_device_id,direction))",
+                "CREATE TABLE IF NOT EXISTS device_transport_sessions (account_ed TEXT NOT NULL, peer_device_id TEXT NOT NULL, local_device_id TEXT NOT NULL, session_id BLOB NOT NULL, direction TEXT NOT NULL, state TEXT NOT NULL, generation INTEGER NOT NULL, counter INTEGER NOT NULL DEFAULT 0, chain_key BLOB, initial_cipher BLOB, prekey_wire BLOB NOT NULL, prekey_x BLOB, prekey_kem BLOB, request_hash BLOB, created_at_ms INTEGER NOT NULL, PRIMARY KEY(account_ed,peer_device_id,local_device_id,session_id,direction))",
+                "CREATE TABLE IF NOT EXISTS device_transport_jobs (account_ed TEXT NOT NULL, peer_device_id TEXT NOT NULL, local_device_id TEXT NOT NULL, job_id BLOB NOT NULL, logical_id TEXT NOT NULL, session_id BLOB NOT NULL, plaintext BLOB, wire BLOB, wire_hash BLOB, counter INTEGER, attempts INTEGER NOT NULL DEFAULT 0, next_try_at_ms INTEGER NOT NULL DEFAULT 0, created_at_ms INTEGER NOT NULL, PRIMARY KEY(account_ed,peer_device_id,local_device_id,job_id))",
+                "CREATE INDEX IF NOT EXISTS idx_device_transport_jobs_due ON device_transport_jobs(next_try_at_ms,created_at_ms)",
+                "CREATE TABLE IF NOT EXISTS device_transport_receipts (account_ed TEXT NOT NULL, peer_device_id TEXT NOT NULL, local_device_id TEXT NOT NULL, session_id BLOB NOT NULL, counter INTEGER NOT NULL, job_id BLOB NOT NULL, wire_hash BLOB NOT NULL, ack_wire BLOB NOT NULL, committed_at_ms INTEGER NOT NULL, PRIMARY KEY(account_ed,peer_device_id,local_device_id,job_id))",
+                "CREATE TABLE IF NOT EXISTS device_transport_skipped_keys (account_ed TEXT NOT NULL, peer_device_id TEXT NOT NULL, local_device_id TEXT NOT NULL, session_id BLOB NOT NULL, counter INTEGER NOT NULL, message_key BLOB NOT NULL, PRIMARY KEY(account_ed,peer_device_id,local_device_id,session_id,counter))",
+                "CREATE TABLE IF NOT EXISTS device_sync_cursors (peer_device_id TEXT NOT NULL, topic TEXT NOT NULL, pushed_seq INTEGER NOT NULL DEFAULT 0, received_seq INTEGER NOT NULL DEFAULT 0, updated_at_ms INTEGER NOT NULL, PRIMARY KEY(peer_device_id,topic))",
+                "CREATE TABLE IF NOT EXISTS device_sync_versions (peer_device_id TEXT NOT NULL, topic TEXT NOT NULL, object_id TEXT NOT NULL, event_time_ms INTEGER NOT NULL, digest BLOB NOT NULL, PRIMARY KEY(peer_device_id,topic,object_id))",
+                "CREATE TABLE IF NOT EXISTS device_sync_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, peer_device_id TEXT NOT NULL, topic TEXT NOT NULL, object_id TEXT NOT NULL, sequence INTEGER NOT NULL, event_time_ms INTEGER NOT NULL, delta_json BLOB NOT NULL, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, event_id TEXT, digest BLOB, UNIQUE(peer_device_id,topic,object_id,event_time_ms))",
+                "CREATE TABLE IF NOT EXISTS device_sync_chunks (peer_device_id TEXT NOT NULL, topic TEXT NOT NULL, chunk_id TEXT NOT NULL, part_index INTEGER NOT NULL, part_total INTEGER NOT NULL, sequence INTEGER NOT NULL, event_time_ms INTEGER NOT NULL, event_digest BLOB NOT NULL, chunk_bytes BLOB NOT NULL, created_at_ms INTEGER NOT NULL, object_id TEXT NOT NULL, event_id TEXT NOT NULL, PRIMARY KEY(peer_device_id,topic,chunk_id,part_index))",
+                "CREATE TABLE IF NOT EXISTS device_sync_local_events (topic TEXT NOT NULL, object_id TEXT NOT NULL, event_time_ms INTEGER NOT NULL, digest BLOB NOT NULL, sequence INTEGER NOT NULL, delta_json BLOB NOT NULL, PRIMARY KEY(topic,object_id))",
+                "CREATE TABLE IF NOT EXISTS device_sync_outbox (peer_device_id TEXT NOT NULL, topic TEXT NOT NULL, object_id TEXT NOT NULL, event_id TEXT NOT NULL, event_time_ms INTEGER NOT NULL, digest BLOB NOT NULL, sequence INTEGER NOT NULL, delta_json BLOB NOT NULL, transport TEXT NOT NULL, next_try_at_ms INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, created_at_ms INTEGER NOT NULL, PRIMARY KEY(peer_device_id,topic,object_id))",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_device_sync_outbox_event ON device_sync_outbox(peer_device_id,event_id)",
+                "CREATE INDEX IF NOT EXISTS idx_device_sync_outbox_due ON device_sync_outbox(peer_device_id,next_try_at_ms)",
+                "CREATE TABLE IF NOT EXISTS device_sync_acks (peer_device_id TEXT NOT NULL, topic TEXT NOT NULL, object_id TEXT NOT NULL, event_id TEXT NOT NULL, event_time_ms INTEGER NOT NULL, digest BLOB NOT NULL, acknowledged_at_ms INTEGER NOT NULL, PRIMARY KEY(peer_device_id,topic,object_id))",
+                "CREATE TABLE IF NOT EXISTS device_transport_skips (peer_device_id TEXT NOT NULL, event_id TEXT NOT NULL, next_try_at_ms INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(peer_device_id,event_id))",
+                "CREATE TABLE IF NOT EXISTS device_sync_settings (object_id TEXT NOT NULL PRIMARY KEY, delta_json BLOB NOT NULL, updated_at_ms INTEGER NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS device_sync_chat_controls (message_id TEXT NOT NULL, kind INTEGER NOT NULL, event_time_ms INTEGER NOT NULL, event_id TEXT NOT NULL, PRIMARY KEY(message_id,kind))",
+                "CREATE TABLE IF NOT EXISTS device_sync_deletions (topic TEXT NOT NULL, object_id TEXT NOT NULL, event_time_ms INTEGER NOT NULL, PRIMARY KEY(topic,object_id))"
+            )
+            statements.forEach(db::execSQL)
+        }
+
         /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
@@ -1259,7 +1291,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48,
             MIGRATION_48_49, MIGRATION_49_50,
             MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54,
-            MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58
+            MIGRATION_54_55, MIGRATION_55_56, MIGRATION_56_57, MIGRATION_57_58, MIGRATION_58_59
         )
 
         /**
@@ -1356,10 +1388,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 58) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 59) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
+                            createDeviceSyncTables(db)
                             Log.i(TAG, "Database created")
 
                         try {

@@ -4,6 +4,7 @@ import android.util.Base64
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.crypto.RustBridge
 import org.json.JSONObject
+import java.security.MessageDigest
 
 /**
  * The durable authorization boundary for independent device endpoints.
@@ -12,6 +13,9 @@ import org.json.JSONObject
  */
 class DeviceRosterStore(private val database: SecureLegionDatabase) {
     data class AcceptedRoster(val epoch: Long, val primaryDeviceId: String, val deviceIds: List<String>)
+    data class PendingGrant(val transcriptId: String, val candidateDeviceId: String,
+                            val wireFrame: ByteArray, val expiresAtMs: Long)
+    private data class Endpoint(val onion: String, val signingKey: ByteArray)
 
     data class DeviceView(
         val deviceId: String,
@@ -51,11 +55,15 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
         signedRoster: ByteArray,
         pinnedAccount: ByteArray,
         localDeviceId: String?,
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        pendingGrant: PendingGrant? = null
     ): AcceptedRoster {
         require(pinnedAccount.size == 32 && signedRoster.isNotEmpty() && signedRoster.size <= 32 * 1024)
         require(localDeviceId == null || localDeviceId.length == 43)
         require(nowMs in 1..9_007_199_254_740_991L)
+        require(pendingGrant == null || (pendingGrant.transcriptId.matches(Regex("[0-9a-f]{64}")) &&
+            pendingGrant.candidateDeviceId.length == 43 && pendingGrant.wireFrame.isNotEmpty() &&
+            pendingGrant.wireFrame.size <= 393_221 && pendingGrant.expiresAtMs > nowMs))
         val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
@@ -63,6 +71,14 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
             val previous = db.query(SimpleSQLiteQuery(
                 "SELECT signedRoster FROM device_rosters WHERE accountEd = ?", arrayOf(account)
             )).use { if (it.moveToFirst()) it.getBlob(0) else null }
+            val oldEndpoints = HashMap<String, Endpoint>()
+            db.query(SimpleSQLiteQuery(
+                "SELECT deviceId,syncOnion,deviceEd FROM authorized_devices WHERE accountEd = ?",
+                arrayOf(account)
+            )).use { cursor ->
+                while (cursor.moveToNext()) oldEndpoints[cursor.getString(0)] =
+                    Endpoint(cursor.getString(1), cursor.getBlob(2))
+            }
             val request = JSONObject().apply {
                 put("operation", "verify_roster")
                 put("roster", Base64.encodeToString(signedRoster, Base64.NO_WRAP))
@@ -88,11 +104,14 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
             // A revoked certificate cannot remain authoritative after this commit.
             db.execSQL("DELETE FROM authorized_devices WHERE accountEd = ?", arrayOf(account))
             val ids = ArrayList<String>(entries.length())
+            val newEndpoints = HashMap<String, Endpoint>()
             for (index in 0 until entries.length()) {
                 val entry = entries.getJSONObject(index)
                 val cert = entry.getJSONObject("certificate")
                 val id = cert.getString("device_id")
                 ids.add(id)
+                newEndpoints[id] = Endpoint(cert.getString("onion") + ".onion",
+                    Base64.decode(cert.getString("device_ed"), Base64.DEFAULT))
                 db.execSQL("INSERT INTO authorized_devices (deviceId,accountEd,displayName,syncOnion,deviceEd,deviceX,mlKemPublic,certificate,capabilities,issuedAtMs,expiresAtMs,rosterEpoch,isSelf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     arrayOf(
                         id, account, entry.getString("name"), cert.getString("onion") + ".onion",
@@ -103,6 +122,41 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
                         cert.getInt("capabilities"), cert.getLong("issued_at_ms"),
                         cert.getLong("expires_at_ms"), epoch, if (id == localDeviceId) 1 else 0
                     ))
+            }
+            for (removed in oldEndpoints.keys - ids.toSet()) {
+                for (table in arrayOf("device_transport_epochs", "device_transport_sessions",
+                    "device_transport_jobs", "device_transport_receipts",
+                    "device_transport_skipped_keys")) {
+                    db.execSQL("DELETE FROM $table WHERE account_ed = ? AND peer_device_id = ?",
+                        arrayOf(account, removed))
+                }
+                for (table in arrayOf("device_sync_cursors", "device_sync_versions",
+                    "device_sync_pending", "device_sync_chunks", "device_sync_outbox",
+                    "device_sync_acks", "device_transport_skips")) {
+                    db.execSQL("DELETE FROM $table WHERE peer_device_id = ?", arrayOf(removed))
+                }
+                db.execSQL("DELETE FROM enrollment_grant_outbox WHERE candidate_device_id = ?",
+                    arrayOf(removed))
+            }
+            // Public revocation notice goes to old and new endpoints, including
+            // the removed peer. An A5 may clear only this notification.
+            if (localDeviceId == primary && (previous == null || !previous.contentEquals(signedRoster))) {
+                val hash = MessageDigest.getInstance("SHA-256").digest(signedRoster)
+                for ((id, endpoint) in oldEndpoints + newEndpoints) {
+                    if (id == localDeviceId) continue
+                    db.execSQL("INSERT OR REPLACE INTO device_roster_notifications " +
+                        "(account_ed,peer_device_id,onion,signing_key,roster_hash,next_try_at_ms,attempts) " +
+                        "VALUES (?,?,?,?,?,0,0)",
+                        arrayOf(account, id, endpoint.onion, endpoint.signingKey, hash))
+                }
+            }
+            if (pendingGrant != null) {
+                require(pendingGrant.candidateDeviceId in ids)
+                db.execSQL("INSERT INTO enrollment_grant_outbox " +
+                    "(transcript_id,account_ed,candidate_device_id,wire_frame,expires_at_ms,created_at_ms) " +
+                    "VALUES (?,?,?,?,?,?)", arrayOf(pendingGrant.transcriptId, account,
+                        pendingGrant.candidateDeviceId, pendingGrant.wireFrame,
+                        pendingGrant.expiresAtMs, nowMs))
             }
             db.setTransactionSuccessful()
             return AcceptedRoster(epoch, primary, ids)
