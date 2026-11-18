@@ -233,6 +233,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".LinkDeviceActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".HelpCenterActivity"
             android:exported="false" />
 

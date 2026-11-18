@@ -50,6 +50,9 @@ class WelcomeActivity : AppCompatActivity() {
             val intent = Intent(this, CreateAccountActivity::class.java)
             startActivity(intent)
         }
+        findViewById<View>(R.id.linkExistingDeviceButton).setOnClickListener {
+            startActivity(Intent(this, LinkDeviceActivity::class.java))
+        }
     }
 
     private fun setupImportText() {

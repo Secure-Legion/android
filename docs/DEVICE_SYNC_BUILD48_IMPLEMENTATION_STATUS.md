@@ -34,6 +34,11 @@ bulk history and full groups remain Nearby-only.
 - Candidate A3 session creates a bounded QR, authenticates the owner's signed
   offer and approvals, verifies the encrypted grant against the account identity,
   device certificate, and signed roster, and can sign a post-commit receipt.
+- Candidate onboarding now displays the QR/comparison code, starts a separate
+  device-onion Tor listener, and stores the in-flight exchange in Keystore-backed
+  preferences so an exact grant retry can survive a process restart. The
+  candidate commits a public-account linked profile without the account seed.
+  A linked-profile main screen and direct messaging runtime are still missing.
 - Candidate profile commit stages an independent protected SQLCipher key and a
   receipt before roster acceptance, then promotes only after the signed roster
   authorizes the local device. A restart can verify and finish that promotion.
@@ -73,10 +78,9 @@ bulk history and full groups remain Nearby-only.
 
 ## Required before device-sync acceptance
 
-1. Connect the Android candidate A3 session to onboarding and approval UI;
-   persist an in-flight candidate secret until expiry for interrupted grants,
-   and add recovery checkpoint handling. The current grant path supports
-   enrollment only. Physically verify the new owner flow against iOS.
+1. Physically verify both A3 enrollment roles against iOS, including process
+   death, delayed grant, local cancellation and expired checkpoint. Add the
+   separate recovery-v2 flow. The current grant path supports enrollment only.
 2. Extend A4/A5 operation to linked profiles after candidate activation works.
 3. Support linked-candidate startup with an independent local DB key and public
    account binding, without copying the account seed or contact ratchets.

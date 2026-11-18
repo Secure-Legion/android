@@ -73,6 +73,21 @@
         app:layout_constraintEnd_toEndOf="parent"
         android:clickable="false" />
 
+    <TextView
+        android:id="@+id/linkExistingDeviceButton"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_marginTop="16dp"
+        android:gravity="center"
+        android:text="Link to an existing account"
+        android:textColor="@color/text_primary"
+        android:textSize="14sp"
+        android:clickable="true"
+        android:focusable="true"
+        app:layout_constraintTop_toBottomOf="@id/importText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- "[ SECURE ]" header at the top — matches the lock-screen wordmark
          placement, but bold (lock screen uses medium). Same size + letter
          spacing for visual consistency across the two screens. -->

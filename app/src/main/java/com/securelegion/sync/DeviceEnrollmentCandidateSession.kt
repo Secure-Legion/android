@@ -41,6 +41,12 @@ internal class DeviceEnrollmentCandidateSession private constructor(
 
     val transcriptId: String? get() = id
     val ownerOnion: String? get() = owner?.onion
+    /** Protect this seed in app Keystore storage until grant commit or QR expiry. */
+    fun checkpointEphemeral(): ByteArray {
+        requireOpen()
+        require(owner == null)
+        return ephemeralPrivate.copyOf()
+    }
     val comparisonCode: String get() {
         requireReady()
         val mac = hmac(confirmation, proof("comparison"))
@@ -214,6 +220,24 @@ internal class DeviceEnrollmentCandidateSession private constructor(
 
     companion object {
         private const val DOMAIN = "Secure-ENROLL-v1"
+        fun restore(device: LocalDeviceIdentity, qrPayload: String,
+                    ephemeralPrivate: ByteArray,
+                    nowMs: Long = System.currentTimeMillis()): DeviceEnrollmentCandidateSession {
+            require(ephemeralPrivate.size == 32)
+            val parsed = DeviceEnrollmentWire.parseCandidateQr(qrPayload, nowMs)
+            require(parsed.version == 1 && parsed.candidate.deviceId == device.deviceId &&
+                parsed.candidate.onion == device.onionAddress &&
+                parsed.candidate.signingPublicKey.contentEquals(device.signingPublicKey) &&
+                parsed.candidate.encryptionPublicKey.contentEquals(device.encryptionPublicKey))
+            val public = ByteArray(32)
+            check(LazySodiumAndroid(SodiumAndroid()).cryptoScalarMultBase(public, ephemeralPrivate))
+            require(public.contentEquals(parsed.candidate.ephemeralPublicKey))
+            val kem = device.mlKemPublicKey()
+            require(sha256(kem).contentEquals(parsed.candidate.kemHash))
+            return DeviceEnrollmentCandidateSession(device, parsed, qrPayload,
+                ephemeralPrivate.copyOf(), kem)
+        }
+
         fun create(device: LocalDeviceIdentity, deviceName: String,
                    nowMs: Long = System.currentTimeMillis()): DeviceEnrollmentCandidateSession {
             require(deviceName.isNotBlank() && deviceName.codePointCount(0, deviceName.length) <= 64 &&
