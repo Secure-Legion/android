@@ -1730,7 +1730,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeviceOnionFrame(
         }
         let sent = GLOBAL_RUNTIME.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(35), async {
-                let mut stream = crate::network::arti::arti_connect_to_onion(&onion, 8080).await?;
+                let mut stream = crate::network::arti::arti_connect_to_onion(
+                    &onion, crate::network::contact_list_sync::MESSAGING_PORT,
+                ).await?;
                 stream.write_message(&bytes).await
             }).await
         });
