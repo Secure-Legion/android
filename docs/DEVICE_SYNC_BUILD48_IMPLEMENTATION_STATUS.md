@@ -17,6 +17,9 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
   own-onion self-test.
 - Devices screen lists the current signed roster and lets the primary revoke
   all other devices through an account-signed successor roster.
+- A3 canonical transcript/proof encoding and an in-memory owner authentication
+  session for signed offers, candidate ML-KEM proof, and both approvals. It does
+  not yet issue a grant or activate a candidate.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.

@@ -1,6 +1,7 @@
 package com.securelegion.sync
 
 import org.json.JSONObject
+import org.json.JSONArray
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -82,6 +83,78 @@ internal object DeviceEnrollmentWire {
         val bytes = json.toString().toByteArray(Charsets.UTF_8)
         require(bytes.size <= if (version == 1) ENROLL_MAX else RECOVER_MAX)
         return byteArrayOf(WIRE_TYPE.toByte()) + ByteBuffer.allocate(4).putInt(bytes.size).array() + bytes
+    }
+
+    /** Byte-for-byte build-48 transcript encoding: sorted object keys, UTF-8, no slash escaping. */
+    fun canonicalJson(value: Any): ByteArray {
+        val out = StringBuilder()
+        appendCanonical(out, value)
+        return out.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    fun transcript(qr: CandidateQr, owner: JSONObject): ByteArray {
+        val endpoint = parseOwnerEndpoint(owner)
+        require(endpoint.deviceId != qr.candidate.deviceId && endpoint.onion != qr.candidate.onion)
+        return canonicalJson(JSONObject().put("protocol", if (qr.version == 1) "Secure-ENROLL-v1"
+            else "Secure-RECOVER-v1").put("qr", qr.raw).put("owner", owner))
+    }
+
+    fun transcriptId(transcript: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(transcript).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    fun proofBytes(domain: String, purpose: String, transcript: ByteArray,
+                   extra: ByteArray? = null): ByteArray {
+        require(domain == "Secure-ENROLL-v1" || domain == "Secure-RECOVER-v1")
+        require(purpose in setOf("offer", "candidate_proof", "owner_approval",
+            "candidate_approval", "grant", "comparison"))
+        return "$domain/$purpose\u0000".toByteArray(Charsets.UTF_8) + transcript +
+            (extra?.let { MessageDigest.getInstance("SHA-256").digest(it) } ?: byteArrayOf())
+    }
+
+    private fun appendCanonical(out: StringBuilder, value: Any) {
+        when (value) {
+            is JSONObject -> {
+                out.append('{')
+                val keys = value.keys().asSequence().toList().sorted()
+                keys.forEachIndexed { index, key ->
+                    if (index > 0) out.append(',')
+                    appendQuoted(out, key)
+                    out.append(':')
+                    appendCanonical(out, value.get(key))
+                }
+                out.append('}')
+            }
+            is JSONArray -> {
+                out.append('[')
+                for (index in 0 until value.length()) {
+                    if (index > 0) out.append(',')
+                    appendCanonical(out, value.get(index))
+                }
+                out.append(']')
+            }
+            JSONObject.NULL -> out.append("null")
+            is String -> appendQuoted(out, value)
+            is Boolean -> out.append(if (value) "true" else "false")
+            is Byte, is Short, is Int, is Long -> out.append(value.toString())
+            is Float -> { require(value.isFinite()); out.append(value.toString()) }
+            is Double -> { require(value.isFinite()); out.append(value.toString()) }
+            else -> throw IllegalArgumentException("Unsupported canonical JSON value")
+        }
+    }
+
+    private fun appendQuoted(out: StringBuilder, value: String) {
+        out.append('"')
+        for (char in value) when (char) {
+            '"' -> out.append("\\\"")
+            '\\' -> out.append("\\\\")
+            '\b' -> out.append("\\b")
+            '\u000c' -> out.append("\\f")
+            '\n' -> out.append("\\n")
+            '\r' -> out.append("\\r")
+            '\t' -> out.append("\\t")
+            else -> if (char.code < 32) out.append("\\u%04x".format(char.code)) else out.append(char)
+        }
+        out.append('"')
     }
 
     private fun parseEndpoint(json: JSONObject, role: String): Endpoint {

@@ -68,4 +68,20 @@ class DeviceEnrollmentWireTest {
             DeviceEnrollmentWire.decodeFrame(wire)
         }
     }
+
+    @Test fun transcriptCanonicalizationMatchesBuild48ByteRules() {
+        val value = JSONObject().put("protocol", "Secure-ENROLL-v1")
+            .put("qr", JSONObject().put("v", 1).put("t", "SL_ENROLL")
+                .put("expires", 1_792_400_120_000L))
+            .put("owner", JSONObject().put("nonce", "a+b")
+                .put("device_name", "Pixel/8"))
+        val encoded = DeviceEnrollmentWire.canonicalJson(value)
+        assertEquals("{\"owner\":{\"device_name\":\"Pixel/8\",\"nonce\":\"a+b\"}," +
+            "\"protocol\":\"Secure-ENROLL-v1\",\"qr\":{\"expires\":1792400120000," +
+            "\"t\":\"SL_ENROLL\",\"v\":1}}", encoded.toString(Charsets.UTF_8))
+        assertEquals("362cb70285819f6de2968683c71b2152dc3bfc4404487f9eee58cb3cf03a4811",
+            DeviceEnrollmentWire.transcriptId(encoded))
+        val proof = DeviceEnrollmentWire.proofBytes("Secure-ENROLL-v1", "offer", encoded)
+        assertEquals("Secure-ENROLL-v1/offer\u0000", proof.copyOfRange(0, 23).toString(Charsets.UTF_8))
+    }
 }
