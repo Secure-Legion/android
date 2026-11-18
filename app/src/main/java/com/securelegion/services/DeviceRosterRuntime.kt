@@ -25,6 +25,8 @@ import com.securelegion.sync.DeviceSyncAccountSettingsPublisher
 import com.securelegion.sync.DeviceSyncOutboundWire
 import com.securelegion.sync.DeviceSyncContactReceiver
 import com.securelegion.sync.DeviceSyncContactPublisher
+import com.securelegion.sync.DeviceSyncLiveMessageReceiver
+import com.securelegion.sync.DeviceSyncLiveReceiptReceiver
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -77,6 +79,9 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val syncHost = DeviceSyncFsHost(account, identity, roster)
             val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
             val contactReceiver = DeviceSyncContactReceiver(database, roster)
+            val messageReceiver = DeviceSyncLiveMessageReceiver(database, roster,
+                keyManager::encryptDeviceSyncContent)
+            val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster)
             val contactPublisher = DeviceSyncContactPublisher(database, roster)
             val settingsPublisher = DeviceSyncAccountSettingsPublisher(database, roster)
             val outbox = DeviceSyncOutboxStore(database, roster)
@@ -183,6 +188,30 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                                             settingsReceiver.materializePrimary(
                                                                 context, keyManager)
                                                         }
+                                                    } else if (topic == "messages" &&
+                                                        syncHost.liveNegotiated(peerId)) {
+                                                        val part = DeviceSyncPushWire.parse(inner,
+                                                            liveNegotiated = true)
+                                                        if (messageReceiver.receive(account,
+                                                                identity.deviceId, part, true) ==
+                                                            DeviceSyncChunkStore.Result.COMMITTED) {
+                                                            sendSyncApplication(syncHost, roster, account,
+                                                                identity.deviceId, peerId, peer.onion,
+                                                                DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                                                DeviceSyncPushWire.settled(part))
+                                                        }
+                                                    } else if (topic == "receipts" &&
+                                                        syncHost.liveNegotiated(peerId)) {
+                                                        val part = DeviceSyncPushWire.parse(inner,
+                                                            liveNegotiated = true)
+                                                        if (receiptReceiver.receive(account,
+                                                                identity.deviceId, part, true) ==
+                                                            DeviceSyncChunkStore.Result.COMMITTED) {
+                                                            sendSyncApplication(syncHost, roster, account,
+                                                                identity.deviceId, peerId, peer.onion,
+                                                                DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                                                DeviceSyncPushWire.settled(part))
+                                                        }
                                                     } else if (topic !in DeviceSyncTorPolicy.metadataTopics &&
                                                         topic in setOf("messages", "receipts", "groups") &&
                                                         peerCapabilities.containsKey(peerId)) {
@@ -251,6 +280,32 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     identity.deviceId, peer.deviceId, peer.onion,
                                     DeviceSyncFrameV2.Kind.PULL_RESPONSE,
                                     DeviceSyncPushWire.settled(applied))
+                            }
+                        }
+                        for (applied in messageReceiver.drainPending(account,
+                                identity.deviceId, { syncHost.liveNegotiated(it) }, now)) {
+                            val peer = roster.authorizedPeer(account, applied.peerDeviceId, 0x02)
+                                ?: continue
+                            runCatching {
+                                sendSyncApplication(syncHost, roster, account,
+                                    identity.deviceId, peer.deviceId, peer.onion,
+                                    DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                    DeviceSyncPushWire.settled(applied.eventId,
+                                        applied.digestHex, "messages", applied.objectId,
+                                        applied.eventTimeMs))
+                            }
+                        }
+                        for (applied in receiptReceiver.drainPending(account,
+                                identity.deviceId, { syncHost.liveNegotiated(it) }, now)) {
+                            val peer = roster.authorizedPeer(account, applied.peerDeviceId, 0x02)
+                                ?: continue
+                            runCatching {
+                                sendSyncApplication(syncHost, roster, account,
+                                    identity.deviceId, peer.deviceId, peer.onion,
+                                    DeviceSyncFrameV2.Kind.PULL_RESPONSE,
+                                    DeviceSyncPushWire.settled(applied.eventId,
+                                        applied.digestHex, "receipts", applied.objectId,
+                                        applied.eventTimeMs))
                             }
                         }
                         for (device in roster.listAuthorizedDevices(account)) {

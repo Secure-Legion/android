@@ -2370,8 +2370,17 @@ class KeyManager private constructor(context: Context) {
      * Empty strings and already-encrypted strings (starting with "ENC1:") are returned unchanged.
      */
     fun encryptMessageContent(plaintext: String): String {
+        return encryptMessageContentInternal(plaintext, false)
+    }
+
+    /** A remote device supplies plaintext, including strings beginning with ENC1:. */
+    fun encryptDeviceSyncContent(plaintext: String): String {
+        return encryptMessageContentInternal(plaintext, true)
+    }
+
+    private fun encryptMessageContentInternal(plaintext: String, force: Boolean): String {
         if (plaintext.isEmpty()) return plaintext
-        if (plaintext.startsWith("ENC1:")) return plaintext // Double-encrypt guard
+        if (!force && plaintext.startsWith("ENC1:")) return plaintext // Double-encrypt guard
         var key: ByteArray? = null
         try {
             key = getMessageContentEncryptionKey()

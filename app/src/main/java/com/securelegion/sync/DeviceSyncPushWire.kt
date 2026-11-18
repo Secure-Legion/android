@@ -56,10 +56,14 @@ internal object DeviceSyncPushWire {
             eventTime, sequence, index, total, data)
     }
 
-    fun settled(part: DeviceSyncChunkStore.Part): JSONObject = JSONObject()
-        .put("kind", "settled").put("history_v", 2).put("event_id", part.eventId)
-        .put("digest", part.digestHex).put("topic", part.topic)
-        .put("object_id", part.objectId).put("event_ts", part.eventTimeMs)
+    fun settled(part: DeviceSyncChunkStore.Part): JSONObject = settled(part.eventId,
+        part.digestHex, part.topic, part.objectId, part.eventTimeMs)
+
+    fun settled(eventId: String, digestHex: String, topic: String,
+                objectId: String, eventTimeMs: Long): JSONObject = JSONObject()
+        .put("kind", "settled").put("history_v", 2).put("event_id", eventId)
+        .put("digest", digestHex).put("topic", topic)
+        .put("object_id", objectId).put("event_ts", eventTimeMs)
         .also { DeviceSyncSettlementWire.parse(it) }
 
     fun transportSkipped(payload: JSONObject, nowMs: Long = System.currentTimeMillis()): JSONObject {
