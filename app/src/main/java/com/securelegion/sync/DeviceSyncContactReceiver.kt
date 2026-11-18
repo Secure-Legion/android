@@ -15,6 +15,7 @@ internal class DeviceSyncContactReceiver(
     private val roster: DeviceRosterStore
 ) {
     private val chunks = DeviceSyncChunkStore(database, roster)
+    private var pendingScanAfterId = 0L
 
     fun receive(accountEd: ByteArray, localDeviceId: String,
                 part: DeviceSyncChunkStore.Part,
@@ -35,10 +36,10 @@ internal class DeviceSyncContactReceiver(
         require(accountEd.size == 32 && localDeviceId.length == 43)
         val db = database.openHelper.writableDatabase
         val committed = ArrayList<DeviceSyncChunkStore.Part>()
-        val rows = db.query(SimpleSQLiteQuery(
+        fun nextRows(afterId: Long) = db.query(SimpleSQLiteQuery(
             "SELECT id,peer_device_id,object_id,sequence,event_time_ms,delta_json,event_id,digest " +
                 "FROM device_sync_pending WHERE topic='contacts' AND reason='missing_pinned_contact' " +
-                "ORDER BY id LIMIT 25"
+                "AND id>? ORDER BY id LIMIT 25", arrayOf(afterId)
         )).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) add(Pending(cursor.getLong(0), cursor.getString(1),
@@ -46,7 +47,13 @@ internal class DeviceSyncContactReceiver(
                     cursor.getBlob(5), cursor.getString(6), cursor.getBlob(7)))
             }
         }
+        var rows = nextRows(pendingScanAfterId)
+        if (rows.isEmpty() && pendingScanAfterId != 0L) {
+            pendingScanAfterId = 0L
+            rows = nextRows(0L)
+        }
         for (row in rows) {
+            pendingScanAfterId = row.id
             if (!roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) ||
                 !roster.isAuthorized(accountEd, row.peer, 0x02, nowMs)) continue
             try {
