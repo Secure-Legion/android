@@ -26,6 +26,21 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
         val isSelf: Boolean
     )
 
+    data class PeerKeys(val deviceId: String, val signingKey: ByteArray,
+                        val encryptionKey: ByteArray, val onion: String)
+
+    fun authorizedPeer(pinnedAccount: ByteArray, deviceId: String, capability: Int,
+                       nowMs: Long = System.currentTimeMillis()): PeerKeys? {
+        if (!isAuthorized(pinnedAccount, deviceId, capability, nowMs)) return null
+        val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
+        return database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT deviceEd,deviceX,syncOnion FROM authorized_devices " +
+                "WHERE accountEd=? AND deviceId=? AND (capabilities & ?) = ? AND expiresAtMs>?",
+            arrayOf(account, deviceId, capability, capability, nowMs)
+        )).use { if (it.moveToFirst()) PeerKeys(deviceId, it.getBlob(0),
+            it.getBlob(1), it.getString(2)) else null }
+    }
+
     fun fetchSignedRoster(pinnedAccount: ByteArray): ByteArray? {
         require(pinnedAccount.size == 32)
         val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)

@@ -110,7 +110,7 @@ class DeviceSyncOutboxStore(
             val next: Long = nowMs + delay
             db.execSQL("INSERT OR REPLACE INTO device_transport_skips " +
                 "(peer_device_id,event_id,next_try_at_ms,attempts) VALUES (?,?,?,?)",
-                arrayOf(peerDeviceId, eventId, next, skipAttempts + 1))
+                arrayOf<Any>(peerDeviceId, eventId, next, skipAttempts + 1))
             db.setTransactionSuccessful()
             return true
         } finally {
