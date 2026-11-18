@@ -21,6 +21,10 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
   session for signed offers, candidate ML-KEM proof, both approvals, and an
   encrypted grant committed with the successor roster. The owner retries exact
   grant bytes and verifies a signed candidate receipt after process restart.
+- Candidate A3 session creates a bounded QR, authenticates the owner's signed
+  offer and approvals, verifies the encrypted grant against the account identity,
+  device certificate, and signed roster, and can sign a post-commit receipt.
+  Candidate profile commit and startup are not connected yet.
 - Protected sync tables and exact history identity/outbox/settlement storage.
 - No fake settlement of Tor-skipped history; Tor ACKs cannot clear Nearby-only rows.
 - Signed group-operation type validator. Group-link relay remains disabled.
@@ -30,9 +34,9 @@ or sync capabilities, and its debug APK is not an end-to-end feature build.
 
 ## Required before device-sync acceptance
 
-1. Connect A3 owner enrollment to an approval UI; implement candidate grant
-   validation/activation and recovery checkpoint handling. The current owner
-   grant path supports enrollment only.
+1. Connect A3 owner and candidate sessions to an approval UI; implement a
+   restartable candidate profile commit and recovery checkpoint handling. The
+   current grant path supports enrollment only.
 2. Extend A4/A5 operation to linked profiles after candidate activation works.
 3. Support linked-candidate startup with an independent local DB key and public
    account binding, without copying the account seed or contact ratchets.
