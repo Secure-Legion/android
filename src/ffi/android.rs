@@ -1738,6 +1738,50 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeviceOnionFrame(
     }, JNI_FALSE)
 }
 
+/// Public signed rosters use the accepted contact's existing messaging onion.
+/// A successful return is a socket write, not a committed A5 receipt.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendContactRosterFrame(
+    mut env: JNIEnv,
+    _class: JClass,
+    onion: JString,
+    wire: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        let onion: String = match env.get_string(&onion) {
+            Ok(value) => value.into(), Err(_) => return JNI_FALSE,
+        };
+        let bytes = match env.convert_byte_array(wire) {
+            Ok(value) => value, Err(_) => return JNI_FALSE,
+        };
+        let host = onion.strip_suffix(".onion").unwrap_or("");
+        if host.len() != 56 || !host.bytes().all(|byte| byte.is_ascii_lowercase() ||
+            (b'2'..=b'7').contains(&byte)) || !matches!(bytes.first().copied(), Some(0xA4 | 0xA5)) ||
+            !valid_device_outbound_frame(&bytes) { return JNI_FALSE; }
+        let sent = GLOBAL_RUNTIME.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(35),
+                crate::network::contact_list_sync::send_frame_to_onion(&onion, bytes)).await
+        });
+        if matches!(sent, Ok(Ok(()))) { JNI_TRUE } else { JNI_FALSE }
+    }, JNI_FALSE)
+}
+
+/// Bounded A4/A5 ingress from the old contact messaging endpoint.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollContactRosterFrame(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match crate::network::poll_contact_roster_frame() {
+            Some(bytes) => match vec_to_jbytearray(&mut env, &bytes) {
+                Ok(array) => array.into_raw(), Err(_) => std::ptr::null_mut(),
+            },
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
 /// Stop the hidden service listener
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopHiddenServiceListener(

@@ -6,6 +6,7 @@ pub use securelegion_crypto::network::arti;
 pub use securelegion_crypto::network::friend_request_server;
 pub use securelegion_crypto::network::socks5_client;
 pub use securelegion_crypto::network::contact_list_sync;
+pub use securelegion_crypto::network::poll_contact_roster_frame;
 
 #[cfg(not(target_os = "windows"))]
 pub use securelegion_crypto::network::{TorManager, PENDING_CONNECTIONS, PendingConnection, compute_onion_address_from_ed25519_seed};
