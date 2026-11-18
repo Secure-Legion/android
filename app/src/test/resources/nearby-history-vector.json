@@ -1,0 +1,18 @@
+{
+  "description": "Synthetic QR transcript interoperability vector; never grants application trust.",
+  "public_key": "4oqJcHUzMr1y/vQT5rCy7xtKrdp6osFB8jNxKmh2s1E=",
+  "offer": {
+    "v": 1,
+    "type": "secure-nearby-history",
+    "host": "192.168.8.152",
+    "port": 49152,
+    "session": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expires": 1794596400000,
+    "device": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+    "source": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+    "account": "//////////////////////////////////////////8=",
+    "tls_sha256": "abababababababababababababababababababababababababababababababab",
+    "signature": "PP6wk0YpSuBK75lXysIR+WvRZ2L6XITmH+gYdBhiyzHCBzsoG7Jlve5DEykYf0zFXFU3KhE4P5CBdBFfirhWBA=="
+  },
+  "transcript_base64": "WyJzZWN1cmUtbmVhcmJ5LWhpc3RvcnktdjEiLCIxOTIuMTY4LjguMTUyIiw0OTE1MiwiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSIsMTc5NDU5NjQwMDAwMCwiRERERERERERERERERERERERERERERERERERERERERERERERERERERERERCIsIlNTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1MiLCIvLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy84PSIsImFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIiXQ=="
+}
