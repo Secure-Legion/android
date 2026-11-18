@@ -1669,6 +1669,71 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopDeviceOnionListene
     crate::network::arti::stop_device_listener();
 }
 
+fn valid_device_outbound_frame(bytes: &[u8]) -> bool {
+    if bytes.len() < 6 || bytes.len() > 512 * 1024 + 8 { return false; }
+    let length = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
+    if length != bytes.len() - 5 { return false; }
+    match bytes[0] {
+        0xA3 => bytes.len() <= 384 * 1024 + 5,
+        0xA4 => bytes.len() <= 32_773 && bytes.len() >= 43 && &bytes[5..11] == b"SLDR01",
+        0xA5 => bytes.len() == 198 && bytes[5] == 1,
+        0xB6 => bytes.len() <= 8192,
+        0xB7 => bytes.len() <= 512 * 1024,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod device_outbound_frame_tests {
+    use super::valid_device_outbound_frame;
+
+    #[test]
+    fn only_bounded_reserved_frames_are_sent() {
+        let a4 = [vec![0xA4, 0, 0, 0, 38], b"SLDR01".to_vec(), vec![0; 32]].concat();
+        assert!(valid_device_outbound_frame(&a4));
+        let mut bad_length = a4.clone();
+        bad_length[4] = 37;
+        assert!(!valid_device_outbound_frame(&bad_length));
+        let mut raw_legacy = a4.clone();
+        raw_legacy[0] = 0xB0;
+        assert!(!valid_device_outbound_frame(&raw_legacy));
+        assert!(!valid_device_outbound_frame(&[0xB6, 0, 0, 0, 8, 1]));
+    }
+}
+
+/// Write one reserved device frame to the independent onion. A successful
+/// return proves only a socket write, never application-level settlement.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeviceOnionFrame(
+    mut env: JNIEnv,
+    _class: JClass,
+    onion: JString,
+    wire: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        let onion: String = match env.get_string(&onion) {
+            Ok(value) => value.into(),
+            Err(_) => return JNI_FALSE,
+        };
+        let bytes = match env.convert_byte_array(wire) {
+            Ok(value) => value,
+            Err(_) => return JNI_FALSE,
+        };
+        let host = onion.strip_suffix(".onion").unwrap_or("");
+        if host.len() != 56 || !host.bytes().all(|byte| byte.is_ascii_lowercase() ||
+            (b'2'..=b'7').contains(&byte)) || !valid_device_outbound_frame(&bytes) {
+            return JNI_FALSE;
+        }
+        let sent = GLOBAL_RUNTIME.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(35), async {
+                let mut stream = crate::network::arti::arti_connect_to_onion(&onion, 8080).await?;
+                stream.write_message(&bytes).await
+            }).await
+        });
+        if matches!(sent, Ok(Ok(()))) { JNI_TRUE } else { JNI_FALSE }
+    }, JNI_FALSE)
+}
+
 /// Stop the hidden service listener
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopHiddenServiceListener(
