@@ -8,12 +8,16 @@ import android.widget.TextView
 import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.LocalDeviceIdentity
+import com.securelegion.database.DelegatedGroupStateStore
+import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.CrdtGroupManager
 import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * Edit per-admin rights bitfield + custom title, or promote a Member to Admin.
@@ -54,6 +58,17 @@ class EditAdminRightsActivity : BaseActivity() {
     private var targetPubkeyHex: String? = null
     private var targetDisplayName: String = "Member"
     private var isCurrentlyAdmin: Boolean = false
+
+    private fun delegatedStore(): DelegatedGroupStateStore {
+        val km = KeyManager.getInstance(this)
+        val db = SecureLegionDatabase.getInstance(this, km.getDatabasePassphrase())
+        return DelegatedGroupStateStore(db)
+    }
+
+    private fun targetBytes(hex: String): ByteArray {
+        require(hex.matches(Regex("[0-9a-fA-F]{64}")))
+        return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,6 +118,29 @@ class EditAdminRightsActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 val (role, rights, title) = withContext(Dispatchers.IO) {
+                    val delegated = delegatedStore()
+                    if (delegated.isAdopted(gid)) {
+                        val km = KeyManager.getInstance(this@EditAdminRightsActivity)
+                        val members = delegated.read(gid, km.getSigningPublicKey())
+                            .getJSONArray("members")
+                        val member = (0 until members.length()).map { members.getJSONObject(it) }
+                            .firstOrNull { it.getString("pubkey_hex").equals(pk, true) &&
+                                !it.getBoolean("removed") && !it.getBoolean("banned") }
+                            ?: throw IllegalArgumentException("Member is unavailable")
+                        val nativeRights = member.optJSONObject("admin_rights")
+                        val permissions = nativeRights?.let { r ->
+                            CrdtGroupManager.AdminRights(
+                                canInvite = r.getBoolean("can_invite"),
+                                canRemove = r.getBoolean("can_remove"),
+                                canChangeInfo = r.getBoolean("can_change_info"),
+                                canDeleteMessages = r.getBoolean("can_delete_messages"),
+                                canPinMessages = r.getBoolean("can_pin_messages"),
+                                canAddAdmins = r.getBoolean("can_add_admins"))
+                        }
+                        val title = if (member.isNull("custom_title")) null
+                            else member.getString("custom_title")
+                        return@withContext Triple(member.getString("role"), permissions, title)
+                    }
                     val mgr = CrdtGroupManager.getInstance(this@EditAdminRightsActivity)
                     val member = mgr.queryMembers(gid).firstOrNull { it.pubkeyHex == pk }
                     Triple(member?.role ?: "Member", member?.adminRights, member?.customTitle)
@@ -152,11 +190,28 @@ class EditAdminRightsActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val mgr = CrdtGroupManager.getInstance(this@EditAdminRightsActivity)
-                    mgr.setAdminRole(gid, pk, rights, title)
-                    val authorName = KeyManager.getInstance(this@EditAdminRightsActivity).getUsername() ?: "Someone"
-                    val verb = if (isCurrentlyAdmin) "updated admin rights for" else "promoted"
-                    mgr.sendSystemMessage(gid, "$authorName $verb $targetDisplayName")
+                    val delegated = delegatedStore()
+                    if (delegated.isAdopted(gid)) {
+                        val km = KeyManager.getInstance(this@EditAdminRightsActivity)
+                        val identity = LocalDeviceIdentity.loadExisting(this@EditAdminRightsActivity)
+                        try {
+                            delegated.setRole(gid, km.getSigningPublicKey(), targetBytes(pk),
+                                "Admin", JSONObject()
+                                    .put("can_invite", rights.canInvite)
+                                    .put("can_remove", rights.canRemove)
+                                    .put("can_change_info", rights.canChangeInfo)
+                                    .put("can_delete_messages", rights.canDeleteMessages)
+                                    .put("can_pin_messages", rights.canPinMessages)
+                                    .put("can_add_admins", rights.canAddAdmins), title, identity)
+                        } finally { identity.close() }
+                    } else {
+                        val mgr = CrdtGroupManager.getInstance(this@EditAdminRightsActivity)
+                        mgr.setAdminRole(gid, pk, rights, title)
+                        val authorName = KeyManager.getInstance(this@EditAdminRightsActivity)
+                            .getUsername() ?: "Someone"
+                        val verb = if (isCurrentlyAdmin) "updated admin rights for" else "promoted"
+                        mgr.sendSystemMessage(gid, "$authorName $verb $targetDisplayName")
+                    }
                 }
                 val msg = if (isCurrentlyAdmin) "Rights updated" else "$targetDisplayName promoted to Admin"
                 ThemedToast.show(this@EditAdminRightsActivity, msg)
@@ -181,10 +236,21 @@ class EditAdminRightsActivity : BaseActivity() {
                 lifecycleScope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            val mgr = CrdtGroupManager.getInstance(this@EditAdminRightsActivity)
-                            mgr.demoteAdmin(gid, pk)
-                            val authorName = KeyManager.getInstance(this@EditAdminRightsActivity).getUsername() ?: "Someone"
-                            mgr.sendSystemMessage(gid, "$authorName demoted $targetDisplayName")
+                            val delegated = delegatedStore()
+                            if (delegated.isAdopted(gid)) {
+                                val km = KeyManager.getInstance(this@EditAdminRightsActivity)
+                                val identity = LocalDeviceIdentity.loadExisting(this@EditAdminRightsActivity)
+                                try {
+                                    delegated.setRole(gid, km.getSigningPublicKey(),
+                                        targetBytes(pk), "Member", null, null, identity)
+                                } finally { identity.close() }
+                            } else {
+                                val mgr = CrdtGroupManager.getInstance(this@EditAdminRightsActivity)
+                                mgr.demoteAdmin(gid, pk)
+                                val authorName = KeyManager.getInstance(this@EditAdminRightsActivity)
+                                    .getUsername() ?: "Someone"
+                                mgr.sendSystemMessage(gid, "$authorName demoted $targetDisplayName")
+                            }
                         }
                         ThemedToast.show(this@EditAdminRightsActivity, "$targetDisplayName demoted")
                         finish()

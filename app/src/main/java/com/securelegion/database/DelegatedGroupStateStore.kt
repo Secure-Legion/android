@@ -281,6 +281,21 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
         } finally { db.endTransaction() }
     }
 
+    fun setRole(groupId: String, account: ByteArray, target: ByteArray,
+                role: String, rights: JSONObject?, title: String?,
+                identity: LocalDeviceIdentity,
+                nowMs: Long = System.currentTimeMillis()): String {
+        require(account.size == 32 && target.size == 32 &&
+            role in setOf("Member", "Admin") &&
+            (title == null || title.length <= 32 && title.none { it.isISOControl() }) &&
+            (role == "Admin" || rights == null))
+        val mutation = JSONObject().put("kind", "role_set")
+            .put("account_public", b64(target)).put("role", role)
+            .put("admin_rights", rights ?: JSONObject.NULL)
+            .put("custom_title", title ?: JSONObject.NULL)
+        return authorLiveMutation(groupId, account, mutation, identity, nowMs)
+    }
+
     private fun authorLiveMutation(groupId: String, account: ByteArray,
                                    mutation: JSONObject, identity: LocalDeviceIdentity,
                                    nowMs: Long,

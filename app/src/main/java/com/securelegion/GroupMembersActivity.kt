@@ -553,10 +553,6 @@ class GroupMembersActivity : BaseActivity() {
     }
 
     private fun confirmPromoteMember(member: GroupMemberItem) {
-        if (groupId?.let(::isDelegatedGroup) == true) {
-            ThemedToast.show(this, "Role changes are unavailable for this group")
-            return
-        }
         val gid = groupId ?: return
 
         if (member.role == "Owner") {
@@ -569,6 +565,22 @@ class GroupMembersActivity : BaseActivity() {
             val canPromote = withContext(Dispatchers.IO) {
                 if (currentUserRole == "Owner") return@withContext true
                 if (currentUserRole != "Admin") return@withContext false
+                if (isDelegatedGroup(gid)) {
+                    val km = KeyManager.getInstance(this@GroupMembersActivity)
+                    val db = SecureLegionDatabase.getInstance(this@GroupMembersActivity,
+                        km.getDatabasePassphrase())
+                    val ownHex = km.getSigningPublicKey()
+                        .joinToString("") { "%02x".format(it) }
+                    val members = DelegatedGroupStateStore(db)
+                        .read(gid, km.getSigningPublicKey()).getJSONArray("members")
+                    for (index in 0 until members.length()) {
+                        val row = members.getJSONObject(index)
+                        if (row.getString("pubkey_hex") == ownHex)
+                            return@withContext row.optJSONObject("admin_rights")
+                                ?.optBoolean("can_add_admins") == true
+                    }
+                    return@withContext false
+                }
                 val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
                 val myPubkeyHex = KeyManager.getInstance(this@GroupMembersActivity)
                     .getSigningPublicKey().joinToString("") { "%02x".format(it) }
