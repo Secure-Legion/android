@@ -1,0 +1,132 @@
+[package]
+name = "securelegion"
+version = "1.0.0"
+edition = "2021"
+authors = ["Secure Legion Team"]
+description = "Secure Legion core library - Privacy-focused messaging with zero metadata"
+
+[lib]
+name = "securelegion"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+securelegion-crypto = { path = "../securelegion-crypto", default-features = false, features = ["std"] }
+
+# Cryptography
+chacha20poly1305 = "0.10"
+crypto_secretbox = "0.1.1"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+argon2 = "0.5"
+zeroize = { version = "1.7", features = ["derive"] }
+rand = "0.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { version = "0.2", features = ["custom"] }
+sha3 = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+blake3 = "1.5"  # For PING hashing and replay detection
+subtle = "2.5"  # For constant-time comparison
+
+# Post-Quantum Cryptography (NIST FIPS 203)
+ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
+rand_chacha = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+serde-big-array = "0.5"
+ciborium = "0.2"  # CBOR encoding for CRDT op payloads
+
+# Encoding
+bs58 = "0.5"
+base64 = "0.21"
+hex = "0.4"
+base32 = "0.5"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log = { version = "0.4", features = ["release_max_level_off"] }
+
+# Time
+chrono = "0.4"
+
+# UUID
+uuid = { version = "1.6", features = ["v4"] }
+
+# Sync primitives
+once_cell = "1.19"
+arc-swap = "1"
+lru = "0.18.2"
+
+# Android-only dependencies
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+android_logger = "0.14"
+
+# Mobile-only: async runtime, Tor, networking
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "io-util", "process", "io-std"], optional = true }
+tokio-util = { version = "0.7", features = ["codec", "rt"], optional = true }
+bytes = { version = "1.5", optional = true }
+futures = { version = "0.3", optional = true }
+arti-client = { version = "0.44", default-features = false, features = [
+    "tokio",
+    "rustls",
+    "onion-service-client",
+    "onion-service-service",
+    "experimental-api",
+    "error_detail",
+    "static-sqlite",
+    "geoip",
+    "flowctl-cc",
+], optional = true }
+tor-rtcompat = { version = "0.44", features = ["tokio", "rustls"], optional = true }
+tor-hsservice = { version = "0.44", optional = true }
+tor-proto = { version = "0.44", optional = true }
+tor-cell = { version = "0.44", optional = true }
+tor-config-path = { version = "0.44", optional = true }
+tor-llcrypto = { version = "0.44", optional = true }
+tor-hscrypto = { version = "0.44", optional = true }
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4"
+
+[features]
+default = ["std", "platform-ffi", "mobile-network"]
+std = []
+platform-ffi = ["range-proofs"]
+range-proofs = ["securelegion-crypto/range-proofs"]
+mobile-network = [
+    "securelegion-crypto/mobile-network",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:bytes",
+    "dep:futures",
+    "dep:arti-client",
+    "dep:tor-rtcompat",
+    "dep:tor-hsservice",
+    "dep:tor-proto",
+    "dep:tor-cell",
+    "dep:tor-config-path",
+    "dep:tor-llcrypto",
+    "dep:tor-hscrypto",
+]
+network = ["dep:reqwest"]
+debug-logs = []  # Enable verbose logging for development builds
+
+[profile.release]
+opt-level = "z"  # Optimize for size (Arti is large)
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"  # Must unwind (not abort) so catch_unwind works in FFI
+
+[profile.dev]
+opt-level = 0

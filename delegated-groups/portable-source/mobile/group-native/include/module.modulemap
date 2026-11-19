@@ -1,0 +1,4 @@
+module SecureGroupNative {
+  header "SecureGroupNative.h"
+  export *
+}

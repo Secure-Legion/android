@@ -1,0 +1,197 @@
+[package]
+name = "securelegion-crypto"
+version = "1.0.0"
+edition = "2021"
+authors = ["Secure Legion Team"]
+description = "Privacy-focused cryptography, CRDT, audio, and Tor integration library"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "securelegion_crypto"
+crate-type = ["lib"]
+
+[dependencies]
+# Cryptography
+chacha20poly1305 = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+argon2 = "0.5"
+zeroize = { version = "1.7", features = ["derive"] }
+rand = "0.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { version = "0.2", features = ["custom"] }
+sha3 = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+blake3 = "1.5"
+subtle = "2.5"
+bulletproofs = { version = "5.0.0", optional = true }
+curve25519-dalek = { version = "4", features = ["rand_core"] }
+merlin = "3"
+
+# Post-Quantum Cryptography
+ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
+rand_chacha = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+serde-big-array = "0.5"
+ciborium = "0.2"
+
+# Encoding
+bs58 = "0.5"
+base64 = "0.21"
+hex = "0.4"
+base32 = "0.5"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+tor-error = { version = "0.44", optional = true }
+
+# Logging
+log = { version = "0.4", features = ["release_max_level_off"] }
+
+# Time
+chrono = "0.4"
+
+# UUID
+uuid = { version = "1.6", features = ["v4"] }
+
+# Sync primitives
+once_cell = "1.19"
+arc-swap = "1"
+lru = "0.18.2"
+
+# Android-only dependencies
+[target.'cfg(target_os = "android")'.dependencies]
+opus = { version = "0.3", optional = true }
+android_logger = { version = "0.14", optional = true }
+jni = { version = "0.21", optional = true }
+
+# Mobile-only (Android + iOS): async runtime, Tor, networking
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "io-util", "process", "io-std"], optional = true }
+tokio-util = { version = "0.7", features = ["codec"], optional = true }
+bytes = { version = "1.5", optional = true }
+futures = { version = "0.3", optional = true }
+arti-client = { version = "0.44", default-features = false, features = [
+    "tokio",
+    "rustls",
+    "onion-service-client",
+    "onion-service-service",
+    "experimental-api",
+    "error_detail",
+    "static-sqlite",
+    "geoip",
+    "flowctl-cc",
+], optional = true }
+tor-rtcompat = { version = "0.44", features = ["tokio", "rustls"], optional = true }
+# Arti 0.44 no longer chooses a rustls CryptoProvider for applications.
+# Install rustls' ring provider explicitly in initialize_arti(); keeping this
+# provider pure-Rust avoids adding the AWS-LC/CMake toolchain to Android builds.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+tor-hsservice = { version = "0.44", optional = true }
+tor-proto = { version = "0.44", features = ["stream-ctrl"], optional = true }
+tor-cell = { version = "0.44", optional = true }
+tor-config-path = { version = "0.44", optional = true }
+tor-llcrypto = { version = "0.44", optional = true }
+tor-hscrypto = { version = "0.44", optional = true }
+tor-netdir = { version = "0.44", features = ["geoip", "experimental-api"], optional = true }
+tor-linkspec = { version = "0.44", optional = true }
+tor-dirmgr = { version = "0.44", optional = true }
+tor-geoip = { version = "0.44", optional = true }
+
+# SHA-pinned cherry-pick of arti MR !3940
+# (https://gitlab.torproject.org/tpo/core/arti/-/merge_requests/3940
+#  "hsclient: Fix numerous bugs in timeout estimators").
+# Patches HS-client circuit timeout bugs that cause premature failures and
+# wasted Tor circuits on Android. Remove this block once the MR is merged
+# and a new arti release ships including it.
+#
+# We patch the entire arti/tor-* graph (not just tor-hsclient + tor-circmgr)
+# because the MR branch is rebased on a newer main than 2.2.0 — released
+# 0.41 crates have incompatible transitive deps (derive-deftly 1.6 vs 1.11).
+# Pinning all crates to the same SHA keeps the graph version-consistent.
+# Historical path list retained as inert package metadata for auditability. It is deliberately
+# not a Cargo [patch] table; upstream Arti 0.44 is the only build graph used by build 33.
+[package.metadata.obsolete-vendored-arti]
+arti-client     = { path = "../third_party/arti-patched/crates/arti-client" }
+caret           = { path = "../third_party/arti-patched/crates/caret" }
+fs-mistrust     = { path = "../third_party/arti-patched/crates/fs-mistrust" }
+fslock-guard    = { path = "../third_party/arti-patched/crates/fslock-guard" }
+oneshot-fused-workaround = { path = "../third_party/arti-patched/crates/oneshot-fused-workaround" }
+retry-error     = { path = "../third_party/arti-patched/crates/retry-error" }
+safelog         = { path = "../third_party/arti-patched/crates/safelog" }
+slotmap-careful = { path = "../third_party/arti-patched/crates/slotmap-careful" }
+tor-async-utils = { path = "../third_party/arti-patched/crates/tor-async-utils" }
+tor-basic-utils = { path = "../third_party/arti-patched/crates/tor-basic-utils" }
+tor-bytes       = { path = "../third_party/arti-patched/crates/tor-bytes" }
+tor-rtcompat    = { path = "../third_party/arti-patched/crates/tor-rtcompat" }
+tor-hsclient    = { path = "../third_party/arti-patched/crates/tor-hsclient" }
+tor-hsservice   = { path = "../third_party/arti-patched/crates/tor-hsservice" }
+tor-cert        = { path = "../third_party/arti-patched/crates/tor-cert" }
+tor-chanmgr     = { path = "../third_party/arti-patched/crates/tor-chanmgr" }
+tor-checkable   = { path = "../third_party/arti-patched/crates/tor-checkable" }
+tor-circmgr     = { path = "../third_party/arti-patched/crates/tor-circmgr" }
+tor-config      = { path = "../third_party/arti-patched/crates/tor-config" }
+tor-consdiff    = { path = "../third_party/arti-patched/crates/tor-consdiff" }
+tor-dirclient   = { path = "../third_party/arti-patched/crates/tor-dirclient" }
+tor-dircommon   = { path = "../third_party/arti-patched/crates/tor-dircommon" }
+tor-error       = { path = "../third_party/arti-patched/crates/tor-error" }
+tor-general-addr = { path = "../third_party/arti-patched/crates/tor-general-addr" }
+tor-proto       = { path = "../third_party/arti-patched/crates/tor-proto" }
+tor-cell        = { path = "../third_party/arti-patched/crates/tor-cell" }
+tor-config-path = { path = "../third_party/arti-patched/crates/tor-config-path" }
+tor-llcrypto    = { path = "../third_party/arti-patched/crates/tor-llcrypto" }
+tor-hscrypto    = { path = "../third_party/arti-patched/crates/tor-hscrypto" }
+tor-netdir      = { path = "../third_party/arti-patched/crates/tor-netdir" }
+tor-linkspec    = { path = "../third_party/arti-patched/crates/tor-linkspec" }
+tor-dirmgr      = { path = "../third_party/arti-patched/crates/tor-dirmgr" }
+tor-geoip       = { path = "../third_party/arti-patched/crates/tor-geoip" }
+tor-guardmgr    = { path = "../third_party/arti-patched/crates/tor-guardmgr" }
+tor-key-forge   = { path = "../third_party/arti-patched/crates/tor-key-forge" }
+tor-keymgr      = { path = "../third_party/arti-patched/crates/tor-keymgr" }
+tor-log-ratelim = { path = "../third_party/arti-patched/crates/tor-log-ratelim" }
+tor-memquota    = { path = "../third_party/arti-patched/crates/tor-memquota" }
+tor-memquota-cost = { path = "../third_party/arti-patched/crates/tor-memquota-cost" }
+tor-netdoc      = { path = "../third_party/arti-patched/crates/tor-netdoc" }
+tor-persist     = { path = "../third_party/arti-patched/crates/tor-persist" }
+tor-protover    = { path = "../third_party/arti-patched/crates/tor-protover" }
+tor-relay-selection = { path = "../third_party/arti-patched/crates/tor-relay-selection" }
+tor-rtmock      = { path = "../third_party/arti-patched/crates/tor-rtmock" }
+tor-socksproto  = { path = "../third_party/arti-patched/crates/tor-socksproto" }
+tor-units       = { path = "../third_party/arti-patched/crates/tor-units" }
+web-time-compat = { path = "../third_party/arti-patched/crates/web-time-compat" }
+
+[features]
+default = ["std", "mobile-network", "range-proofs"]
+std = []
+range-proofs = ["dep:bulletproofs"]
+mobile-network = [
+    "dep:opus",
+    "dep:android_logger",
+    "dep:jni",
+    "dep:tor-error",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:bytes",
+    "dep:futures",
+    "dep:arti-client",
+    "dep:tor-rtcompat",
+    "dep:rustls",
+    "dep:tor-hsservice",
+    "dep:tor-proto",
+    "dep:tor-cell",
+    "dep:tor-config-path",
+    "dep:tor-llcrypto",
+    "dep:tor-hscrypto",
+    "dep:tor-netdir",
+    "dep:tor-linkspec",
+    "dep:tor-dirmgr",
+    "dep:tor-geoip",
+]
+debug-logs = []
