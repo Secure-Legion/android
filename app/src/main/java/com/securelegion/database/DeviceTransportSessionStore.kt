@@ -1,10 +1,12 @@
 package com.securelegion.database
 
+import android.util.Log
 import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.sync.DeviceTransportFrame
+import java.security.MessageDigest
 import java.util.Base64
 
 /** C0v2 request/prekey handshake, persisted before any network reply. */
@@ -12,6 +14,12 @@ internal class DeviceTransportSessionStore(
     private val database: SecureLegionDatabase,
     private val roster: DeviceRosterStore
 ) {
+    private companion object {
+        const val TAG = "DeviceTransportSession"
+        const val RECEIVE_WINDOW = 16L
+        const val SKIPPED_RETENTION = 64L
+        const val MAX_RECEIPTS = 100_000L
+    }
     data class Request(val sessionId: ByteArray, val wire: ByteArray)
 
     fun request(localAccount: ByteArray, recipientAccount: ByteArray,
@@ -356,16 +364,27 @@ internal class DeviceTransportSessionStore(
             val account = encoded(frame.senderAccount)
             val old = db.query(SimpleSQLiteQuery(
                 "SELECT session_id,counter,wire_hash,ack_wire FROM device_transport_receipts " +
-                    "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? AND job_id=?",
-                arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId)
-            )).use { c -> if (!c.moveToFirst()) null else Receipt(c.getBlob(0),
-                c.getLong(1), c.getBlob(2), c.getBlob(3)) }
-            if (old != null) {
-                require(old.session.contentEquals(frame.sessionId) && old.counter == frame.counter &&
-                    old.hash.contentEquals(frame.exactWireHash)) { "Conflicting transport replay" }
+                    "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? " +
+                    "AND (job_id=? OR (session_id=? AND counter=?)) LIMIT 2",
+                arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId,
+                    frame.sessionId, frame.counter)
+            )).use { c -> buildList {
+                while (c.moveToNext()) add(Receipt(c.getBlob(0), c.getLong(1),
+                    c.getBlob(2), c.getBlob(3)))
+            } }
+            if (old.isNotEmpty()) {
+                require(old.size == 1 && old[0].session.contentEquals(frame.sessionId) &&
+                    old[0].counter == frame.counter &&
+                    old[0].hash.contentEquals(frame.exactWireHash)) {
+                    "Conflicting transport replay"
+                }
                 db.setTransactionSuccessful()
-                return old.ack
+                return old[0].ack
             }
+            val receiptCount = db.query(SimpleSQLiteQuery(
+                "SELECT COUNT(*) FROM device_transport_receipts"
+            )).use { check(it.moveToFirst()); it.getLong(0) }
+            require(receiptCount < MAX_RECEIPTS) { "Transport receipt capacity reached" }
             val session = db.query(SimpleSQLiteQuery(
                 "SELECT state,counter,chain_key,prekey_wire,prekey_x,prekey_kem " +
                     "FROM device_transport_sessions WHERE account_ed=? AND peer_device_id=? " +
@@ -376,52 +395,134 @@ internal class DeviceTransportSessionStore(
                 if (c.isNull(4)) null else c.getBlob(4),
                 if (c.isNull(5)) null else c.getBlob(5)) }
                 ?: throw IllegalArgumentException("Unknown transport session")
-            require(frame.counter == session.counter) { "Counter gap or replay" }
-            val initial = frame.payload[0].toInt() == 1
-            val chain = if (session.state == "prekey") {
-                require(initial && session.prekeyX != null && session.prekeyKem != null)
-                val prekey = DeviceTransportFrame.parse(session.prekeyWire)
-                val secret = RustBridge.hybridDecapsulate(session.prekeyX,
-                    session.prekeyKem, frame.payload.copyOfRange(1, 1601))
-                    ?: throw IllegalArgumentException("Invalid hybrid ciphertext")
-                try { RustBridge.deriveRootKey(secret, prekey.keyContext) }
-                    finally { secret.fill(0) }
-            } else {
-                require(session.state == "ready")
-                session.chain ?: throw IllegalArgumentException("Missing receive chain")
-            }
+            if (frame.counter != session.counter) Log.i(TAG,
+                "C0 receive ${if (frame.counter > session.counter) "gap" else "late"}: " +
+                    "received=${frame.counter} expected=${session.counter} " +
+                    "session=${sha256(frame.sessionId)} wire=${frame.exactWireHash.toHex()}")
+            val decrypted = decryptData(db, frame, session, account, identity.deviceId)
             try {
-                val encrypted = frame.payload.copyOfRange(1 + if (initial) 1600 else 0,
-                    frame.payload.size)
-                val decrypted = RustBridge.decryptMessageWithEvolution(encrypted, chain,
-                    frame.counter) ?: throw IllegalArgumentException("Invalid transport ciphertext")
-                val plain = decrypted.plaintext.toByteArray(Charsets.ISO_8859_1)
-                try {
-                    val logicalId = DeviceTransportFrame.logicalId(frame.senderAccount,
-                        frame.senderDeviceId, frame.jobId)
-                    val ready = commitPayload(db, logicalId, plain)
-                    val ack = DeviceTransportFrame.sign(
-                        if (ready) DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK
-                            else DeviceTransportFrame.Kind.DEVICE_STORAGE_ACK,
-                        frame.recipientAccount, frame.senderAccount, identity.deviceId,
-                        frame.senderDeviceId, frame.sessionId, frame.counter, frame.jobId,
-                        frame.exactWireHash, identity)
+                val logicalId = DeviceTransportFrame.logicalId(frame.senderAccount,
+                    frame.senderDeviceId, frame.jobId)
+                val ready = commitPayload(db, logicalId, decrypted.plain)
+                val ack = DeviceTransportFrame.sign(
+                    if (ready) DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK
+                        else DeviceTransportFrame.Kind.DEVICE_STORAGE_ACK,
+                    frame.recipientAccount, frame.senderAccount, identity.deviceId,
+                    frame.senderDeviceId, frame.sessionId, frame.counter, frame.jobId,
+                    frame.exactWireHash, identity)
+                if (decrypted.nextChain != null) {
                     db.execSQL("UPDATE device_transport_sessions SET state='ready',chain_key=?," +
                         "counter=?,prekey_x=NULL,prekey_kem=NULL WHERE account_ed=? " +
                         "AND peer_device_id=? AND local_device_id=? AND session_id=? AND direction='rx'",
-                        arrayOf(decrypted.evolvedChainKey, frame.counter + 1, account,
+                        arrayOf(decrypted.nextChain, frame.counter + 1, account,
                             frame.senderDeviceId, identity.deviceId, frame.sessionId))
-                    db.execSQL("INSERT INTO device_transport_receipts " +
-                        "(account_ed,peer_device_id,local_device_id,session_id,counter," +
-                        "job_id,wire_hash,ack_wire,committed_at_ms) VALUES (?,?,?,?,?,?,?,?,?)",
+                    val pruneBefore = maxOf(0L, frame.counter + 1 - SKIPPED_RETENTION)
+                    db.execSQL("DELETE FROM device_transport_skipped_keys WHERE " +
+                        "account_ed=? AND peer_device_id=? AND local_device_id=? " +
+                        "AND session_id=? AND counter<?",
                         arrayOf(account, frame.senderDeviceId, identity.deviceId,
-                            frame.sessionId, frame.counter, frame.jobId,
-                            frame.exactWireHash, ack.wire, nowMs))
-                    db.setTransactionSuccessful()
-                    return ack.wire
-                } finally { plain.fill(0); decrypted.evolvedChainKey.fill(0) }
-            } finally { chain.fill(0) }
+                            frame.sessionId, pruneBefore))
+                }
+                db.execSQL("INSERT INTO device_transport_receipts " +
+                    "(account_ed,peer_device_id,local_device_id,session_id,counter," +
+                    "job_id,wire_hash,ack_wire,committed_at_ms) VALUES (?,?,?,?,?,?,?,?,?)",
+                    arrayOf(account, frame.senderDeviceId, identity.deviceId,
+                        frame.sessionId, frame.counter, frame.jobId,
+                        frame.exactWireHash, ack.wire, nowMs))
+                db.setTransactionSuccessful()
+                return ack.wire
+            } finally { decrypted.plain.fill(0); decrypted.nextChain?.fill(0) }
         } finally { db.endTransaction() }
+    }
+
+    /** Ratchet movement and skipped-key consumption are enclosed by acceptData's transaction. */
+    private fun decryptData(db: SupportSQLiteDatabase, frame: DeviceTransportFrame,
+                            session: ReceiveSession, account: String,
+                            localDeviceId: String): ReceivePlain {
+        require(frame.counter < DeviceTransportFrame.MAX_COUNTER)
+        val initial = frame.payload[0].toInt() == 1
+        val encrypted = frame.payload.copyOfRange(1 + if (initial) 1600 else 0,
+            frame.payload.size)
+        require(encrypted.size >= 49 && encrypted[0] == 1.toByte() &&
+            java.nio.ByteBuffer.wrap(encrypted, 1, 8).long == frame.counter) {
+            "Invalid transport ciphertext sequence"
+        }
+        if (frame.counter < session.counter) {
+            require(session.state == "ready") { "Old transport counter" }
+            val key = db.query(SimpleSQLiteQuery(
+                "SELECT message_key FROM device_transport_skipped_keys WHERE " +
+                    "account_ed=? AND peer_device_id=? AND local_device_id=? " +
+                    "AND session_id=? AND counter=? LIMIT 1",
+                arrayOf(account, frame.senderDeviceId, localDeviceId,
+                    frame.sessionId, frame.counter)
+            )).use { if (it.moveToFirst()) it.getBlob(0) else null }
+                ?: throw IllegalArgumentException("Old or replayed transport counter")
+            try {
+                require(key.size == 32)
+                val text = RustBridge.decryptWithMessageKey(encrypted, key)
+                    ?: throw IllegalArgumentException("Invalid skipped transport ciphertext")
+                val plain = text.toByteArray(Charsets.ISO_8859_1)
+                try {
+                    db.execSQL("DELETE FROM device_transport_skipped_keys WHERE " +
+                        "account_ed=? AND peer_device_id=? AND local_device_id=? " +
+                        "AND session_id=? AND counter=?",
+                        arrayOf(account, frame.senderDeviceId, localDeviceId,
+                            frame.sessionId, frame.counter))
+                    return ReceivePlain(plain, null)
+                } catch (e: Exception) { plain.fill(0); throw e }
+            } finally { key.fill(0); session.chain?.fill(0) }
+        }
+        require(frame.counter - session.counter < RECEIVE_WINDOW) {
+            "Transport counter gap exceeds receive window"
+        }
+        var chain = if (session.state == "prekey") {
+            require(initial && frame.counter < RECEIVE_WINDOW &&
+                session.prekeyX != null && session.prekeyKem != null) {
+                "Initial transport packet required"
+            }
+            val prekey = DeviceTransportFrame.parse(session.prekeyWire)
+            val secret = RustBridge.hybridDecapsulate(session.prekeyX,
+                session.prekeyKem, frame.payload.copyOfRange(1, 1601))
+                ?: throw IllegalArgumentException("Invalid hybrid ciphertext")
+            try { RustBridge.deriveRootKey(secret, prekey.keyContext) }
+            finally { secret.fill(0) }
+        } else {
+            require(session.state == "ready")
+            session.chain ?: throw IllegalArgumentException("Missing receive chain")
+        }
+        try {
+            require(chain.size == 32)
+            var missing = session.counter
+            while (missing < frame.counter) {
+                val key = RustBridge.deriveMessageKey(chain)
+                var next: ByteArray? = null
+                try {
+                    require(key.size == 32)
+                    next = RustBridge.evolveChainKey(chain)
+                    require(next.size == 32)
+                    db.execSQL("INSERT INTO device_transport_skipped_keys " +
+                        "(account_ed,peer_device_id,local_device_id,session_id,counter," +
+                        "message_key) VALUES (?,?,?,?,?,?)",
+                        arrayOf(account, frame.senderDeviceId, localDeviceId,
+                            frame.sessionId, missing, key))
+                    chain.fill(0)
+                    chain = next
+                    next = null
+                    missing++
+                } finally { key.fill(0); next?.fill(0) }
+            }
+            val decrypted = RustBridge.decryptMessageWithEvolution(encrypted, chain,
+                frame.counter) ?: throw IllegalArgumentException("Invalid transport ciphertext")
+            require(decrypted.evolvedChainKey.size == 32)
+            return ReceivePlain(decrypted.plaintext.toByteArray(Charsets.ISO_8859_1),
+                decrypted.evolvedChainKey)
+        } finally { chain.fill(0) }
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).toHex()
+    private fun ByteArray.toHex(): String = joinToString("") {
+        "%02x".format(it.toInt() and 255)
     }
 
     fun acceptAcknowledgment(frame: DeviceTransportFrame, identity: LocalDeviceIdentity,
@@ -482,6 +583,7 @@ internal class DeviceTransportSessionStore(
     private data class ReceiveSession(val state: String, val counter: Long,
         val chain: ByteArray?, val prekeyWire: ByteArray,
         val prekeyX: ByteArray?, val prekeyKem: ByteArray?)
+    private data class ReceivePlain(val plain: ByteArray, val nextChain: ByteArray?)
     private data class Receipt(val session: ByteArray, val counter: Long,
         val hash: ByteArray, val ack: ByteArray)
 
