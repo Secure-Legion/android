@@ -108,9 +108,15 @@ internal class NearbyHistoryPublisher(private val context: Context,
                     val delta = DelegatedGroupOwnHistory(database).export(
                         groupId, account, identity)
                     val id = delta.getString("group_snapshot_id")
+                    val changedAt = db.query(SimpleSQLiteQuery(
+                        "SELECT MAX(changed_at_ms) FROM device_sync_source_changes " +
+                            "WHERE topic='groups' AND object_id=?",
+                        arrayOf(groupId))).use { c ->
+                        if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L
+                    }
                     if (!hasPending(peer, "groups", id))
                         queue(account, local, peer, "groups", id,
-                            delta, System.currentTimeMillis())
+                            delta, maxOf(System.currentTimeMillis(), changedAt + 1))
                 } finally { identity.close() }
                 continue
             }

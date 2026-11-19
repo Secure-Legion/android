@@ -39,7 +39,11 @@ run the device onion loop. Nearby can carry receipt-bound mixed group history
 between mutually capable own-account devices.
 An accepted inbound bundle marks own-account history dirty in the same commit.
 Single-installation accounts sign an account storage ACK; other accounts send a
-device storage ACK until catch-up responsibility is durable. Outgoing bubbles
+device storage ACK until catch-up responsibility is durable. The receiver now
+promotes a stored device ACK only after every currently authorized installation
+has authenticated the same later `group_history_v:1` event over own-account
+SYNC. The account ACK is persisted before transmission and retried after a
+send failure. Outgoing bubbles
 remain Pending until exact account ACKs cover their recipient obligations, and
 an ACK commit refreshes an open group chat.
 Owner group deletion and self-leave now publish native terminal operations.
@@ -51,9 +55,8 @@ operations. The current primary may approve missing, already accepted own
 operation hashes using its local Root seed inside an atomic proof transaction.
 Network requests do not invoke Root signing.
 
-This remains an integration checkpoint. Multi-device account-level
-responsibility ACKs, Android-created
-group activation, and mixed-platform end-to-end tests remain.
+This remains an integration checkpoint. Android-created group activation and
+mixed-platform end-to-end tests remain.
 `delegated_groups_v1` is withheld. The current APK should not replace a user's
 account installation until those paths are complete and verified on a test
 profile. The iOS receiver is also required for group delivery to iOS members.

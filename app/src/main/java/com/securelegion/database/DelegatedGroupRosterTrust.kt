@@ -11,6 +11,30 @@ import org.json.JSONObject
 internal class DelegatedGroupRosterTrust(private val database: SecureLegionDatabase) {
     data class Endpoint(val signingKey: ByteArray, val onion: String)
 
+    /** Resolve a sender again before a delayed account ACK is transmitted. */
+    fun endpointForInTransaction(db: SupportSQLiteDatabase, account: ByteArray,
+                                 deviceId: String, nowMs: Long): Endpoint? {
+        require(db.inTransaction() && account.size == 32)
+        val encoded = DeviceRosterStore(database).fetchSignedRoster(account)
+            ?: db.query(SimpleSQLiteQuery("SELECT roster FROM " +
+                "delegated_group_trusted_rosters WHERE account_ed=?",
+                arrayOf(b64(account)))).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getBlob(0) else null
+            } ?: return null
+        val entries = verify(encoded, account, null, nowMs).getJSONArray("entries")
+        for (index in 0 until entries.length()) {
+            val cert = entries.getJSONObject(index).getJSONObject("certificate")
+            if (cert.getString("device_id") != deviceId) continue
+            if (cert.getInt("capabilities") and 0x04 == 0 ||
+                nowMs !in cert.getLong("issued_at_ms") until cert.getLong("expires_at_ms"))
+                return null
+            val key = Base64.decode(cert.getString("device_ed"), Base64.DEFAULT)
+            require(key.size == 32)
+            return Endpoint(key, cert.getString("onion") + ".onion")
+        }
+        return null
+    }
+
     fun observeOwn(account: ByteArray, encoded: ByteArray, nowMs: Long) {
         val current = DeviceRosterStore(database).fetchSignedRoster(account)
             ?: throw IllegalStateException("Local roster unavailable")

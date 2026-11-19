@@ -62,6 +62,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
     private var job: Job? = null
     private var directArti = false
     private var nextProofScanMs = 0L
+    private var nextAccountAckScanMs = 0L
     private var proofScanCursor = ""
     private val proofDue = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -702,6 +703,20 @@ internal class DeviceRosterRuntime(private val context: Context) {
                           database: SecureLegionDatabase,
                           nowMs: Long) {
         if (!roster.isLocalAuthorized(account, identity.deviceId, 0x04, nowMs)) return
+        if (nowMs >= nextAccountAckScanMs) {
+            nextAccountAckScanMs = nowMs + 10_000L
+            try {
+                val catchup = com.securelegion.database.DelegatedGroupAccountAck(database)
+                for (ack in catchup.due(account, identity, nowMs)) {
+                    if (!SessionManager.isUnlocked(context) ||
+                        !roster.isLocalAuthorized(account, identity.deviceId, 0x06)) break
+                    if (RustBridge.sendDeviceOnionFrame(ack.onion, ack.wire))
+                        catchup.markSent(ack.id, nowMs)
+                }
+            } catch (error: Exception) {
+                Log.w(TAG, "Group account ACK deferred: ${error.message}")
+            }
+        }
         for (intent in messages.due(account, identity.deviceId, nowMs).take(4))
             try { messages.convert(intent.id, account, identity, nowMs) }
             catch (error: Exception) {

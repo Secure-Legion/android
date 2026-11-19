@@ -192,6 +192,29 @@ internal class DeviceGroupFrame private constructor(
             return parse(bytes)
         }
 
+        /** Re-sign an already committed device ACK after own-device catch-up. */
+        fun promoteCommittedAck(deviceAck: DeviceGroupFrame, localAccount: ByteArray,
+                                identity: LocalDeviceIdentity, signedRoster: ByteArray,
+                                nowMs: Long = System.currentTimeMillis()): DeviceGroupFrame {
+            require(deviceAck.kind == Kind.DEVICE_STORAGE_ACK &&
+                deviceAck.senderAccount.contentEquals(localAccount) &&
+                deviceAck.senderDeviceId == identity.deviceId &&
+                deviceAck.verify(identity.signingPublicKey, 0x06, nowMs) &&
+                signedRoster.size in 1..MAX_ROSTER_BYTES && nowMs in 1..MAX_SAFE_INTEGER)
+            val bytes = ByteArray(HEADER_BYTES + signedRoster.size + SIGNATURE_BYTES)
+            deviceAck.wire.copyInto(bytes, 0, 0, HEADER_BYTES)
+            putU32(bytes, 1, bytes.size - 5)
+            bytes[6] = Kind.ACCOUNT_STORAGE_ACK.code.toByte()
+            putU64(bytes, 231, nowMs)
+            putU16(bytes, 247, signedRoster.size)
+            signedRoster.copyInto(bytes, HEADER_BYTES)
+            val signature = identity.sign(SIGNATURE_DOMAIN +
+                bytes.copyOfRange(0, bytes.size - SIGNATURE_BYTES))
+            require(signature.size == SIGNATURE_BYTES)
+            signature.copyInto(bytes, bytes.size - SIGNATURE_BYTES)
+            return parse(bytes)
+        }
+
         /** Creates one encrypted C2 chunk for a currently authorized recipient. */
         fun sealChunk(kind: Kind, localAccount: ByteArray,
                       recipientAccount: ByteArray, recipientDeviceId: String,
