@@ -9,7 +9,7 @@ internal object OwnDeviceSyncPolicy {
     )
 
     fun isReservedNetworkType(type: Int): Boolean =
-        type in 0xA3..0xA5 || type in 0xB0..0xB7 || type == 0xC0
+        type in 0xA3..0xA5 || type in 0xB0..0xB7 || type == 0xC0 || type == 0xC2
 
     fun canSendTorTopic(topic: String): Boolean = topic in torTopics
 

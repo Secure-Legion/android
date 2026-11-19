@@ -20,9 +20,15 @@ internal class DeviceSyncGroupReceiver(database: SecureLegionDatabase,
     fun receive(account: ByteArray, local: String, part: DeviceSyncChunkStore.Part,
                 nowMs: Long = System.currentTimeMillis()): DeviceSyncChunkStore.Result {
         require(part.topic == "groups" || part.topic == "group_links")
-        return chunks.receive(account, local, part, nowMs) { db, canonical ->
+        return chunks.receive(account, local, part, nowMs) apply@{ db, canonical ->
             val delta = JSONObject(canonical.toString(Charsets.UTF_8))
             val snapshot = DeviceSyncGroupDelta.parse(delta, part.topic, part.objectId)
+            // The legacy reader cannot interpret SLGO01/SLGE01 mixed history.
+            val delegated = db.query(SimpleSQLiteQuery(
+                "SELECT 1 FROM delegated_group_states WHERE group_id=? LIMIT 1",
+                arrayOf(part.objectId)
+            )).use { it.moveToFirst() }
+            if (delegated) return@apply false
             val digest = part.digestHex.hexBytes()
             val prior = db.query(SimpleSQLiteQuery(
                 "SELECT event_time_ms,digest FROM device_sync_versions WHERE " +

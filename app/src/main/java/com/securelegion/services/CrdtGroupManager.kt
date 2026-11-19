@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.util.Log
+import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
@@ -557,6 +558,14 @@ class CrdtGroupManager private constructor(private val context: Context) {
     private fun getDatabase(): SecureLegionDatabase {
         val dbPassphrase = keyManager.getDatabasePassphrase()
         return SecureLegionDatabase.getInstance(context, dbPassphrase)
+    }
+
+    private fun requireLegacyGroup(groupId: String) {
+        val adopted = getDatabase().openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT 1 FROM delegated_group_states WHERE group_id=? LIMIT 1",
+            arrayOf(groupId)
+        )).use { it.moveToFirst() }
+        check(!adopted) { "Group uses delegated mixed history" }
     }
 
     // ==================== Wire Format Helpers ====================
@@ -2027,6 +2036,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @return true if group is loaded (either freshly or was already loaded)
      */
     suspend fun loadGroup(groupId: String): Boolean {
+        requireLegacyGroup(groupId)
         synchronized(loadedGroups) {
             if (loadedGroups.contains(groupId)) return true
         }
@@ -2052,6 +2062,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @return true if group is loaded (or was already loaded)
      */
     private suspend fun ensureLoaded(groupId: String): Boolean {
+        requireLegacyGroup(groupId)
         synchronized(loadedGroups) {
             if (loadedGroups.contains(groupId)) return true
         }
@@ -2323,6 +2334,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @return Triple(raw op bytes for Tor broadcast, msg_id hex, op_id)
      */
     suspend fun sendMessage(groupId: String, plaintext: String): Triple<ByteArray, String, String> {
+        requireLegacyGroup(groupId)
         val group = getDatabase().groupDao().getGroupById(groupId)
             ?: throw IllegalStateException("Group $groupId not found")
 
@@ -2516,6 +2528,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      *   notification or increment an unread badge.
      */
     suspend fun applyReceivedOps(groupId: String, rawPackedBytes: ByteArray): ApplyOpsResult {
+        requireLegacyGroup(groupId)
         val db = getDatabase()
 
         // 1. Persist individual ops in DB (persistence before state)
@@ -2928,6 +2941,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         groupId: String,
         opType: String
     ): ByteArray {
+        requireLegacyGroup(groupId)
         val result = JSONObject(resultJson)
         val opBytesB64 = result.getString("op_bytes_b64")
         val opId = result.getString("op_id")

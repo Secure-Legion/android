@@ -213,6 +213,25 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
                     ))
             }
             for (removed in oldEndpoints.keys - ids.toSet()) {
+                val accountHex = pinnedAccount.joinToString("") {
+                    "%02x".format(it.toInt() and 0xff)
+                }
+                db.execSQL("DELETE FROM delegated_group_inbox WHERE " +
+                    "sender_account=? AND sender_device=?", arrayOf(accountHex, removed))
+                db.execSQL("DELETE FROM delegated_group_inbound_receipts WHERE " +
+                    "sender_account=? AND sender_device=?", arrayOf(accountHex, removed))
+                db.execSQL("DELETE FROM delegated_group_delivery_batches WHERE " +
+                    "target_account=? AND target_device=?", arrayOf(account, removed))
+                if (removed == localDeviceId) {
+                    db.execSQL("DELETE FROM delegated_group_inbox WHERE local_device=?",
+                        arrayOf(removed))
+                    db.execSQL("DELETE FROM delegated_group_inbound_receipts WHERE " +
+                        "local_device=?", arrayOf(removed))
+                    db.execSQL("DELETE FROM delegated_group_message_outbox WHERE " +
+                        "local_device=?", arrayOf(removed))
+                    db.execSQL("DELETE FROM delegated_group_delivery_batches WHERE " +
+                        "local_device=?", arrayOf(removed))
+                }
                 for (table in arrayOf("device_transport_epochs", "device_transport_sessions",
                     "device_transport_jobs", "device_transport_receipts",
                     "device_transport_skipped_keys")) {
@@ -277,11 +296,11 @@ class DeviceRosterStore(private val database: SecureLegionDatabase) {
         val account = Base64.encodeToString(pinnedAccount, Base64.NO_WRAP)
         val db = database.openHelper.readableDatabase
         db.query(SimpleSQLiteQuery(
-            "SELECT capabilities,expiresAtMs FROM authorized_devices WHERE accountEd = ? AND deviceId = ?",
+            "SELECT capabilities,issuedAtMs,expiresAtMs FROM authorized_devices WHERE accountEd = ? AND deviceId = ?",
             arrayOf(account, deviceId)
         )).use {
             return it.moveToFirst() && it.getInt(0) and capability == capability &&
-                nowMs in 1 until it.getLong(1)
+                nowMs in maxOf(1L, it.getLong(1)) until it.getLong(2)
         }
     }
 

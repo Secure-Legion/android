@@ -8,6 +8,8 @@ class OwnDeviceSyncPolicyTest {
     @Test fun reservedDeviceFramesCannotEnterContactParser() {
         for (type in 0xA3..0xA5) assertTrue(OwnDeviceSyncPolicy.isReservedNetworkType(type))
         for (type in 0xB0..0xB7) assertTrue(OwnDeviceSyncPolicy.isReservedNetworkType(type))
+        assertTrue(OwnDeviceSyncPolicy.isReservedNetworkType(0xC0))
+        assertTrue(OwnDeviceSyncPolicy.isReservedNetworkType(0xC2))
         for (type in listOf(0x03, 0x07, 0x30, 0x82))
             assertFalse(OwnDeviceSyncPolicy.isReservedNetworkType(type))
     }
