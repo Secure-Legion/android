@@ -11,6 +11,7 @@ import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DelegatedGroupReceiver
+import com.securelegion.database.DelegatedGroupProofExchange
 import com.securelegion.database.DelegatedGroupDeliveryStore
 import com.securelegion.database.DelegatedGroupMessageOutbox
 import com.securelegion.database.LinkedChatStore
@@ -59,6 +60,9 @@ import kotlinx.coroutines.withContext
 internal class DeviceRosterRuntime(private val context: Context) {
     private var job: Job? = null
     private var directArti = false
+    private var nextProofScanMs = 0L
+    private var proofScanCursor = ""
+    private val proofDue = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     fun start(scope: CoroutineScope, directArti: Boolean = false) {
         if (job?.isActive == true) return
@@ -242,7 +246,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                 }
                                 0xA5 -> exchange.acceptAcknowledgment(frame, account)
                                 DeviceGroupFrame.TYPE -> handleGroupFrame(frame, account,
-                                    identity, roster, delegatedReceiver, delegatedDelivery)
+                                    identity, roster, delegatedReceiver, delegatedDelivery,
+                                    database)
                                 0xC0 -> {
                                     val incoming = DeviceTransportFrame.parse(frame)
                                     require(incoming.recipientAccount.contentEquals(account) &&
@@ -465,7 +470,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                         }
                         nextSendMs = now + 10_000L
                         pumpGroup(account, identity, roster, delegatedMessages,
-                            delegatedDelivery, now)
+                            delegatedDelivery, database, now)
                         if (roster.isLocalAuthorized(account, identity.deviceId, 0x01, now)) {
                             repeat(3) {
                                 if (transport.nextDataWire(account, identity,
@@ -624,7 +629,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 if (frame != null && frame.isNotEmpty() &&
                     frame[0].toInt() and 255 == DeviceGroupFrame.TYPE)
                     try { handleGroupFrame(frame, account, identity, roster,
-                        receiver, delivery) }
+                        receiver, delivery, database) }
                     catch (error: Exception) {
                         Log.w(TAG, "Group frame rejected: ${error.message}")
                     }
@@ -634,7 +639,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 lastSequence = sequence
                 if ((now >= nextSendMs || changed) && (directArti ||
                         TorService.getTransportGate()?.isOpenNow() == true)) {
-                    pumpGroup(account, identity, roster, messages, delivery, now)
+                    pumpGroup(account, identity, roster, messages, delivery,
+                        database, now)
                     nextSendMs = now + 10_000L
                 }
                 delay(250)
@@ -646,8 +652,18 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                  identity: LocalDeviceIdentity,
                                  roster: DeviceRosterStore,
                                  receiver: DelegatedGroupReceiver,
-                                 delivery: DelegatedGroupDeliveryStore) {
+                                 delivery: DelegatedGroupDeliveryStore,
+                                 database: SecureLegionDatabase) {
         val incoming = DeviceGroupFrame.parse(wire)
+        if (incoming.kind == DeviceGroupFrame.Kind.PROOF_REQUEST) {
+            DelegatedGroupProofExchange(database).respond(incoming, account,
+                identity)?.let { (onion, reply) ->
+                if (SessionManager.isUnlocked(context) &&
+                    roster.isLocalAuthorized(account, identity.deviceId, 0x04))
+                    RustBridge.sendDeviceOnionFrame(onion, reply)
+            }
+            return
+        }
         if (incoming.isAcknowledgment) {
             if (delivery.acknowledge(wire, account, identity))
                 context.sendBroadcast(Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
@@ -682,6 +698,7 @@ internal class DeviceRosterRuntime(private val context: Context) {
                           roster: DeviceRosterStore,
                           messages: DelegatedGroupMessageOutbox,
                           delivery: DelegatedGroupDeliveryStore,
+                          database: SecureLegionDatabase,
                           nowMs: Long) {
         if (!roster.isLocalAuthorized(account, identity.deviceId, 0x04, nowMs)) return
         for (intent in messages.due(account, identity.deviceId, nowMs).take(4))
@@ -710,6 +727,57 @@ internal class DeviceRosterRuntime(private val context: Context) {
             }
             delivery.defer(pending.id, if (sent) nowMs else nowMs + 10_000L)
         }
+        if (nowMs >= nextProofScanMs) {
+            nextProofScanMs = nowMs + 10_000L
+            pumpProofRequests(database, account, identity, nowMs)
+        }
+    }
+
+    private fun pumpProofRequests(database: SecureLegionDatabase,
+                                  account: ByteArray,
+                                  identity: LocalDeviceIdentity,
+                                  nowMs: Long) {
+        val groups = ArrayList<String>()
+        database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+            "SELECT group_id FROM delegated_group_states WHERE group_id>? " +
+                "ORDER BY group_id LIMIT 2", arrayOf(proofScanCursor))).use { cursor ->
+            while (cursor.moveToNext()) groups.add(cursor.getString(0))
+        }
+        if (groups.isEmpty()) {
+            proofScanCursor = ""
+            return
+        }
+        proofScanCursor = groups.last()
+        val exchange = DelegatedGroupProofExchange(database)
+        val states = com.securelegion.database.DelegatedGroupStateStore(database)
+        for (group in groups) {
+            val missing = try { states.missingHistoryAuthority(group, account, nowMs) }
+                catch (error: Exception) {
+                    Log.w(TAG, "Group proof scan deferred: ${error.message}")
+                    continue
+                }
+            for ((encodedRoot, hashes) in missing) {
+                val root = android.util.Base64.decode(encodedRoot,
+                    android.util.Base64.DEFAULT)
+                if (root.contentEquals(account)) continue
+                val key = "$group:$encodedRoot"
+                if ((proofDue[key] ?: 0L) > nowMs) continue
+                try {
+                    val requests = exchange.request(group, root, hashes,
+                        account, identity, nowMs)
+                    for ((onion, wire) in requests)
+                        RustBridge.sendDeviceOnionFrame(onion, wire)
+                    if (requests.isNotEmpty()) {
+                        if (proofDue.size >= 256)
+                            proofDue.keys.firstOrNull()?.let(proofDue::remove)
+                        proofDue[key] = nowMs + 30_000L
+                    }
+                } catch (error: Exception) {
+                    Log.w(TAG, "Group proof request deferred: ${error.message}")
+                }
+            }
+        }
+        if (proofDue.size > 256) proofDue.entries.removeIf { it.value <= nowMs }
     }
 
     private fun cursorSnapshot(database: SecureLegionDatabase,

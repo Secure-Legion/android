@@ -892,6 +892,37 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
         } finally { state.groupKey.fill(0) }
     }
 
+    fun missingHistoryAuthority(groupId: String, account: ByteArray,
+                                nowMs: Long = System.currentTimeMillis()
+    ): Map<String, List<String>> {
+        val db = database.openHelper.readableDatabase
+        val state = loadInTransaction(db, groupId, account, nowMs)
+        try {
+            val result = DeviceGroupProtocolBridge.execute(JSONObject()
+                .put("operation", "missing_history_authority")
+                .put("state", state.context).put("limit", 16),
+                groupKey = state.groupKey)
+            val marker = db.query(SimpleSQLiteQuery("SELECT state_hash,op_count " +
+                "FROM delegated_group_states WHERE group_id=?", arrayOf(groupId)))
+                .use { cursor -> if (cursor.moveToFirst()) Pair(cursor.getString(0),
+                    cursor.getInt(1)) else null }
+                ?: throw IllegalStateException("Group is not adopted")
+            require(marker.first == result.getString("state_hash") &&
+                marker.second == result.getInt("op_count"))
+            val missing = result.getJSONArray("missing")
+            val byAccount = LinkedHashMap<String, MutableList<String>>()
+            for (index in 0 until missing.length()) {
+                val row = missing.getJSONObject(index)
+                val root = row.getString("account_public")
+                val hash = row.getString("hash")
+                require(Base64.decode(root, Base64.DEFAULT).size == 32 &&
+                    hash.matches(Regex("[0-9a-f]{64}")))
+                byAccount.getOrPut(root) { ArrayList() }.add(hash)
+            }
+            return byAccount
+        } finally { state.groupKey.fill(0) }
+    }
+
     fun loadInTransaction(db: SupportSQLiteDatabase, groupId: String,
                           account: ByteArray, nowMs: Long,
                           extraAccounts: List<ByteArray> = emptyList()): State {
