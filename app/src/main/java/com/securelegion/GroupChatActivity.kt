@@ -651,9 +651,17 @@ class GroupChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
                     val keyManager = KeyManager.getInstance(this@GroupChatActivity)
                     val db = SecureLegionDatabase.getInstance(this@GroupChatActivity, keyManager.getDatabasePassphrase())
+                    if (DelegatedGroupStateStore(db).isAdopted(currentGroupId)) {
+                        val identity = LocalDeviceIdentity.loadExisting(this@GroupChatActivity)
+                        try {
+                            DelegatedGroupStateStore(db).acceptInvite(currentGroupId,
+                                keyManager.getSigningPublicKey(), identity)
+                        } finally { identity.close() }
+                        return@withContext
+                    }
+                    val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
 
                     // Check if protocol already auto-accepted
                     if (myPubkeyHex == null) {

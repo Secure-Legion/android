@@ -1548,6 +1548,14 @@ class MainActivity : BaseActivity() {
     }
 
     private fun confirmLeaveGroup(group: com.securelegion.database.entities.Group) {
+        val keyManager = KeyManager.getInstance(this)
+        val db = SecureLegionDatabase.getInstance(this,
+            keyManager.getDatabasePassphrase())
+        if (com.securelegion.database.DelegatedGroupStateStore(db)
+                .isAdopted(group.groupId)) {
+            ThemedToast.show(this, "Leaving this group is unavailable on this device")
+            return
+        }
         val dialog = GlassDialog.builder(this)
             .setTitle("Leave Group")
             .setMessage("Are you sure you want to leave \"${group.name}\"? This will remove you from the group and delete it from your device.")
@@ -1566,6 +1574,10 @@ class MainActivity : BaseActivity() {
                 val keyManager = KeyManager.getInstance(this@MainActivity)
 
                 withContext(Dispatchers.IO) {
+                    val db = SecureLegionDatabase.getInstance(this@MainActivity,
+                        keyManager.getDatabasePassphrase())
+                    require(!com.securelegion.database.DelegatedGroupStateStore(db)
+                        .isAdopted(group.groupId)) { "Delegated group leave is unavailable" }
                     // Try to broadcast MemberRemove so other members know we left.
                     // Don't block local cleanup on failure — we're leaving regardless.
                     try {

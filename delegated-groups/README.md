@@ -31,7 +31,9 @@ member permissions publish signed native metadata operations. Member removal and
 the required fresh epoch commit together; removed members receive a terminal
 delivery selection. Promotion, demotion and admin-rights edits publish native
 role operations. Group photos publish Avatar metadata and project into the
-local group cache after native validation. GROUPS-only devices
+local group cache after native validation. Invitation acceptance uses the native
+engine, and the legacy swipe-to-leave cleanup is blocked for adopted groups.
+GROUPS-only devices
 run the device onion loop. Nearby can carry receipt-bound mixed group history
 between mutually capable own-account devices.
 
