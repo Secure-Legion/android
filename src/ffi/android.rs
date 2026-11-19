@@ -1681,6 +1681,7 @@ fn valid_device_outbound_frame(bytes: &[u8]) -> bool {
         0xB6 => bytes.len() <= 8192,
         0xB7 => bytes.len() <= 512 * 1024,
         0xC0 => bytes.len() >= 275 && bytes[5] == 2 && bytes.len() <= C0_MAX,
+        0xC2 => bytes.len() >= 317 && bytes.len() <= 100_261 && bytes[5] == 1,
         _ => false,
     }
 }
@@ -1702,6 +1703,8 @@ mod device_outbound_frame_tests {
         assert!(!valid_device_outbound_frame(&[0xB6, 0, 0, 0, 8, 1]));
         let c0 = [vec![0xC0, 0, 0, 1, 19, 2], vec![0; 274]].concat();
         assert!(valid_device_outbound_frame(&c0));
+        let c2 = [vec![0xC2, 0, 0, 1, 56, 1], vec![0; 311]].concat();
+        assert!(valid_device_outbound_frame(&c2));
     }
 }
 
