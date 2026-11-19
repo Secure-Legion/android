@@ -18,7 +18,8 @@ The native device onion accepts C2, while the legacy contact listener rejects it
 `build-core-c2.ps1` rebuilds that listener for each ABI and copies only the core
 library, preserving the isolated group protocol library.
 The legacy group snapshot reader and CRDT manager reject groups after they acquire
-a delegated state marker, preventing mixed logs from entering the old engine.
+a delegated state marker. Legacy mutation, broadcast, sync and local cleanup
+entry points check this before touching their old Rust state or database rows.
 The SQLCipher host now verifies group-scoped Root rosters, stages C2 chunks,
 previews live/invitation/re-invitation/proof-response bundles in the canonical
 native engine, and commits the validated log, state projection, exact ACK receipt,

@@ -622,6 +622,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @param opBytes raw serialized op bytes (single op)
      */
     suspend fun broadcastOpToGroup(groupId: String, opBytes: ByteArray) {
+        requireLegacyGroup(groupId)
         broadcastTrackedOpToGroup(groupId, opBytes, null)
     }
 
@@ -1085,6 +1086,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * Signature covers jpegData only.
      */
     suspend fun sendGroupProfilePhoto(groupId: String) {
+        requireLegacyGroup(groupId)
         // Load own profile photo
         val prefs = context.getSharedPreferences("secure_legion_settings", android.content.Context.MODE_PRIVATE)
         val photoBase64 = prefs.getString("profile_photo_base64", null)
@@ -1789,6 +1791,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * 4. Send profile photo
      */
     suspend fun fullSync(groupId: String) {
+        requireLegacyGroup(groupId)
         Log.i(TAG, "FULL_SYNC: starting for group ${groupId.take(16)}")
 
         // 1. Flush pending deliveries
@@ -1877,6 +1880,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * Does NOT create a new CRDT op — just retransmits existing ops.
      */
     suspend fun reinviteMember(groupId: String, targetDeviceIdHex: String) {
+        requireLegacyGroup(groupId)
         val db = getDatabase()
         val members = queryMembers(groupId)
         val target = members.find { it.deviceIdHex == targetDeviceIdHex }
@@ -2093,6 +2097,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         contactPubkeyHex: String,
         role: String = "Member"
     ): ByteArray {
+        requireLegacyGroup(groupId)
         val group = getDatabase().groupDao().getGroupById(groupId)
             ?: throw IllegalStateException("Group $groupId not found")
 
@@ -2147,6 +2152,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @return raw op bytes (broadcast already done internally)
      */
     suspend fun acceptInvite(groupId: String, inviteOpIdHex: String, clearPendingFlag: Boolean = true): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2217,6 +2223,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         reason: String = "Kick",
         ban: Boolean = false
     ): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2259,6 +2266,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         rights: AdminRights,
         customTitle: String? = null
     ): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2283,6 +2291,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * The target remains removed — admins must still re-invite them separately.
      */
     suspend fun unbanMember(groupId: String, targetPubkeyHex: String): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2311,6 +2320,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * Clears admin_rights and custom_title on the target.
      */
     suspend fun demoteAdmin(groupId: String, targetPubkeyHex: String): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2403,6 +2413,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @return raw op bytes for Tor broadcast
      */
     suspend fun editMessage(groupId: String, msgIdHex: String, newPlaintext: String): ByteArray {
+        requireLegacyGroup(groupId)
         val group = getDatabase().groupDao().getGroupById(groupId)
             ?: throw IllegalStateException("Group $groupId not found")
 
@@ -2438,6 +2449,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @return raw op bytes for Tor broadcast
      */
     suspend fun deleteMessage(groupId: String, msgIdHex: String): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2463,6 +2475,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         emoji: String,
         present: Boolean
     ): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2487,6 +2500,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @return raw op bytes for Tor broadcast
      */
     suspend fun setMetadata(groupId: String, key: String, valueB64: String): ByteArray {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2843,6 +2857,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         allowPin: Boolean? = null,
         allowChangeInfo: Boolean? = null
     ) {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2886,6 +2901,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @throws RuntimeException from the Rust layer if the caller isn't Owner.
      */
     suspend fun deleteGroup(groupId: String, reason: String? = null) {
+        requireLegacyGroup(groupId)
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -2910,6 +2926,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * peer's `GroupDelete` op is received.
      */
     suspend fun cascadeDeleteLocal(groupId: String) {
+        requireLegacyGroup(groupId)
         unloadGroup(groupId)
         val db = getDatabase()
         db.crdtOpLogDao().deleteOpsForGroup(groupId)
