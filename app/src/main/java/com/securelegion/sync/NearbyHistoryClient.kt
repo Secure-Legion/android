@@ -161,6 +161,7 @@ internal class NearbyHistoryClient(private val context: Context,
             roster.isAuthorized(account, peerId, 0x06)) {
             capabilities.add("group_snapshots_v1")
             capabilities.add("group_links_v1")
+            capabilities.add("delegated_groups_v1")
         }
         return DeviceSyncHelloWire.payload(capabilities, cursors)
     }

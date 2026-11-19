@@ -57,6 +57,8 @@ Network requests do not invoke Root signing.
 
 This remains an integration checkpoint. Android-created group activation and
 mixed-platform end-to-end tests remain.
-`delegated_groups_v1` is withheld. The current APK should not replace a user's
+Android Nearby now advertises `delegated_groups_v1` to eligible own-account
+devices; iOS still needs the receiver before mixed-platform catch-up can finish.
+The current APK should not replace a user's
 account installation until those paths are complete and verified on a test
 profile. The iOS receiver is also required for group delivery to iOS members.

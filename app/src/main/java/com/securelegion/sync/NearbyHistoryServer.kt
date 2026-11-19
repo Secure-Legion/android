@@ -77,6 +77,7 @@ internal class NearbyHistoryServer private constructor(
                 roster.isAuthorized(account, peerId, 0x06)) {
                 capabilities.add("group_snapshots_v1")
                 capabilities.add("group_links_v1")
+                capabilities.add("delegated_groups_v1")
             }
             val ack = DeviceSyncHelloWire.payload(capabilities, cursors)
                 .put("nearby_v", 1).put("session", session).put("challenge", nonce)
