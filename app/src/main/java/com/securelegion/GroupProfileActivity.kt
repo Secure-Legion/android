@@ -17,6 +17,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.DelegatedGroupStateStore
+import com.securelegion.crypto.LocalDeviceIdentity
+import org.json.JSONObject
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.services.CrdtGroupManager
 import com.securelegion.utils.GlassBottomSheetDialog
@@ -29,6 +32,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class GroupProfileActivity : BaseActivity() {
+
+    private fun delegatedSummary(group: String): JSONObject? {
+        val keyManager = KeyManager.getInstance(this)
+        val db = SecureLegionDatabase.getInstance(this,
+            keyManager.getDatabasePassphrase())
+        val delegated = DelegatedGroupStateStore(db)
+        return if (delegated.isAdopted(group))
+            delegated.read(group, keyManager.getSigningPublicKey()) else null
+    }
+
+    private fun isDelegatedGroup(group: String): Boolean {
+        val keyManager = KeyManager.getInstance(this)
+        val db = SecureLegionDatabase.getInstance(this,
+            keyManager.getDatabasePassphrase())
+        return DelegatedGroupStateStore(db).isAdopted(group)
+    }
 
     companion object {
         private const val TAG = "GroupProfile"
@@ -119,12 +138,18 @@ class GroupProfileActivity : BaseActivity() {
                             val resolved = database.contactDao().getAllContacts().filter { it.id in selectedIds }
 
                             // Role check — only Owner/Admin can invite (matches Rust can_author_op)
-                            val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
-                            val myPubkeyHex = keyManager.getSigningPublicKey()
-                                .joinToString("") { "%02x".format(it) }
-                            val role = mgr.queryMembers(currentGroupId)
-                                .firstOrNull { it.pubkeyHex == myPubkeyHex && it.accepted && !it.removed }
-                                ?.role ?: "Member"
+                            val role = if (DelegatedGroupStateStore(database)
+                                    .isAdopted(currentGroupId)) {
+                                DelegatedGroupStateStore(database).read(currentGroupId,
+                                    keyManager.getSigningPublicKey()).getString("our_role")
+                            } else {
+                                val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                                val myPubkeyHex = keyManager.getSigningPublicKey()
+                                    .joinToString("") { "%02x".format(it) }
+                                mgr.queryMembers(currentGroupId)
+                                    .firstOrNull { it.pubkeyHex == myPubkeyHex &&
+                                        it.accepted && !it.removed }?.role ?: "Member"
+                            }
                             Pair(resolved, role)
                         }
                         if (myRole !in listOf("Owner", "Admin")) {
@@ -189,6 +214,10 @@ class GroupProfileActivity : BaseActivity() {
 
         // Group icon - photo picker
         groupIconContainer.setOnClickListener {
+            if (groupId?.let(::isDelegatedGroup) == true) {
+                ThemedToast.show(this, "Group photo editing is unavailable")
+                return@setOnClickListener
+            }
             showGroupIconPickerDialog()
         }
 
@@ -242,6 +271,10 @@ class GroupProfileActivity : BaseActivity() {
 
         administratorsButton.setOnClickListener {
             val gid = groupId ?: return@setOnClickListener
+            if (isDelegatedGroup(gid)) {
+                showMembersScreen()
+                return@setOnClickListener
+            }
             val intent = Intent(this, GroupAdminsActivity::class.java).apply {
                 putExtra(GroupAdminsActivity.EXTRA_GROUP_ID, gid)
             }
@@ -250,6 +283,10 @@ class GroupProfileActivity : BaseActivity() {
 
         bannedUsersButton.setOnClickListener {
             val gid = groupId ?: return@setOnClickListener
+            if (isDelegatedGroup(gid)) {
+                ThemedToast.show(this, "Banned members are unavailable here")
+                return@setOnClickListener
+            }
             val intent = Intent(this, BannedUsersActivity::class.java).apply {
                 putExtra(BannedUsersActivity.EXTRA_GROUP_ID, gid)
             }
@@ -258,6 +295,10 @@ class GroupProfileActivity : BaseActivity() {
 
         recentActionsButton.setOnClickListener {
             val gid = groupId ?: return@setOnClickListener
+            if (isDelegatedGroup(gid)) {
+                ThemedToast.show(this, "Recent actions are unavailable here")
+                return@setOnClickListener
+            }
             val intent = Intent(this, RecentActionsActivity::class.java).apply {
                 putExtra(RecentActionsActivity.EXTRA_GROUP_ID, gid)
             }
@@ -293,9 +334,9 @@ class GroupProfileActivity : BaseActivity() {
                     // Also check CRDT metadata for name
                     var name: String? = null
                     try {
-                        val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
-                        val metadata = mgr.queryMetadata(currentGroupId)
-                        name = metadata.name
+                        name = delegatedSummary(currentGroupId)?.getString("name")
+                            ?: CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                                .queryMetadata(currentGroupId).name
                     } catch (_: Exception) { }
 
                     Pair(icon, name)
@@ -341,6 +382,8 @@ class GroupProfileActivity : BaseActivity() {
         lifecycleScope.launch {
             val role = withContext(Dispatchers.IO) {
                 try {
+                    val native = delegatedSummary(gid)
+                    if (native != null) return@withContext native.getString("our_role")
                     val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
                     val myPubkeyHex = KeyManager.getInstance(this@GroupProfileActivity)
                         .getSigningPublicKey().joinToString("") { "%02x".format(it) }
@@ -353,12 +396,14 @@ class GroupProfileActivity : BaseActivity() {
             val isOwner = role == "Owner"
             val isOwnerOrAdmin = isOwner || role == "Admin"
             canEditName = isOwnerOrAdmin
-            groupNameTitle.isEnabled = isOwnerOrAdmin
-            groupNameTitle.isFocusable = isOwnerOrAdmin
-            groupNameTitle.isFocusableInTouchMode = isOwnerOrAdmin
-            deleteGroupButton.visibility = if (isOwner) View.VISIBLE else View.GONE
-            bannedUsersButton.visibility = if (isOwnerOrAdmin) View.VISIBLE else View.GONE
-            recentActionsButton.visibility = if (isOwnerOrAdmin) View.VISIBLE else View.GONE
+            groupNameTitle.isEnabled = canEditName
+            groupNameTitle.isFocusable = canEditName
+            groupNameTitle.isFocusableInTouchMode = canEditName
+            val native = isDelegatedGroup(gid)
+            deleteGroupButton.visibility = if (isOwner && !native) View.VISIBLE else View.GONE
+            bannedUsersButton.visibility = if (isOwnerOrAdmin && !native) View.VISIBLE else View.GONE
+            recentActionsButton.visibility = if (isOwnerOrAdmin && !native) View.VISIBLE else View.GONE
+            syncPhotoButton.visibility = if (native) View.GONE else View.VISIBLE
         }
         refreshCounts()
     }
@@ -369,6 +414,44 @@ class GroupProfileActivity : BaseActivity() {
         lifecycleScope.launch {
             val counts = withContext(Dispatchers.IO) {
                 try {
+                    val native = delegatedSummary(gid)
+                    if (native != null) {
+                        val members = native.getJSONArray("members")
+                        var active = 0
+                        var admins = 0
+                        var banned = 0
+                        for (index in 0 until members.length()) {
+                            val member = members.getJSONObject(index)
+                            val removed = member.getBoolean("removed")
+                            if (removed || member.getBoolean("banned")) banned++
+                            if (member.getBoolean("accepted") && !removed) {
+                                active++
+                                if (member.getString("role") in setOf("Owner", "Admin"))
+                                    admins++
+                            }
+                        }
+                        val metadata = native.getJSONArray("metadata")
+                        val enabled = HashMap<String, Boolean>()
+                        for (index in 0 until metadata.length()) {
+                            val entry = metadata.getJSONObject(index)
+                            val key = entry.getString("key")
+                            if (key.startsWith("AllowMember")) {
+                                val bytes = android.util.Base64.decode(
+                                    entry.getString("value"), android.util.Base64.DEFAULT)
+                                enabled[key] = bytes.size == 1 && bytes[0] == 1.toByte()
+                            }
+                        }
+                        val permissions = listOf("AllowMemberSendMessages",
+                            "AllowMemberInvites", "AllowMemberPin",
+                            "AllowMemberChangeInfo").count { enabled[it] == true }
+                        val db = SecureLegionDatabase.getInstance(
+                            this@GroupProfileActivity,
+                            KeyManager.getInstance(this@GroupProfileActivity)
+                                .getDatabasePassphrase())
+                        val recent = db.crdtOpLogDao().getMembershipOps(gid).size
+                        return@withContext intArrayOf(permissions, admins, banned,
+                            recent, active)
+                    }
                     val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
                     val members = mgr.queryMembers(gid)
                     val metadata = try { mgr.queryMetadata(gid) } catch (_: Exception) { null }
@@ -415,6 +498,18 @@ class GroupProfileActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    if (isDelegatedGroup(currentGroupId)) {
+                        val km = KeyManager.getInstance(this@GroupProfileActivity)
+                        val db = SecureLegionDatabase.getInstance(this@GroupProfileActivity,
+                            km.getDatabasePassphrase())
+                        val identity = LocalDeviceIdentity.loadExisting(this@GroupProfileActivity)
+                        try {
+                            DelegatedGroupStateStore(db).setMetadata(currentGroupId,
+                                km.getSigningPublicKey(), "Name",
+                                newName.toByteArray(Charsets.UTF_8), identity)
+                        } finally { identity.close() }
+                        return@withContext
+                    }
                     val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
                     val valueB64 = android.util.Base64.encodeToString(
                         newName.toByteArray(Charsets.UTF_8),
@@ -438,9 +533,17 @@ class GroupProfileActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 val count = withContext(Dispatchers.IO) {
-                    CrdtGroupManager.getInstance(this@GroupProfileActivity)
-                        .queryMembers(gid)
-                        .count { it.accepted && !it.removed }
+                    val native = delegatedSummary(gid)
+                    if (native != null) {
+                        val members = native.getJSONArray("members")
+                        (0 until members.length()).count { index ->
+                            val member = members.getJSONObject(index)
+                            member.getBoolean("accepted") &&
+                                !member.getBoolean("removed") &&
+                                !member.getBoolean("banned")
+                        }
+                    } else CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                        .queryMembers(gid).count { it.accepted && !it.removed }
                 }
                 if (!isFinishing && !isDestroyed) {
                     val max = AddGroupMembersActivity.MAX_GROUP_MEMBERS
@@ -454,6 +557,30 @@ class GroupProfileActivity : BaseActivity() {
         groupId: String,
         contacts: List<com.securelegion.database.entities.Contact>
     ) {
+        if (isDelegatedGroup(groupId)) {
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val km = KeyManager.getInstance(this@GroupProfileActivity)
+                        val db = SecureLegionDatabase.getInstance(this@GroupProfileActivity,
+                            km.getDatabasePassphrase())
+                        val identity = LocalDeviceIdentity.loadExisting(this@GroupProfileActivity)
+                        try {
+                            val delegated = DelegatedGroupStateStore(db)
+                            for (contact in contacts) delegated.inviteMember(groupId,
+                                km.getSigningPublicKey(), contact.ed25519PublicKeyBytes,
+                                identity)
+                        } finally { identity.close() }
+                    }
+                    ThemedToast.show(this@GroupProfileActivity, "Invitations queued")
+                    refreshMemberCount()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Delegated group invite failed", e)
+                    ThemedToast.show(this@GroupProfileActivity, "Failed to invite members")
+                }
+            }
+            return
+        }
         val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
         val contactPairs = contacts.map { contact ->
             val pubkeyHex = contact.ed25519PublicKeyBytes
@@ -479,6 +606,7 @@ class GroupProfileActivity : BaseActivity() {
 
     private fun showDeleteGroupConfirmation() {
         val currentGroupId = groupId ?: return
+        if (isDelegatedGroup(currentGroupId)) return
         val dialog = GlassDialog.builder(this)
             .setTitle("Delete Group")
             .setMessage("Delete this group for everyone? This cannot be undone.")
@@ -518,6 +646,7 @@ class GroupProfileActivity : BaseActivity() {
     }
 
     private fun leaveGroup(currentGroupId: String) {
+        if (isDelegatedGroup(currentGroupId)) return
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -541,6 +670,7 @@ class GroupProfileActivity : BaseActivity() {
 
     private fun syncProfilePhoto() {
         val currentGroupId = groupId ?: return
+        if (isDelegatedGroup(currentGroupId)) return
 
         ThemedToast.show(this, "Syncing profile photo...")
 
@@ -646,6 +776,7 @@ class GroupProfileActivity : BaseActivity() {
 
     private fun saveGroupIcon(base64: String?) {
         val currentGroupId = groupId ?: return
+        if (isDelegatedGroup(currentGroupId)) return
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {

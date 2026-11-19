@@ -25,14 +25,16 @@ native engine, and commits the validated log, state projection, exact ACK receip
 and staging removal together. The sender persists encrypted C2 packets before
 retrying and settles exact device ACKs. Pending text converts to a signed native
 operation in one transaction. The chat screen reads native messages and routes
-adopted-group text and member invitations through that host. GROUPS-only devices
+adopted-group text and member invitations through that host. The group profile,
+member list, and permission screen read validated native state; group names and
+member permissions publish signed native metadata operations. GROUPS-only devices
 run the device onion loop. Nearby can carry receipt-bound mixed group history
 between mutually capable own-account devices.
 
 This remains an integration checkpoint. Proof-request generation and Root
-approval, account-level responsibility ACKs, native controls on every group
-profile/member screen, Android-created group activation, and mixed-platform
-end-to-end tests remain. `delegated_groups_v1` is withheld. The current APK should
-not replace a user's account installation until those paths are complete and
-verified on a test profile. The iOS receiver is also required for group delivery
-to iOS members.
+approval, account-level responsibility ACKs, native authoring for member
+removals, role changes, icons, group deletion and terminal delivery, Android-created
+group activation, and mixed-platform end-to-end tests remain.
+`delegated_groups_v1` is withheld. The current APK should not replace a user's
+account installation until those paths are complete and verified on a test
+profile. The iOS receiver is also required for group delivery to iOS members.

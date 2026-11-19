@@ -248,6 +248,72 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
         } finally { db.endTransaction() }
     }
 
+    /** Author and publish one native metadata operation, including its device-sync source. */
+    fun setMetadata(groupId: String, account: ByteArray, key: String,
+                    value: ByteArray, identity: LocalDeviceIdentity,
+                    nowMs: Long = System.currentTimeMillis()): String {
+        require(key in setOf("Name", "Avatar", "AllowMemberSendMessages",
+            "AllowMemberInvites", "AllowMemberPin", "AllowMemberChangeInfo"))
+        require(value.size <= 65_536)
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            require(DeviceRosterStore(database).isLocalAuthorized(account,
+                identity.deviceId, 0x04, nowMs))
+            val state = loadInTransaction(db, groupId, account, nowMs)
+            try {
+                val certificate = db.query(SimpleSQLiteQuery("SELECT certificate FROM " +
+                    "authorized_devices WHERE accountEd=? AND deviceId=? AND isSelf=1",
+                    arrayOf(b64(account), identity.deviceId))).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getBlob(0) else null
+                } ?: throw IllegalStateException("Local group certificate unavailable")
+                val created = identity.withSyncKeys { seed, _ ->
+                    DeviceGroupProtocolBridge.execute(JSONObject()
+                        .put("operation", "create_operation")
+                        .put("state", state.context).put("certificate", b64(certificate))
+                        .put("mutation", JSONObject().put("kind", "metadata_set")
+                            .put("key", key).put("value", b64(value))),
+                        signingSeed = seed, groupKey = state.groupKey)
+                }
+                val encoded = Base64.decode(created.getString("encoded"), Base64.DEFAULT)
+                try {
+                    require(encoded.size in 1..69_632)
+                    val packed = ByteArray(4 + encoded.size)
+                    packed[0] = (encoded.size ushr 24).toByte()
+                    packed[1] = (encoded.size ushr 16).toByte()
+                    packed[2] = (encoded.size ushr 8).toByte()
+                    packed[3] = encoded.size.toByte()
+                    encoded.copyInto(packed, 4)
+                    try {
+                        val summary = applyLiveInTransaction(db, groupId, account,
+                            packed, nowMs = nowMs)
+                        val opId = created.getJSONObject("descriptor").getString("op_id")
+                        db.execSQL("INSERT INTO delegated_group_origins " +
+                            "(op_id,group_id,local_device,created_at_ms) VALUES (?,?,?,?)",
+                            arrayOf(opId, groupId, identity.deviceId, nowMs))
+                        val members = summary.getJSONArray("members")
+                        for (index in 0 until members.length()) {
+                            val member = members.getJSONObject(index)
+                            if (!member.getBoolean("accepted") ||
+                                member.getBoolean("removed") ||
+                                member.getBoolean("banned")) continue
+                            val target = b64(hexBytes(member.getString("pubkey_hex")))
+                            if (target != b64(account)) db.execSQL("INSERT INTO " +
+                                "delegated_group_targets (op_id,target_account,mode) " +
+                                "VALUES (?,?,'live')", arrayOf(opId, target))
+                        }
+                        db.execSQL("INSERT INTO device_sync_source_changes " +
+                            "(topic,object_id,kind,changed_at_ms) " +
+                            "VALUES ('groups',?,'upsert',?)",
+                            arrayOf(groupId, nowMs))
+                        db.setTransactionSuccessful()
+                        return opId
+                    } finally { packed.fill(0) }
+                } finally { encoded.fill(0) }
+            } finally { state.groupKey.fill(0) }
+        } finally { db.endTransaction() }
+    }
+
     fun isAdopted(groupId: String): Boolean = database.openHelper.readableDatabase
         .query(SimpleSQLiteQuery("SELECT 1 FROM delegated_group_states WHERE group_id=?",
             arrayOf(groupId))).use { it.moveToFirst() }
