@@ -12,6 +12,7 @@ import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DelegatedGroupReceiver
 import com.securelegion.database.DelegatedGroupProofExchange
+import com.securelegion.database.DelegatedGroupRootApproval
 import com.securelegion.database.DelegatedGroupDeliveryStore
 import com.securelegion.database.DelegatedGroupMessageOutbox
 import com.securelegion.database.LinkedChatStore
@@ -759,7 +760,15 @@ internal class DeviceRosterRuntime(private val context: Context) {
             for ((encodedRoot, hashes) in missing) {
                 val root = android.util.Base64.decode(encodedRoot,
                     android.util.Base64.DEFAULT)
-                if (root.contentEquals(account)) continue
+                if (root.contentEquals(account)) {
+                    try {
+                        DelegatedGroupRootApproval(database).approveMissing(group,
+                            account, identity, KeyManager.getInstance(context), nowMs)
+                    } catch (error: Exception) {
+                        Log.w(TAG, "Primary group approval deferred: ${error.message}")
+                    }
+                    continue
+                }
                 val key = "$group:$encodedRoot"
                 if ((proofDue[key] ?: 0L) > nowMs) continue
                 try {

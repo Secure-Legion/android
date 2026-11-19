@@ -46,10 +46,12 @@ The local accepted log remains available for recipient retries and historical
 reads; the composer reports the resulting read-only state.
 The C2 proof exchange requests missing exact historical authority in bounded
 batches and serves only already committed proofs for this account's accepted
-operations. It does not expose a generic Root signing operation.
+operations. The current primary may approve missing, already accepted own
+operation hashes using its local Root seed inside an atomic proof transaction.
+Network requests do not invoke Root signing.
 
-This remains an integration checkpoint. Primary-only Root approval,
-multi-device account-level responsibility ACKs, Android-created
+This remains an integration checkpoint. Multi-device account-level
+responsibility ACKs, Android-created
 group activation, and mixed-platform end-to-end tests remain.
 `delegated_groups_v1` is withheld. The current APK should not replace a user's
 account installation until those paths are complete and verified on a test
