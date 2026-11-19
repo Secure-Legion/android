@@ -4,6 +4,8 @@ import android.util.Base64
 import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securelegion.crypto.DeviceGroupProtocolBridge
+import com.securelegion.crypto.LocalDeviceIdentity
+import com.securelegion.crypto.RustBridge
 import org.json.JSONObject
 import java.security.SecureRandom
 
@@ -108,6 +110,108 @@ internal class DelegatedGroupMessageOutbox(private val database: SecureLegionDat
                     cursor.getString(1), cursor.getString(2), cursor.getLong(3)))
             }
         }
+    }
+
+    /** Promote one Pending intent and its delivery ownership in one SQLCipher commit. */
+    fun convert(id: String, account: ByteArray, identity: LocalDeviceIdentity,
+                nowMs: Long = System.currentTimeMillis()): String {
+        require(id.matches(Regex("pending_[0-9a-f]{64}")) && account.size == 32)
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            requireAuthorized(db, account, identity.deviceId, nowMs)
+            val pending = db.query(SimpleSQLiteQuery("SELECT group_id,text FROM " +
+                "delegated_group_message_outbox WHERE id=? AND local_device=?",
+                arrayOf(id, identity.deviceId))).use { cursor ->
+                if (cursor.moveToFirst()) Pair(cursor.getString(0), cursor.getString(1))
+                else null
+            } ?: throw IllegalArgumentException("Pending message unavailable")
+            val stateStore = DelegatedGroupStateStore(database)
+            val state = stateStore.loadInTransaction(db, pending.first, account, nowMs)
+            try {
+                val marker = db.query(SimpleSQLiteQuery("SELECT state_hash,op_count FROM " +
+                    "delegated_group_states WHERE group_id=?", arrayOf(pending.first)))
+                    .use { cursor -> if (cursor.moveToFirst()) Pair(cursor.getString(0),
+                        cursor.getInt(1)) else null }
+                    ?: throw IllegalStateException("Group is not adopted")
+                val current = DeviceGroupProtocolBridge.execute(JSONObject()
+                    .put("operation", "read_state").put("state", state.context),
+                    groupKey = state.groupKey)
+                require(marker.first == current.getString("state_hash") &&
+                    marker.second == current.getInt("op_count") &&
+                    !current.getBoolean("deleted") &&
+                    !current.getBoolean("pending_invite") &&
+                    !current.getBoolean("needs_rekey") &&
+                    current.getString("our_role") in setOf("Owner", "Admin", "Member"))
+                val certificate = db.query(SimpleSQLiteQuery("SELECT certificate FROM " +
+                    "authorized_devices WHERE accountEd=? AND deviceId=? AND isSelf=1",
+                    arrayOf(Base64.encodeToString(account, Base64.NO_WRAP),
+                        identity.deviceId))).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getBlob(0) else null
+                } ?: throw IllegalStateException("Local group certificate unavailable")
+                val nonce = ByteArray(24).also(SecureRandom()::nextBytes)
+                val plain = pending.second.toByteArray(Charsets.UTF_8)
+                val ciphertext = try {
+                    RustBridge.xchacha20Encrypt(plain, state.groupKey, nonce)
+                } finally { plain.fill(0) }
+                try {
+                    val request = JSONObject().put("operation", "create_operation")
+                        .put("state", state.context)
+                        .put("certificate", Base64.encodeToString(certificate,
+                            Base64.NO_WRAP))
+                        .put("mutation", JSONObject().put("kind", "msg_add")
+                            .put("ciphertext", Base64.encodeToString(ciphertext,
+                                Base64.NO_WRAP))
+                            .put("nonce", Base64.encodeToString(nonce, Base64.NO_WRAP)))
+                    val created = identity.withSyncKeys { seed, _ ->
+                        DeviceGroupProtocolBridge.execute(request, signingSeed = seed,
+                            groupKey = state.groupKey)
+                    }
+                    val encoded = Base64.decode(created.getString("encoded"), Base64.DEFAULT)
+                    try {
+                        require(encoded.size in 1..69_632)
+                        val packed = ByteArray(4 + encoded.size)
+                        packed[0] = (encoded.size ushr 24).toByte()
+                        packed[1] = (encoded.size ushr 16).toByte()
+                        packed[2] = (encoded.size ushr 8).toByte()
+                        packed[3] = encoded.size.toByte()
+                        encoded.copyInto(packed, 4)
+                        try {
+                            val summary = stateStore.applyLiveInTransaction(db, pending.first,
+                                account, packed, nowMs = nowMs)
+                            val opId = created.getJSONObject("descriptor").getString("op_id")
+                            val local = Base64.encodeToString(account, Base64.NO_WRAP)
+                            db.execSQL("INSERT INTO delegated_group_origins " +
+                                "(op_id,group_id,local_device,created_at_ms) VALUES (?,?,?,?)",
+                                arrayOf(opId, pending.first, identity.deviceId, nowMs))
+                            val members = summary.getJSONArray("members")
+                            for (index in 0 until members.length()) {
+                                val member = members.getJSONObject(index)
+                                if (!member.getBoolean("accepted") ||
+                                    member.getBoolean("removed") ||
+                                    member.getBoolean("banned")) continue
+                                val target = Base64.encodeToString(
+                                    member.getString("pubkey_hex").chunked(2)
+                                        .map { it.toInt(16).toByte() }.toByteArray(),
+                                    Base64.NO_WRAP)
+                                if (target != local) db.execSQL("INSERT INTO " +
+                                    "delegated_group_targets (op_id,target_account,mode) " +
+                                    "VALUES (?,?,'live')", arrayOf(opId, target))
+                            }
+                            db.execSQL("DELETE FROM delegated_group_message_outbox " +
+                                "WHERE id=? AND local_device=?",
+                                arrayOf(id, identity.deviceId))
+                            db.execSQL("INSERT INTO device_sync_source_changes " +
+                                "(topic,object_id,kind,changed_at_ms) " +
+                                "VALUES ('groups',?,'upsert',?)",
+                                arrayOf(pending.first, nowMs))
+                            db.setTransactionSuccessful()
+                            return opId
+                        } finally { packed.fill(0) }
+                    } finally { encoded.fill(0) }
+                } finally { ciphertext.fill(0); nonce.fill(0) }
+            } finally { state.groupKey.fill(0) }
+        } finally { db.endTransaction() }
     }
 
     private fun requireAuthorized(db: SupportSQLiteDatabase, account: ByteArray,

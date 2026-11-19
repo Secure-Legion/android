@@ -19,6 +19,10 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.DelegatedGroupStateStore
+import com.securelegion.database.DelegatedGroupMessageOutbox
+import com.securelegion.crypto.LocalDeviceIdentity
+import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.services.CrdtGroupManager
@@ -161,9 +165,21 @@ class GroupChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 val count = withContext(Dispatchers.IO) {
-                    CrdtGroupManager.getInstance(this@GroupChatActivity)
-                        .queryMembers(gid)
-                        .count { it.accepted && !it.removed }
+                    val keyManager = KeyManager.getInstance(this@GroupChatActivity)
+                    val db = SecureLegionDatabase.getInstance(this@GroupChatActivity,
+                        keyManager.getDatabasePassphrase())
+                    val delegated = DelegatedGroupStateStore(db)
+                    if (delegated.isAdopted(gid)) {
+                        val members = delegated.read(gid,
+                            keyManager.getSigningPublicKey()).getJSONArray("members")
+                        (0 until members.length()).count { index ->
+                            val member = members.getJSONObject(index)
+                            member.getBoolean("accepted") &&
+                                !member.getBoolean("removed") &&
+                                !member.getBoolean("banned")
+                        }
+                    } else CrdtGroupManager.getInstance(this@GroupChatActivity)
+                        .queryMembers(gid).count { it.accepted && !it.removed }
                 }
                 if (!isFinishing && !isDestroyed) {
                     memberCountText.text = "$count/${AddGroupMembersActivity.MAX_GROUP_MEMBERS} members"
@@ -190,8 +206,12 @@ class GroupChatActivity : BaseActivity() {
             lifecycleScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        CrdtGroupManager.getInstance(this@GroupChatActivity)
-                            .fullSync(currentGroupId)
+                        val keyManager = KeyManager.getInstance(this@GroupChatActivity)
+                        val db = SecureLegionDatabase.getInstance(this@GroupChatActivity,
+                            keyManager.getDatabasePassphrase())
+                        if (!DelegatedGroupStateStore(db).isAdopted(currentGroupId))
+                            CrdtGroupManager.getInstance(this@GroupChatActivity)
+                                .fullSync(currentGroupId)
                     }
                     loadMessages()
                     refreshMemberCount()
@@ -355,13 +375,87 @@ class GroupChatActivity : BaseActivity() {
                 data class LoadResult(
                     val messages: List<GroupChatMessage>,
                     val pendingInvite: Boolean,
-                    val canSend: Boolean
+                    val canSend: Boolean,
+                    val resolvedName: String? = null
                 )
 
                 val result = withContext(Dispatchers.IO) {
-                    val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
                     val keyManager = KeyManager.getInstance(this@GroupChatActivity)
                     val db = SecureLegionDatabase.getInstance(this@GroupChatActivity, keyManager.getDatabasePassphrase())
+                    val delegated = DelegatedGroupStateStore(db)
+                    if (delegated.isAdopted(currentGroupId)) {
+                        val account = keyManager.getSigningPublicKey()
+                        var display = delegated.display(currentGroupId, account)
+                        if (display.summary.getBoolean("pending_invite")) {
+                            runCatching {
+                                val identity = LocalDeviceIdentity.loadExisting(
+                                    this@GroupChatActivity)
+                                try { delegated.acceptInvite(currentGroupId, account, identity) }
+                                finally { identity.close() }
+                            }.onSuccess { if (it) display = delegated.display(
+                                currentGroupId, account) }
+                                .onFailure { Log.w(TAG, "Group invite remains Pending: ${it.message}") }
+                        }
+                        val summary = display.summary
+                        val members = summary.getJSONArray("members")
+                        val ownHex = account.joinToString("") {
+                            "%02x".format(it.toInt() and 255)
+                        }
+                        val names = HashMap<String, String>()
+                        var ownId: String? = null
+                        for (index in 0 until members.length()) {
+                            val member = members.getJSONObject(index)
+                            val pubkey = member.getString("pubkey_hex")
+                            val id = member.getString("device_id")
+                            if (pubkey == ownHex) ownId = id
+                            val peer = db.groupPeerDao().getByGroupAndPubkey(
+                                currentGroupId, pubkey)
+                            names[id] = peer?.displayName ?: id.take(8)
+                        }
+                        myPubkeyHex = ownHex
+                        myDeviceIdHex = ownId
+                        val mapped = display.messages.map { msg ->
+                            val isMe = msg.author == ownId
+                            val text = if (msg.pendingDelivery)
+                                "${msg.text} · Not delivered" else msg.text
+                            GroupChatMessage(messageId = msg.id, text = text,
+                                timestamp = msg.timestampMs, isSentByMe = isMe,
+                                senderName = if (isMe) "" else
+                                    names[msg.author] ?: msg.author.take(8),
+                                messageType = "TEXT")
+                        }.toMutableList()
+                        db.openHelper.readableDatabase.query(SimpleSQLiteQuery(
+                            "SELECT id,text,created_at_ms FROM " +
+                                "delegated_group_message_outbox WHERE group_id=? " +
+                                "ORDER BY created_at_ms,id LIMIT 256",
+                            arrayOf(currentGroupId))).use { cursor ->
+                            while (cursor.moveToNext()) mapped.add(GroupChatMessage(
+                                messageId = cursor.getString(0),
+                                text = cursor.getString(1) + " · Pending",
+                                timestamp = cursor.getLong(2), isSentByMe = true,
+                                senderName = "", messageType = "TEXT"))
+                        }
+                        val pending = summary.getBoolean("pending_invite")
+                        var allowed = summary.getString("our_role") in
+                            setOf("Owner", "Admin", "Member") &&
+                            !summary.getBoolean("deleted") &&
+                            !summary.getBoolean("needs_rekey") && !pending
+                        if (summary.getString("our_role") == "Member") {
+                            val metadata = summary.getJSONArray("metadata")
+                            for (index in 0 until metadata.length()) {
+                                val row = metadata.getJSONObject(index)
+                                if (row.getString("key") == "AllowMemberSendMessages") {
+                                    val bytes = android.util.Base64.decode(
+                                        row.getString("value"), android.util.Base64.DEFAULT)
+                                    allowed = allowed && bytes.size == 1 &&
+                                        bytes[0] == 1.toByte()
+                                }
+                            }
+                        }
+                        return@withContext LoadResult(mapped.sortedBy { it.timestamp },
+                            pending, allowed, summary.getString("name"))
+                    }
+                    val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
 
                     // Determine local pubkey + device ID
                     if (myPubkeyHex == null) {
@@ -509,6 +603,10 @@ class GroupChatActivity : BaseActivity() {
                 }
 
                 withContext(Dispatchers.Main) {
+                    result.resolvedName?.let {
+                        groupName = it
+                        groupNameTitle.text = it
+                    }
                     isPendingInvite = result.pendingInvite
                     inviteBanner.visibility = View.GONE
 
@@ -620,6 +718,28 @@ class GroupChatActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
+                val delegatedSent = withContext(Dispatchers.IO) {
+                    val keyManager = KeyManager.getInstance(this@GroupChatActivity)
+                    val db = SecureLegionDatabase.getInstance(this@GroupChatActivity,
+                        keyManager.getDatabasePassphrase())
+                    if (!DelegatedGroupStateStore(db).isAdopted(currentGroupId)) false
+                    else {
+                        val identity = LocalDeviceIdentity.loadExisting(this@GroupChatActivity)
+                        try {
+                            val pending = DelegatedGroupMessageOutbox(db).enqueue(
+                                currentGroupId, keyManager.getSigningPublicKey(),
+                                identity.deviceId, messageText)
+                            runCatching { DelegatedGroupMessageOutbox(db).convert(
+                                pending.id, keyManager.getSigningPublicKey(), identity) }
+                                .onFailure { Log.w(TAG, "Group message queued: ${it.message}") }
+                            true
+                        } finally { identity.close() }
+                    }
+                }
+                if (delegatedSent) {
+                    loadMessages()
+                    return@launch
+                }
                 // Step 1: Persist locally (synchronous Room write)
                 val (opBytes, opId, mgr) = withContext(Dispatchers.IO) {
                     val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
@@ -768,9 +888,18 @@ class GroupChatActivity : BaseActivity() {
         // Enforce 20-member group limit
         lifecycleScope.launch {
             val existing = withContext(Dispatchers.IO) {
-                CrdtGroupManager.getInstance(this@GroupChatActivity)
-                    .queryMembers(currentGroupId)
-                    .count { !it.removed }
+                val keyManager = KeyManager.getInstance(this@GroupChatActivity)
+                val db = SecureLegionDatabase.getInstance(this@GroupChatActivity,
+                    keyManager.getDatabasePassphrase())
+                val delegated = DelegatedGroupStateStore(db)
+                if (delegated.isAdopted(currentGroupId)) {
+                    val members = delegated.read(currentGroupId,
+                        keyManager.getSigningPublicKey()).getJSONArray("members")
+                    (0 until members.length()).count { index ->
+                        !members.getJSONObject(index).getBoolean("removed")
+                    }
+                } else CrdtGroupManager.getInstance(this@GroupChatActivity)
+                    .queryMembers(currentGroupId).count { !it.removed }
             }
             if (existing + contacts.size > AddGroupMembersActivity.MAX_GROUP_MEMBERS) {
                 ThemedToast.show(this@GroupChatActivity, "Groups are limited to ${AddGroupMembersActivity.MAX_GROUP_MEMBERS} members")
@@ -785,15 +914,25 @@ class GroupChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
-                    for ((index, contact) in contacts.withIndex()) {
-                        val pubkeyHex = contact.ed25519PublicKeyBytes
-                            .joinToString("") { "%02x".format(it) }
-                        mgr.inviteMember(currentGroupId, pubkeyHex)
-                        Log.i(TAG, "Invited ${contact.displayName}")
-                        // Backpressure: give Tor circuits time to settle between invites
-                        if (index < contacts.size - 1) {
-                            kotlinx.coroutines.delay(800)
+                    val keyManager = KeyManager.getInstance(this@GroupChatActivity)
+                    val db = SecureLegionDatabase.getInstance(this@GroupChatActivity,
+                        keyManager.getDatabasePassphrase())
+                    if (DelegatedGroupStateStore(db).isAdopted(currentGroupId)) {
+                        val identity = LocalDeviceIdentity.loadExisting(this@GroupChatActivity)
+                        try {
+                            for (contact in contacts)
+                                DelegatedGroupStateStore(db).inviteMember(
+                                    currentGroupId, keyManager.getSigningPublicKey(),
+                                    contact.ed25519PublicKeyBytes, identity)
+                        } finally { identity.close() }
+                    } else {
+                        val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
+                        for ((index, contact) in contacts.withIndex()) {
+                            val pubkeyHex = contact.ed25519PublicKeyBytes
+                                .joinToString("") { "%02x".format(it) }
+                            mgr.inviteMember(currentGroupId, pubkeyHex)
+                            Log.i(TAG, "Invited ${contact.displayName}")
+                            if (index < contacts.size - 1) kotlinx.coroutines.delay(800)
                         }
                     }
                 }
@@ -856,7 +995,15 @@ class GroupChatActivity : BaseActivity() {
         val currentGroupId = groupId ?: return
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                CrdtGroupManager.getInstance(this@GroupChatActivity).clearUnreadCount(currentGroupId)
+                val keyManager = KeyManager.getInstance(this@GroupChatActivity)
+                val db = SecureLegionDatabase.getInstance(this@GroupChatActivity,
+                    keyManager.getDatabasePassphrase())
+                if (DelegatedGroupStateStore(db).isAdopted(currentGroupId))
+                    db.openHelper.writableDatabase.execSQL(
+                        "UPDATE groups SET unreadCount=0 WHERE groupId=?",
+                        arrayOf(currentGroupId))
+                else CrdtGroupManager.getInstance(this@GroupChatActivity)
+                    .clearUnreadCount(currentGroupId)
             } catch (_: Exception) { }
         }
 
@@ -864,8 +1011,12 @@ class GroupChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    CrdtGroupManager.getInstance(this@GroupChatActivity)
-                        .fullSync(currentGroupId)
+                    val keyManager = KeyManager.getInstance(this@GroupChatActivity)
+                    val db = SecureLegionDatabase.getInstance(this@GroupChatActivity,
+                        keyManager.getDatabasePassphrase())
+                    if (!DelegatedGroupStateStore(db).isAdopted(currentGroupId))
+                        CrdtGroupManager.getInstance(this@GroupChatActivity)
+                            .fullSync(currentGroupId)
                 }
                 loadMessages()
                 refreshMemberCount()

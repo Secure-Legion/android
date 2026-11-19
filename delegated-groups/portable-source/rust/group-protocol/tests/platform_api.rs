@@ -236,6 +236,16 @@ fn leaf_only_creation_mirrors_account_messages_and_supports_restart_pagination()
     let second=call(json!({"operation":"read_messages","state":state(1,&old,&rosters),"after":first["next"],"limit":2}),None,true).unwrap();
     assert_eq!(second["messages"].as_array().unwrap().len(), 1);
     assert_eq!(second["has_more"], false);
+    let recent = call(
+        json!({"operation":"read_messages","state":state(1,&old,&rosters),
+            "after":null,"limit":2,"recent":true}),
+        None,
+        true,
+    )
+    .unwrap();
+    assert_eq!(recent["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(recent["has_more"], true);
+    assert_eq!(recent["messages"][1]["msg_id"], second["messages"][0]["msg_id"]);
     let id = first["messages"][0]["msg_id"].clone();
     old.push(create(1,11,&old,&rosters,json!({"kind":"msg_edit","msg_id":id,"ciphertext":B64.encode([42;32]),"nonce":B64.encode([42;24])})));
     let edited = call(

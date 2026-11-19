@@ -87,6 +87,8 @@ enum Request {
         limit: usize,
         #[serde(default)]
         include_local_dispositions: bool,
+        #[serde(default)]
+        recent: bool,
     },
     SelectDelivery {
         state: StateInput,
@@ -1367,6 +1369,7 @@ pub fn execute(
             after,
             limit,
             include_local_dispositions,
+            recent,
         } => {
             if limit == 0 || limit > 256 {
                 return Err(ApiError::Limit);
@@ -1374,6 +1377,9 @@ pub fn execute(
             let ctx = Context::parse(state, &[])?;
             let current = ctx.load()?;
             verify_key(&current, &ctx.account, group_key.unwrap())?;
+            if recent && after.is_some() {
+                return Err(ApiError::Malformed);
+            }
             let after = after.map(|id| op_id(&id)).transpose()?;
             let mut messages: Vec<_> = current
                 .core()
@@ -1442,6 +1448,13 @@ pub fn execute(
                 }
             }
             messages.sort_by_key(|m| m.0);
+            if recent {
+                let has_more = messages.len() > limit;
+                let start = messages.len().saturating_sub(limit);
+                let page = &messages[start..];
+                return encode_result(&json!({"messages":page.iter().map(|m|&m.1).collect::<Vec<_>>(),
+                    "has_more":has_more,"next":page.first().map(|m|m.0.to_hex())}));
+            }
             let mut page = messages
                 .into_iter()
                 .filter(|m| after.is_none_or(|id| m.0 > id))

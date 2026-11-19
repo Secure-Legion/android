@@ -161,7 +161,7 @@ internal class DelegatedGroupChunkStore(private val database: SecureLegionDataba
             arrayOf(nowMs))
     }
 
-    private fun transferId(frame: DeviceGroupFrame, localDeviceId: String): String =
+    fun transferId(frame: DeviceGroupFrame, localDeviceId: String): String =
         hex(DeviceGroupFrame.hash("Secure-GROUP-TRANSPORT-v1/transfer\u0000"
             .toByteArray(StandardCharsets.US_ASCII) + frame.recipientAccount +
             localDeviceId.toByteArray(StandardCharsets.US_ASCII) + frame.senderAccount +

@@ -7,6 +7,7 @@ import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.DelegatedGroupOwnHistory
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -16,12 +17,16 @@ import java.security.MessageDigest
 internal class DeviceSyncGroupReceiver(database: SecureLegionDatabase,
                                        roster: DeviceRosterStore) {
     private val chunks = DeviceSyncChunkStore(database, roster)
+    private val delegated = DelegatedGroupOwnHistory(database)
 
     fun receive(account: ByteArray, local: String, part: DeviceSyncChunkStore.Part,
                 nowMs: Long = System.currentTimeMillis()): DeviceSyncChunkStore.Result {
         require(part.topic == "groups" || part.topic == "group_links")
         return chunks.receive(account, local, part, nowMs) apply@{ db, canonical ->
             val delta = JSONObject(canonical.toString(Charsets.UTF_8))
+            if (part.topic == "groups" && delta.optInt("group_history_v") == 1)
+                return@apply delegated.applyInTransaction(db, canonical, part,
+                    account, nowMs)
             val snapshot = DeviceSyncGroupDelta.parse(delta, part.topic, part.objectId)
             // The legacy reader cannot interpret SLGO01/SLGE01 mixed history.
             val delegated = db.query(SimpleSQLiteQuery(

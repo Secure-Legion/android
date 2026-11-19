@@ -3,6 +3,9 @@ package com.securelegion.sync
 import android.content.Context
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.LocalDeviceIdentity
+import com.securelegion.database.DelegatedGroupOwnHistory
+import com.securelegion.database.DelegatedGroupStateStore
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceSyncContactWorkStore
@@ -50,7 +53,7 @@ internal class NearbyHistoryPublisher(private val context: Context,
         if ("group_snapshots_v1" in peerCapabilities &&
             roster.isLocalAuthorized(account, local, 0x06) &&
             roster.isAuthorized(account, peer, 0x06)) {
-            prepareGroups(account, local, peer, checkActive)
+            prepareGroups(account, local, peer, peerCapabilities, checkActive)
         }
         var lastId = ""
         var scanned = 0
@@ -86,6 +89,7 @@ internal class NearbyHistoryPublisher(private val context: Context,
     }
 
     private fun prepareGroups(account: ByteArray, local: String, peer: String,
+                              peerCapabilities: Set<String>,
                               checkActive: () -> Unit) {
         val db = database.openHelper.readableDatabase
         val groups = db.query(SimpleSQLiteQuery(
@@ -96,6 +100,20 @@ internal class NearbyHistoryPublisher(private val context: Context,
         for ((groupId, secret64) in groups) {
             checkActive()
             if (!groupId.matches(Regex("[0-9a-f]{64}"))) continue
+            if (DelegatedGroupStateStore(database).isAdopted(groupId)) {
+                if ("delegated_groups_v1" !in peerCapabilities) continue
+                val identity = LocalDeviceIdentity.loadExisting(context)
+                try {
+                    require(identity.deviceId == local)
+                    val delta = DelegatedGroupOwnHistory(database).export(
+                        groupId, account, identity)
+                    val id = delta.getString("group_snapshot_id")
+                    if (!hasPending(peer, "groups", id))
+                        queue(account, local, peer, "groups", id,
+                            delta, System.currentTimeMillis())
+                } finally { identity.close() }
+                continue
+            }
             val secret = runCatching { Base64.getDecoder().decode(secret64) }.getOrNull()
                 ?: continue
             if (secret.size != 32 || Base64.getEncoder().encodeToString(secret) != secret64)

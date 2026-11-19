@@ -10,6 +10,9 @@ import com.securelegion.crypto.LinkedProfileContentCrypto
 import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.DeviceRosterStore
+import com.securelegion.database.DelegatedGroupReceiver
+import com.securelegion.database.DelegatedGroupDeliveryStore
+import com.securelegion.database.DelegatedGroupMessageOutbox
 import com.securelegion.database.LinkedChatStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.sync.DeviceRosterExchange
@@ -37,6 +40,7 @@ import com.securelegion.sync.DeviceSyncLiveReceiptReceiver
 import com.securelegion.sync.DeviceSyncMediaFiles
 import com.securelegion.sync.DeviceSyncLivePublisher
 import com.securelegion.sync.DeviceTransportFrame
+import com.securelegion.sync.DeviceGroupFrame
 import com.securelegion.sync.DeviceChatPayloadStore
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.securelegion.utils.SessionManager
@@ -111,7 +115,11 @@ internal class DeviceRosterRuntime(private val context: Context) {
                     .trim().take(64).ifBlank { "Android" }
                 DeviceRosterAuthority(roster).ensurePrimaryRoster(keyManager, identity, model)
             }
-            if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) return
+            if (!roster.isLocalAuthorized(account, identity.deviceId, 0x02)) {
+                if (roster.isLocalAuthorized(account, identity.deviceId, 0x04))
+                    runGroupOnlySession(database, roster, account, identity)
+                return
+            }
             val exchange = DeviceRosterExchange(database, roster)
             val syncHost = DeviceSyncFsHost(account, identity, roster)
             val settingsReceiver = DeviceSyncAccountSettingsReceiver(database, roster)
@@ -127,6 +135,9 @@ internal class DeviceRosterRuntime(private val context: Context) {
             val receiptReceiver = DeviceSyncLiveReceiptReceiver(database, roster,
                 linkedChat)
             val groupReceiver = DeviceSyncGroupReceiver(database, roster)
+            val delegatedReceiver = DelegatedGroupReceiver(database)
+            val delegatedDelivery = DelegatedGroupDeliveryStore(database)
+            val delegatedMessages = DelegatedGroupMessageOutbox(database)
             val contactPublisher = DeviceSyncContactPublisher(database, roster,
                 linked = !primary)
             val livePublisher = if (primary)
@@ -230,6 +241,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                     }
                                 }
                                 0xA5 -> exchange.acceptAcknowledgment(frame, account)
+                                DeviceGroupFrame.TYPE -> handleGroupFrame(frame, account,
+                                    identity, roster, delegatedReceiver, delegatedDelivery)
                                 0xC0 -> {
                                     val incoming = DeviceTransportFrame.parse(frame)
                                     require(incoming.recipientAccount.contentEquals(account) &&
@@ -451,6 +464,8 @@ internal class DeviceRosterRuntime(private val context: Context) {
                             }
                         }
                         nextSendMs = now + 10_000L
+                        pumpGroup(account, identity, roster, delegatedMessages,
+                            delegatedDelivery, now)
                         if (roster.isLocalAuthorized(account, identity.deviceId, 0x01, now)) {
                             repeat(3) {
                                 if (transport.nextDataWire(account, identity,
@@ -588,6 +603,107 @@ internal class DeviceRosterRuntime(private val context: Context) {
                 DeviceEnrollmentOwnerCoordinator.cancel()
             }
         } finally { linkedCrypto?.close(); identity.close() }
+    }
+
+    private suspend fun runGroupOnlySession(database: SecureLegionDatabase,
+                                            roster: DeviceRosterStore,
+                                            account: ByteArray,
+                                            identity: LocalDeviceIdentity) {
+        val receiver = DelegatedGroupReceiver(database)
+        val delivery = DelegatedGroupDeliveryStore(database)
+        val messages = DelegatedGroupMessageOutbox(database)
+        val onion = identity.withTorServiceSeed { RustBridge.createDeviceOnionService(it) }
+        check(onion == identity.onionAddress && RustBridge.startDeviceOnionListener())
+        try {
+            var nextSendMs = 0L
+            var lastSequence = sourceSequence(database)
+            while (kotlin.coroutines.coroutineContext.isActive &&
+                SessionManager.isUnlocked(context) && networkReady() &&
+                roster.isLocalAuthorized(account, identity.deviceId, 0x04)) {
+                val frame = RustBridge.pollDeviceOnionFrame()
+                if (frame != null && frame.isNotEmpty() &&
+                    frame[0].toInt() and 255 == DeviceGroupFrame.TYPE)
+                    try { handleGroupFrame(frame, account, identity, roster,
+                        receiver, delivery) }
+                    catch (error: Exception) {
+                        Log.w(TAG, "Group frame rejected: ${error.message}")
+                    }
+                val now = System.currentTimeMillis()
+                val sequence = sourceSequence(database)
+                val changed = sequence != lastSequence
+                lastSequence = sequence
+                if ((now >= nextSendMs || changed) && (directArti ||
+                        TorService.getTransportGate()?.isOpenNow() == true)) {
+                    pumpGroup(account, identity, roster, messages, delivery, now)
+                    nextSendMs = now + 10_000L
+                }
+                delay(250)
+            }
+        } finally { RustBridge.stopDeviceOnionListener() }
+    }
+
+    private fun handleGroupFrame(wire: ByteArray, account: ByteArray,
+                                 identity: LocalDeviceIdentity,
+                                 roster: DeviceRosterStore,
+                                 receiver: DelegatedGroupReceiver,
+                                 delivery: DelegatedGroupDeliveryStore) {
+        val incoming = DeviceGroupFrame.parse(wire)
+        if (incoming.isAcknowledgment) {
+            delivery.acknowledge(wire, account, identity)
+            return
+        }
+        require(incoming.kind == DeviceGroupFrame.Kind.DATA ||
+            incoming.kind == DeviceGroupFrame.Kind.REINVITATION ||
+            incoming.kind == DeviceGroupFrame.Kind.PROOF_RESPONSE)
+        val result = receiver.receive(wire, account, identity)
+        if (result.complete && !result.duplicate)
+            context.sendBroadcast(Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
+                setPackage(context.packageName)
+                putExtra("GROUP_ID", incoming.groupId.joinToString("") {
+                    "%02x".format(it.toInt() and 255)
+                })
+            })
+        result.ack?.let { ack ->
+            if (SessionManager.isUnlocked(context) &&
+                roster.isLocalAuthorized(account, identity.deviceId, 0x04)) {
+                val onion = receiver.replyEndpoint(incoming, account, identity)
+                RustBridge.sendDeviceOnionFrame(onion, ack)
+            }
+        }
+    }
+
+    private fun pumpGroup(account: ByteArray, identity: LocalDeviceIdentity,
+                          roster: DeviceRosterStore,
+                          messages: DelegatedGroupMessageOutbox,
+                          delivery: DelegatedGroupDeliveryStore,
+                          nowMs: Long) {
+        if (!roster.isLocalAuthorized(account, identity.deviceId, 0x04, nowMs)) return
+        for (intent in messages.due(account, identity.deviceId, nowMs).take(4))
+            try { messages.convert(intent.id, account, identity, nowMs) }
+            catch (error: Exception) {
+                Log.w(TAG, "Group intent deferred: ${error.message}")
+            }
+        try { delivery.prepare(account, identity, nowMs) }
+        catch (error: Exception) {
+            Log.w(TAG, "Group delivery preparation deferred: ${error.message}")
+        }
+        val due = try { delivery.due(account, identity, nowMs) }
+            catch (error: Exception) {
+                Log.w(TAG, "Group delivery lookup deferred: ${error.message}")
+                emptyList()
+            }
+        for (pending in due) {
+            if (!SessionManager.isUnlocked(context) ||
+                !roster.isLocalAuthorized(account, identity.deviceId, 0x04)) break
+            var sent = true
+            for (wire in pending.wires) {
+                if (!RustBridge.sendDeviceOnionFrame(pending.onion, wire)) {
+                    sent = false
+                    break
+                }
+            }
+            delivery.defer(pending.id, if (sent) nowMs else nowMs + 10_000L)
+        }
     }
 
     private fun cursorSnapshot(database: SecureLegionDatabase,

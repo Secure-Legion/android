@@ -19,16 +19,20 @@ The native device onion accepts C2, while the legacy contact listener rejects it
 library, preserving the isolated group protocol library.
 The legacy group snapshot reader and CRDT manager reject groups after they acquire
 a delegated state marker, preventing mixed logs from entering the old engine.
-The local Pending text store checks current device and native group authority and
-enforces the 256-message/8 MiB/30 KiB limits. It is not yet connected to the
-group composer or exactly-once native operation conversion.
+The SQLCipher host now verifies group-scoped Root rosters, stages C2 chunks,
+previews live/invitation/re-invitation/proof-response bundles in the canonical
+native engine, and commits the validated log, state projection, exact ACK receipt,
+and staging removal together. The sender persists encrypted C2 packets before
+retrying and settles exact device ACKs. Pending text converts to a signed native
+operation in one transaction. The chat screen reads native messages and routes
+adopted-group text and member invitations through that host. GROUPS-only devices
+run the device onion loop. Nearby can carry receipt-bound mixed group history
+between mutually capable own-account devices.
 
-This is an integration checkpoint, not a working independent group host. The
-Android C2 application receiver/sender, authorized state publication, roster
-continuity, delivery workers, own-account mixed history, pending intent
-conversion, and UI adoption remain to be implemented and tested. Do not advertise
-`delegated_groups_v1` or claim Desktop Pending messages are deliverable yet.
-
-The current `DeviceRosterRuntime` requires SYNC authority to start. The eventual
-group host must also run for a GROUPS-only certificate; group delivery must not
-depend on a currently connected primary phone or a C0 session.
+This remains an integration checkpoint. Proof-request generation and Root
+approval, account-level responsibility ACKs, native controls on every group
+profile/member screen, Android-created group activation, and mixed-platform
+end-to-end tests remain. `delegated_groups_v1` is withheld. The current APK should
+not replace a user's account installation until those paths are complete and
+verified on a test profile. The iOS receiver is also required for group delivery
+to iOS members.
