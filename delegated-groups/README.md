@@ -55,8 +55,11 @@ operations. The current primary may approve missing, already accepted own
 operation hashes using its local Root seed inside an atomic proof transaction.
 Network requests do not invoke Root signing.
 
-This remains an integration checkpoint. Android-created group activation and
-mixed-platform end-to-end tests remain.
+The Android create-group screen now uses the native group operation, queues
+native invitations for selected members, and stores the initial group in the
+own-device history source. An invitation failure leaves the created group
+visible and reports how many invitations were queued.
+This remains an integration checkpoint. Mixed-platform end-to-end tests remain.
 Android Nearby now advertises `delegated_groups_v1` to eligible own-account
 devices; iOS still needs the receiver before mixed-platform catch-up can finish.
 The current APK should not replace a user's

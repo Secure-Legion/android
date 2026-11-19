@@ -1312,7 +1312,15 @@ abstract class SecureLegionDatabase : RoomDatabase() {
 
         private val MIGRATION_67_68 = object : Migration(67, 68) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE delegated_group_inbound_receipts " +
+                val exists = db.query("PRAGMA table_info(delegated_group_inbound_receipts)")
+                    .use { cursor ->
+                        val name = cursor.getColumnIndexOrThrow("name")
+                        var found = false
+                        while (cursor.moveToNext())
+                            if (cursor.getString(name) == "account_ack_sent_at_ms") found = true
+                        found
+                    }
+                if (!exists) db.execSQL("ALTER TABLE delegated_group_inbound_receipts " +
                     "ADD COLUMN account_ack_sent_at_ms INTEGER NOT NULL DEFAULT 0")
             }
         }
@@ -1598,7 +1606,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 67) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 68) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

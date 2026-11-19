@@ -110,6 +110,9 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                         "(group_id,state_hash,op_count,updated_at_ms) VALUES (?,?,?,?)",
                         arrayOf(groupId, summary.getString("state_hash"),
                             summary.getInt("op_count"), nowMs))
+                    db.execSQL("INSERT INTO device_sync_source_changes " +
+                        "(topic,object_id,kind,changed_at_ms) " +
+                        "VALUES ('groups',?,'upsert',?)", arrayOf(groupId, nowMs))
                     db.setTransactionSuccessful()
                     return groupId
                 } finally { encoded.fill(0); selected.fill(0) }

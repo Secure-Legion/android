@@ -19,8 +19,10 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.DelegatedGroupStateStore
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.ed25519PublicKeyBytes
+import com.securelegion.crypto.LocalDeviceIdentity
 import com.securelegion.services.CrdtGroupManager
 import com.securelegion.ui.adapters.SelectedMembersAdapter
 import com.securelegion.utils.ImagePicker
@@ -230,31 +232,52 @@ class CreateGroupActivity : BaseActivity() {
         createGroupButton.alpha = 0.5f
         createGroupButton.text = "Creating..."
 
+        val members = selectedMembers.toList()
+        val icon = selectedGroupIcon
         lifecycleScope.launch {
             try {
-                val groupId = withContext(Dispatchers.IO) {
-                    Log.d(TAG, "Creating CRDT group: $groupName with ${selectedMembers.size} members")
+                val (groupId, queued, failed) = withContext(Dispatchers.IO) {
+                    val km = KeyManager.getInstance(this@CreateGroupActivity)
+                    val db = SecureLegionDatabase.getInstance(this@CreateGroupActivity,
+                        km.getDatabasePassphrase())
+                    val identity = LocalDeviceIdentity.loadExisting(this@CreateGroupActivity)
+                    try {
+                        val delegated = DelegatedGroupStateStore(db)
+                        val account = km.getSigningPublicKey()
+                        val gid = delegated.createGroup(groupName, account, identity)
 
-                    val mgr = CrdtGroupManager.getInstance(this@CreateGroupActivity)
-                    val gid = mgr.createGroup(groupName, selectedGroupIcon)
-
-                    // Enqueue invites — dispatcher handles sequencing, retry, backpressure
-                    if (selectedMembers.isNotEmpty()) {
-                        val contacts = selectedMembers.map { member ->
-                            val pubkeyHex = member.ed25519PublicKeyBytes
-                                .joinToString("") { "%02x".format(it) }
-                            Pair(pubkeyHex, member.displayName)
+                        if (icon != null) {
+                            try {
+                                val encoded = CrdtGroupManager.getInstance(
+                                    this@CreateGroupActivity).compressAvatarForCrdt(icon)
+                                    ?: throw IllegalArgumentException("Invalid group photo")
+                                val value = android.util.Base64.decode(encoded,
+                                    android.util.Base64.DEFAULT)
+                                try { delegated.setMetadata(gid, account, "Avatar", value,
+                                    identity) } finally { value.fill(0) }
+                            } catch (error: Exception) {
+                                Log.w(TAG, "Group created without photo", error)
+                            }
                         }
-                        mgr.inviteDispatcher.enqueue(gid, contacts)
-                    }
-
-                    gid
+                        var queued = 0
+                        for (member in members) {
+                            try {
+                                delegated.inviteMember(gid, account,
+                                    member.ed25519PublicKeyBytes, identity)
+                                queued++
+                            } catch (error: Exception) {
+                                Log.w(TAG, "Group invitation deferred for ${member.id}", error)
+                            }
+                        }
+                        Triple(gid, queued, members.size - queued)
+                    } finally { identity.close() }
                 }
 
                 withContext(Dispatchers.Main) {
-                    val memberCount = selectedMembers.size
-                    val msg = if (memberCount > 0) {
-                        "Group '$groupName' created! Inviting $memberCount members..."
+                    val msg = if (failed > 0) {
+                        "Group '$groupName' created. $queued invitations queued; $failed could not be queued."
+                    } else if (queued > 0) {
+                        "Group '$groupName' created! Inviting $queued members..."
                     } else {
                         "Group '$groupName' created!"
                     }
