@@ -1,6 +1,7 @@
 package com.securelegion.services
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.util.Log
 import com.securelegion.crypto.KeyManager
@@ -243,12 +244,38 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                             transport.acceptPrekey(incoming, identity)
                                             null
                                         }
-                                        DeviceTransportFrame.Kind.DATA ->
-                                            transport.acceptData(incoming, identity,
+                                        DeviceTransportFrame.Kind.DATA -> {
+                                            var changedContactId: Long? = null
+                                            val ack = transport.acceptData(incoming, identity,
                                                 { db, logicalId, plaintext ->
-                                                    chatPayloads.apply(db,
+                                                    val accountReady = chatPayloads.apply(db,
                                                         incoming.senderAccount, logicalId, plaintext)
+                                                    if (primary) {
+                                                        val accountEd = android.util.Base64.encodeToString(
+                                                            incoming.senderAccount,
+                                                            android.util.Base64.NO_WRAP)
+                                                        changedContactId = db.query(SimpleSQLiteQuery(
+                                                            "SELECT id FROM contacts WHERE publicKeyBase64=? " +
+                                                                "AND isBlocked=0 LIMIT 1",
+                                                            arrayOf(accountEd)
+                                                        )).use { if (it.moveToFirst()) it.getLong(0) else null }
+                                                    }
+                                                    accountReady
                                                 })
+                                            // acceptData returns only after the payload and ACK commit.
+                                            changedContactId?.let { contactId ->
+                                                runCatching {
+                                                    context.sendBroadcast(Intent(
+                                                        "com.securelegion.MESSAGE_RECEIVED").apply {
+                                                        setPackage(context.packageName)
+                                                        putExtra("CONTACT_ID", contactId)
+                                                    })
+                                                }.onFailure {
+                                                    Log.w(TAG, "C0 chat refresh deferred: ${it.message}")
+                                                }
+                                            }
+                                            ack
+                                        }
                                         DeviceTransportFrame.Kind.DEVICE_STORAGE_ACK,
                                         DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK -> {
                                             transport.acceptAcknowledgment(incoming, identity)
