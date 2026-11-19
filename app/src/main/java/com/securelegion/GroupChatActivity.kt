@@ -416,8 +416,8 @@ class GroupChatActivity : BaseActivity() {
                         myDeviceIdHex = ownId
                         val mapped = display.messages.map { msg ->
                             val isMe = msg.author == ownId
-                            val text = if (msg.pendingDelivery)
-                                "${msg.text} · Not delivered" else msg.text
+                            val text = msg.deliveryStatus?.let { "${msg.text} · $it" }
+                                ?: msg.text
                             GroupChatMessage(messageId = msg.id, text = text,
                                 timestamp = msg.timestampMs, isSentByMe = isMe,
                                 senderName = if (isMe) "" else

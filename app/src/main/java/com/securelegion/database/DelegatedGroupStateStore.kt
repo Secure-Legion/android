@@ -17,7 +17,7 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                      val committedCount: Int)
     data class DisplayMessage(val id: String, val author: String,
                               val timestampMs: Long, val text: String,
-                              val deleted: Boolean, val pendingDelivery: Boolean)
+                              val deleted: Boolean, val deliveryStatus: String?)
     data class DisplayState(val summary: JSONObject, val messages: List<DisplayMessage>)
 
     fun createGroup(name: String, account: ByteArray,
@@ -408,12 +408,45 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                                     ?.toString(Charsets.UTF_8) ?: "[Encrypted]"
                         }.getOrDefault("[Encrypted]")
                     } finally { key?.fill(0) }
+                    val disposition = if (row.optString("local_disposition") ==
+                        "not_delivered") "Not delivered" else if (
+                        hasOutstandingAccountDelivery(db, groupId,
+                            row.getString("create_op_id"))) "Pending" else null
                     messages.add(DisplayMessage(row.getString("msg_id"),
                         row.getString("author"), row.getLong("timestamp_ms"), text,
-                        deleted, row.optString("local_disposition") == "not_delivered"))
+                        deleted, disposition))
             }
             return DisplayState(summary, messages)
         } finally { state.groupKey.fill(0) }
+    }
+
+    /** Device-only storage receipts do not fulfill an account delivery obligation. */
+    private fun hasOutstandingAccountDelivery(db: SupportSQLiteDatabase,
+                                              groupId: String, opId: String): Boolean {
+        val targets = ArrayList<Pair<String, String>>()
+        db.query(SimpleSQLiteQuery("SELECT t.target_account,o.local_device FROM " +
+            "delegated_group_targets t JOIN delegated_group_origins o " +
+            "ON o.op_id=t.op_id WHERE t.op_id=?", arrayOf(opId))).use { cursor ->
+            while (cursor.moveToNext())
+                targets.add(Pair(cursor.getString(0), cursor.getString(1)))
+        }
+        if (targets.isEmpty()) return false
+        val hash = db.query(SimpleSQLiteQuery("SELECT operation_hash FROM " +
+            "delegated_group_acceptance WHERE op_id=? AND group_id=?",
+            arrayOf(opId, groupId))).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        } ?: throw IllegalStateException("Outgoing group operation lacks acceptance")
+        for ((account, device) in targets) {
+            val acknowledged = db.query(SimpleSQLiteQuery("SELECT acknowledged FROM " +
+                "delegated_group_account_progress WHERE group_id=? AND " +
+                "local_device=? AND target_account=?",
+                arrayOf(groupId, device, account))).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: return true
+            val hashes = JSONArray(acknowledged)
+            if ((0 until hashes.length()).none { hashes.getString(it) == hash }) return true
+        }
+        return false
     }
 
     /** Preview and publish a live C2 delta inside the caller's receipt transaction. */

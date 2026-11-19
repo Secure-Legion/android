@@ -141,11 +141,26 @@ internal class DelegatedGroupReceiver(private val database: SecureLegionDatabase
                         db.execSQL("DELETE FROM delegated_group_trusted_rosters " +
                             "WHERE account_ed=?", arrayOf(b64(observation.account)))
                 }
+                db.execSQL("INSERT INTO device_sync_source_changes " +
+                    "(topic,object_id,kind,changed_at_ms) " +
+                    "VALUES ('groups',?,'upsert',?)", arrayOf(groupId, nowMs))
                 val ownRoster = rosters.fetchSignedRoster(account)
                     ?: throw IllegalStateException("Local group roster unavailable")
+                // With exactly one authorized installation, this committed log
+                // is the account's durable copy. Multi-device accounts still
+                // owe their other installations a verified history catch-up.
+                val soleInstallation = db.query(SimpleSQLiteQuery(
+                    "SELECT count(*),sum(CASE WHEN deviceId=? AND isSelf=1 " +
+                        "THEN 1 ELSE 0 END) FROM authorized_devices " +
+                        "WHERE accountEd=? AND expiresAtMs>?",
+                    arrayOf(identity.deviceId, b64(account), nowMs))).use { cursor ->
+                    cursor.moveToFirst()
+                    cursor.getInt(0) == 1 && cursor.getInt(1) == 1
+                }
                 val ack = DeviceGroupFrame.committedAck(
                     DeviceGroupFrame.parse(complete.firstWire), account, identity,
-                    ownRoster, nowMs = nowMs).wire
+                    ownRoster, accountStored = soleInstallation,
+                    nowMs = nowMs).wire
                 for ((limit, scoped) in listOf(1024 to true, 8192 to false)) {
                     val clause = if (scoped) " WHERE sender_account=?" else ""
                     val args = if (scoped) arrayOf<Any>(hex(frame.senderAccount))

@@ -649,7 +649,13 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                  delivery: DelegatedGroupDeliveryStore) {
         val incoming = DeviceGroupFrame.parse(wire)
         if (incoming.isAcknowledgment) {
-            delivery.acknowledge(wire, account, identity)
+            if (delivery.acknowledge(wire, account, identity))
+                context.sendBroadcast(Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
+                    setPackage(context.packageName)
+                    putExtra("GROUP_ID", incoming.groupId.joinToString("") {
+                        "%02x".format(it.toInt() and 255)
+                    })
+                })
             return
         }
         require(incoming.kind == DeviceGroupFrame.Kind.DATA ||

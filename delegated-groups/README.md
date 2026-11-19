@@ -36,6 +36,11 @@ engine, and the legacy swipe-to-leave cleanup is blocked for adopted groups.
 GROUPS-only devices
 run the device onion loop. Nearby can carry receipt-bound mixed group history
 between mutually capable own-account devices.
+An accepted inbound bundle marks own-account history dirty in the same commit.
+Single-installation accounts sign an account storage ACK; other accounts send a
+device storage ACK until catch-up responsibility is durable. Outgoing bubbles
+remain Pending until exact account ACKs cover their recipient obligations, and
+an ACK commit refreshes an open group chat.
 
 This remains an integration checkpoint. Proof-request generation and Root
 approval, account-level responsibility ACKs, native authoring for group deletion
