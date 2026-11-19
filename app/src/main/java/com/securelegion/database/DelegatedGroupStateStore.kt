@@ -255,6 +255,36 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
         require(key in setOf("Name", "Avatar", "AllowMemberSendMessages",
             "AllowMemberInvites", "AllowMemberPin", "AllowMemberChangeInfo"))
         require(value.size <= 65_536)
+        return authorLiveMutation(groupId, account,
+            JSONObject().put("kind", "metadata_set").put("key", key)
+                .put("value", b64(value)), identity, nowMs)
+    }
+
+    /** A kick and the mandatory fresh epoch commit or roll back together. */
+    fun removeMember(groupId: String, account: ByteArray, target: ByteArray,
+                     ban: Boolean, identity: LocalDeviceIdentity,
+                     nowMs: Long = System.currentTimeMillis()) {
+        require(account.size == 32 && target.size == 32 &&
+            !account.contentEquals(target) && nowMs < 9_007_199_254_740_990L)
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            authorLiveMutation(groupId, account, JSONObject()
+                .put("kind", "member_remove").put("account_public", b64(target))
+                .put("reason", "Kick").put("ban", ban), identity, nowMs,
+                terminalRecipient = target)
+            val afterRemoval = read(groupId, account, nowMs + 1)
+            if (afterRemoval.getBoolean("needs_rekey"))
+                authorLiveMutation(groupId, account,
+                    JSONObject().put("kind", "group_rekey"), identity, nowMs + 1)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    private fun authorLiveMutation(groupId: String, account: ByteArray,
+                                   mutation: JSONObject, identity: LocalDeviceIdentity,
+                                   nowMs: Long,
+                                   terminalRecipient: ByteArray? = null): String {
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
         try {
@@ -271,8 +301,7 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                     DeviceGroupProtocolBridge.execute(JSONObject()
                         .put("operation", "create_operation")
                         .put("state", state.context).put("certificate", b64(certificate))
-                        .put("mutation", JSONObject().put("kind", "metadata_set")
-                            .put("key", key).put("value", b64(value))),
+                        .put("mutation", mutation),
                         signingSeed = seed, groupKey = state.groupKey)
                 }
                 val encoded = Base64.decode(created.getString("encoded"), Base64.DEFAULT)
@@ -302,6 +331,10 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                                 "delegated_group_targets (op_id,target_account,mode) " +
                                 "VALUES (?,?,'live')", arrayOf(opId, target))
                         }
+                        if (terminalRecipient != null) db.execSQL("INSERT INTO " +
+                            "delegated_group_targets (op_id,target_account,mode) " +
+                            "VALUES (?,?,'terminal')",
+                            arrayOf(opId, b64(terminalRecipient)))
                         db.execSQL("INSERT INTO device_sync_source_changes " +
                             "(topic,object_id,kind,changed_at_ms) " +
                             "VALUES ('groups',?,'upsert',?)",
@@ -474,12 +507,20 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                 }
                 db.execSQL("DELETE FROM delegated_group_principals WHERE group_id=?",
                     arrayOf(groupId))
+                val principals = HashSet<String>()
                 for (index in 0 until members.length()) {
                     val member = members.getJSONObject(index)
                     if (!member.getBoolean("removed") && !member.getBoolean("banned"))
-                        db.execSQL("INSERT INTO delegated_group_principals " +
-                            "(group_id,account_ed) VALUES (?,?)",
-                            arrayOf(groupId, b64(hexBytes(member.getString("pubkey_hex")))))
+                        principals.add(b64(hexBytes(member.getString("pubkey_hex"))))
+                }
+                val historicalAccounts = summary.getJSONArray("historical_principals")
+                for (index in 0 until historicalAccounts.length())
+                    principals.add(b64(hexBytes(historicalAccounts.getString(index))))
+                require(principals.size <= 128)
+                for (principal in principals) {
+                    db.execSQL("INSERT INTO delegated_group_principals " +
+                        "(group_id,account_ed) VALUES (?,?)",
+                        arrayOf(groupId, principal))
                 }
                 db.execSQL("UPDATE groups SET name=?,groupSecretB64=?,memberCount=?," +
                     "isPendingInvite=?,lastActivityTimestamp=?,lastMessagePreview=? " +

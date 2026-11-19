@@ -27,13 +27,15 @@ retrying and settles exact device ACKs. Pending text converts to a signed native
 operation in one transaction. The chat screen reads native messages and routes
 adopted-group text and member invitations through that host. The group profile,
 member list, and permission screen read validated native state; group names and
-member permissions publish signed native metadata operations. GROUPS-only devices
+member permissions publish signed native metadata operations. Member removal and
+the required fresh epoch commit together; removed members receive a terminal
+delivery selection. GROUPS-only devices
 run the device onion loop. Nearby can carry receipt-bound mixed group history
 between mutually capable own-account devices.
 
 This remains an integration checkpoint. Proof-request generation and Root
-approval, account-level responsibility ACKs, native authoring for member
-removals, role changes, icons, group deletion and terminal delivery, Android-created
+approval, account-level responsibility ACKs, native authoring for role changes,
+icons, group deletion and self-leave, Android-created
 group activation, and mixed-platform end-to-end tests remain.
 `delegated_groups_v1` is withheld. The current APK should not replace a user's
 account installation until those paths are complete and verified on a test

@@ -486,10 +486,6 @@ class GroupMembersActivity : BaseActivity() {
     }
 
     private fun confirmRemoveMember(member: GroupMemberItem) {
-        if (groupId?.let(::isDelegatedGroup) == true) {
-            ThemedToast.show(this, "Member removal is unavailable for this group")
-            return
-        }
         val currentGroupId = groupId ?: return
 
         if (currentUserRole !in listOf("Owner", "Admin")) {
@@ -526,11 +522,25 @@ class GroupMembersActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
-                    mgr.removeMember(groupId, member.pubkeyHex, reason = "Kick", ban = ban)
-                    val authorName = KeyManager.getInstance(this@GroupMembersActivity).getUsername() ?: "Someone"
-                    val verb = if (ban) "banned" else "removed"
-                    mgr.sendSystemMessage(groupId, "$authorName $verb ${member.displayName}")
+                    if (isDelegatedGroup(groupId)) {
+                        val km = KeyManager.getInstance(this@GroupMembersActivity)
+                        val db = SecureLegionDatabase.getInstance(this@GroupMembersActivity,
+                            km.getDatabasePassphrase())
+                        val target = member.pubkeyHex.chunked(2)
+                            .map { it.toInt(16).toByte() }.toByteArray()
+                        val identity = LocalDeviceIdentity.loadExisting(this@GroupMembersActivity)
+                        try {
+                            DelegatedGroupStateStore(db).removeMember(groupId,
+                                km.getSigningPublicKey(), target, ban, identity)
+                        } finally { identity.close() }
+                    } else {
+                        val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                        mgr.removeMember(groupId, member.pubkeyHex, reason = "Kick", ban = ban)
+                        val authorName = KeyManager.getInstance(this@GroupMembersActivity)
+                            .getUsername() ?: "Someone"
+                        val verb = if (ban) "banned" else "removed"
+                        mgr.sendSystemMessage(groupId, "$authorName $verb ${member.displayName}")
+                    }
                 }
                 val msg = if (ban) "${member.displayName} banned" else "${member.displayName} removed"
                 ThemedToast.show(this@GroupMembersActivity, msg)

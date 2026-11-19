@@ -76,6 +76,8 @@ internal class DelegatedGroupDeliveryStore(private val database: SecureLegionDat
                             arrayOf(target[1], identity.deviceId, target[2], deviceId)))
                             .use { if (it.moveToFirst()) JSONArray(it.getString(0)) else JSONArray() }
                         val invitation = target[3] == "invite"
+                        val terminal = target[3] == "terminal"
+                        require(invitation || terminal || target[3] == "live")
                         val request = JSONObject()
                             .put("operation", if (invitation) "prepare_invitation"
                                 else "select_delivery")
@@ -87,6 +89,7 @@ internal class DelegatedGroupDeliveryStore(private val database: SecureLegionDat
                                 signingSeed = seed, groupKey = state.groupKey)
                         } else {
                             request.put("acknowledged", progress).put("limit", 128)
+                            if (terminal) request.put("terminal_recipient", target[2])
                             DeviceGroupProtocolBridge.execute(request,
                                 groupKey = state.groupKey)
                         }
@@ -204,9 +207,10 @@ internal class DelegatedGroupDeliveryStore(private val database: SecureLegionDat
                 }
             }
             db.setTransactionSuccessful()
-            scanCursor = lastProcessed?.let {
-                Triple(it[4].toLong(), it[0], it[2])
-            }
+            scanCursor = if (targets.size < 128 && made < 8) null
+                else lastProcessed?.let {
+                    Triple(it[4].toLong(), it[0], it[2])
+                }
             return made
         } finally { db.endTransaction() }
     }
