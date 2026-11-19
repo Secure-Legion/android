@@ -41,10 +41,12 @@ Single-installation accounts sign an account storage ACK; other accounts send a
 device storage ACK until catch-up responsibility is durable. Outgoing bubbles
 remain Pending until exact account ACKs cover their recipient obligations, and
 an ACK commit refreshes an open group chat.
+Owner group deletion and self-leave now publish native terminal operations.
+The local accepted log remains available for recipient retries and historical
+reads; the composer reports the resulting read-only state.
 
 This remains an integration checkpoint. Proof-request generation and Root
-approval, account-level responsibility ACKs, native authoring for group deletion
-and self-leave, Android-created
+approval, multi-device account-level responsibility ACKs, Android-created
 group activation, and mixed-platform end-to-end tests remain.
 `delegated_groups_v1` is withheld. The current APK should not replace a user's
 account installation until those paths are complete and verified on a test

@@ -376,7 +376,8 @@ class GroupChatActivity : BaseActivity() {
                     val messages: List<GroupChatMessage>,
                     val pendingInvite: Boolean,
                     val canSend: Boolean,
-                    val resolvedName: String? = null
+                    val resolvedName: String? = null,
+                    val sendHint: String? = null
                 )
 
                 val result = withContext(Dispatchers.IO) {
@@ -452,8 +453,16 @@ class GroupChatActivity : BaseActivity() {
                                 }
                             }
                         }
+                        val hint = when {
+                            summary.getBoolean("deleted") -> "Group deleted"
+                            summary.getString("our_role") == "Removed" ->
+                                "You left this group"
+                            summary.getBoolean("needs_rekey") ->
+                                "Waiting for a new group key"
+                            else -> null
+                        }
                         return@withContext LoadResult(mapped.sortedBy { it.timestamp },
-                            pending, allowed, summary.getString("name"))
+                            pending, allowed, summary.getString("name"), hint)
                     }
                     val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
 
@@ -619,6 +628,7 @@ class GroupChatActivity : BaseActivity() {
                     plusButton.alpha = if (inputEnabled) 1.0f else 0.4f
                     messageInput.hint = when {
                         result.pendingInvite -> "Accept invite to send messages"
+                        result.sendHint != null -> result.sendHint
                         !result.canSend -> "Message sending not allowed"
                         else -> "Message"
                     }

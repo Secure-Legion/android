@@ -272,12 +272,63 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
             authorLiveMutation(groupId, account, JSONObject()
                 .put("kind", "member_remove").put("account_public", b64(target))
                 .put("reason", "Kick").put("ban", ban), identity, nowMs,
-                terminalRecipient = target)
+                terminalRecipients = listOf(target))
             val afterRemoval = read(groupId, account, nowMs + 1)
             if (afterRemoval.getBoolean("needs_rekey"))
                 authorLiveMutation(groupId, account,
                     JSONObject().put("kind", "group_rekey"), identity, nowMs + 1)
             db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    fun deleteGroup(groupId: String, account: ByteArray,
+                    identity: LocalDeviceIdentity,
+                    nowMs: Long = System.currentTimeMillis()): String {
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val before = read(groupId, account, nowMs)
+            require(!before.getBoolean("deleted"))
+            val members = before.getJSONArray("members")
+            val recipients = ArrayList<ByteArray>()
+            for (index in 0 until members.length()) {
+                val member = members.getJSONObject(index)
+                if (member.getBoolean("removed") || member.getBoolean("banned")) continue
+                val recipient = hexBytes(member.getString("pubkey_hex"))
+                if (!recipient.contentEquals(account)) recipients.add(recipient)
+            }
+            val opId = authorLiveMutation(groupId, account, JSONObject()
+                .put("kind", "group_delete").put("reason", "Deleted by owner"),
+                identity, nowMs, terminalRecipients = recipients)
+            db.setTransactionSuccessful()
+            return opId
+        } finally { db.endTransaction() }
+    }
+
+    /** Keep the accepted history and terminal retry records after self-leave. */
+    fun leaveGroup(groupId: String, account: ByteArray,
+                   identity: LocalDeviceIdentity,
+                   nowMs: Long = System.currentTimeMillis()): String {
+        val db = database.openHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val before = read(groupId, account, nowMs)
+            require(!before.getBoolean("deleted") &&
+                before.getString("our_role") != "Removed")
+            val members = before.getJSONArray("members")
+            val recipients = ArrayList<ByteArray>()
+            for (index in 0 until members.length()) {
+                val member = members.getJSONObject(index)
+                if (member.getBoolean("removed") || member.getBoolean("banned")) continue
+                val recipient = hexBytes(member.getString("pubkey_hex"))
+                if (!recipient.contentEquals(account)) recipients.add(recipient)
+            }
+            val opId = authorLiveMutation(groupId, account, JSONObject()
+                .put("kind", "member_remove").put("account_public", b64(account))
+                .put("reason", "Leave").put("ban", false), identity, nowMs,
+                terminalRecipients = recipients)
+            db.setTransactionSuccessful()
+            return opId
         } finally { db.endTransaction() }
     }
 
@@ -299,7 +350,9 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
     private fun authorLiveMutation(groupId: String, account: ByteArray,
                                    mutation: JSONObject, identity: LocalDeviceIdentity,
                                    nowMs: Long,
-                                   terminalRecipient: ByteArray? = null): String {
+                                   terminalRecipients: List<ByteArray> = emptyList()): String {
+        require(terminalRecipients.size <= 20 &&
+            terminalRecipients.all { it.size == 32 && !it.contentEquals(account) })
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
         try {
@@ -336,20 +389,21 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                             "(op_id,group_id,local_device,created_at_ms) VALUES (?,?,?,?)",
                             arrayOf(opId, groupId, identity.deviceId, nowMs))
                         val members = summary.getJSONArray("members")
+                        val terminalTargets = terminalRecipients.map(::b64).toSet()
                         for (index in 0 until members.length()) {
                             val member = members.getJSONObject(index)
                             if (!member.getBoolean("accepted") ||
                                 member.getBoolean("removed") ||
                                 member.getBoolean("banned")) continue
                             val target = b64(hexBytes(member.getString("pubkey_hex")))
-                            if (target != b64(account)) db.execSQL("INSERT INTO " +
+                            if (target != b64(account) && target !in terminalTargets &&
+                                !summary.getBoolean("deleted")) db.execSQL("INSERT INTO " +
                                 "delegated_group_targets (op_id,target_account,mode) " +
                                 "VALUES (?,?,'live')", arrayOf(opId, target))
                         }
-                        if (terminalRecipient != null) db.execSQL("INSERT INTO " +
+                        for (target in terminalTargets) db.execSQL("INSERT INTO " +
                             "delegated_group_targets (op_id,target_account,mode) " +
-                            "VALUES (?,?,'terminal')",
-                            arrayOf(opId, b64(terminalRecipient)))
+                            "VALUES (?,?,'terminal')", arrayOf(opId, target))
                         db.execSQL("INSERT INTO device_sync_source_changes " +
                             "(topic,object_id,kind,changed_at_ms) " +
                             "VALUES ('groups',?,'upsert',?)",

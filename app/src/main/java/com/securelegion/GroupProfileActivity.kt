@@ -376,27 +376,32 @@ class GroupProfileActivity : BaseActivity() {
     private fun refreshOwnerControls() {
         val gid = groupId ?: return
         lifecycleScope.launch {
-            val role = withContext(Dispatchers.IO) {
+            val (role, native, deleted) = withContext(Dispatchers.IO) {
                 try {
-                    val native = delegatedSummary(gid)
-                    if (native != null) return@withContext native.getString("our_role")
+                    val summary = delegatedSummary(gid)
+                    if (summary != null) return@withContext Triple(
+                        summary.getString("our_role"), true,
+                        summary.getBoolean("deleted"))
                     val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
                     val myPubkeyHex = KeyManager.getInstance(this@GroupProfileActivity)
                         .getSigningPublicKey().joinToString("") { "%02x".format(it) }
-                    mgr.queryMembers(gid)
+                    Triple(mgr.queryMembers(gid)
                         .firstOrNull { it.pubkeyHex == myPubkeyHex && it.accepted && !it.removed }
-                        ?.role
-                } catch (_: Exception) { null }
+                        ?.role, false, false)
+                } catch (_: Exception) { Triple(null, false, true) }
             }
             if (isFinishing || isDestroyed) return@launch
             val isOwner = role == "Owner"
             val isOwnerOrAdmin = isOwner || role == "Admin"
-            canEditName = isOwnerOrAdmin
+            canEditName = isOwnerOrAdmin && !deleted
             groupNameTitle.isEnabled = canEditName
             groupNameTitle.isFocusable = canEditName
             groupNameTitle.isFocusableInTouchMode = canEditName
-            val native = isDelegatedGroup(gid)
-            deleteGroupButton.visibility = if (isOwner && !native) View.VISIBLE else View.GONE
+            deleteGroupButton.visibility = if (isOwner && !deleted) View.VISIBLE
+                else View.GONE
+            inviteMemberButton.visibility = if (deleted) View.GONE else View.VISIBLE
+            groupIconContainer.isEnabled = !deleted
+            permissionsButton.isEnabled = !deleted
             bannedUsersButton.visibility = if (isOwnerOrAdmin && !native) View.VISIBLE else View.GONE
             recentActionsButton.visibility = if (isOwnerOrAdmin && !native) View.VISIBLE else View.GONE
             syncPhotoButton.visibility = if (native) View.GONE else View.VISIBLE
@@ -602,7 +607,6 @@ class GroupProfileActivity : BaseActivity() {
 
     private fun showDeleteGroupConfirmation() {
         val currentGroupId = groupId ?: return
-        if (isDelegatedGroup(currentGroupId)) return
         val dialog = GlassDialog.builder(this)
             .setTitle("Delete Group")
             .setMessage("Delete this group for everyone? This cannot be undone.")
@@ -611,7 +615,16 @@ class GroupProfileActivity : BaseActivity() {
                 lifecycleScope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                            if (isDelegatedGroup(currentGroupId)) {
+                                val km = KeyManager.getInstance(this@GroupProfileActivity)
+                                val db = SecureLegionDatabase.getInstance(this@GroupProfileActivity,
+                                    km.getDatabasePassphrase())
+                                val identity = LocalDeviceIdentity.loadExisting(this@GroupProfileActivity)
+                                try {
+                                    DelegatedGroupStateStore(db).deleteGroup(currentGroupId,
+                                        km.getSigningPublicKey(), identity)
+                                } finally { identity.close() }
+                            } else CrdtGroupManager.getInstance(this@GroupProfileActivity)
                                 .deleteGroup(currentGroupId)
                         }
                         ThemedToast.show(this@GroupProfileActivity, "Group deleted")

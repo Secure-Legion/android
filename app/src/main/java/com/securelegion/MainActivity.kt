@@ -1551,14 +1551,13 @@ class MainActivity : BaseActivity() {
         val keyManager = KeyManager.getInstance(this)
         val db = SecureLegionDatabase.getInstance(this,
             keyManager.getDatabasePassphrase())
-        if (com.securelegion.database.DelegatedGroupStateStore(db)
-                .isAdopted(group.groupId)) {
-            ThemedToast.show(this, "Leaving this group is unavailable on this device")
-            return
-        }
+        val delegated = com.securelegion.database.DelegatedGroupStateStore(db)
+            .isAdopted(group.groupId)
         val dialog = GlassDialog.builder(this)
             .setTitle("Leave Group")
-            .setMessage("Are you sure you want to leave \"${group.name}\"? This will remove you from the group and delete it from your device.")
+            .setMessage(if (delegated)
+                "Leave \"${group.name}\"? Your history stays on this device while the signed leave notice is delivered."
+                else "Are you sure you want to leave \"${group.name}\"? This will remove you from the group and delete it from your device.")
             .setPositiveButton("Leave") { _, _ ->
                 leaveGroup(group)
             }
@@ -1570,14 +1569,23 @@ class MainActivity : BaseActivity() {
     private fun leaveGroup(group: com.securelegion.database.entities.Group) {
         lifecycleScope.launch {
             try {
-                val mgr = com.securelegion.services.CrdtGroupManager.getInstance(this@MainActivity)
                 val keyManager = KeyManager.getInstance(this@MainActivity)
 
                 withContext(Dispatchers.IO) {
                     val db = SecureLegionDatabase.getInstance(this@MainActivity,
                         keyManager.getDatabasePassphrase())
-                    require(!com.securelegion.database.DelegatedGroupStateStore(db)
-                        .isAdopted(group.groupId)) { "Delegated group leave is unavailable" }
+                    val delegated = com.securelegion.database.DelegatedGroupStateStore(db)
+                    if (delegated.isAdopted(group.groupId)) {
+                        val identity = com.securelegion.crypto.LocalDeviceIdentity
+                            .loadExisting(this@MainActivity)
+                        try {
+                            delegated.leaveGroup(group.groupId,
+                                keyManager.getSigningPublicKey(), identity)
+                        } finally { identity.close() }
+                        return@withContext
+                    }
+                    val mgr = com.securelegion.services.CrdtGroupManager
+                        .getInstance(this@MainActivity)
                     // Try to broadcast MemberRemove so other members know we left.
                     // Don't block local cleanup on failure — we're leaving regardless.
                     try {
