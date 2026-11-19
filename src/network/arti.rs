@@ -2741,12 +2741,16 @@ async fn accept_and_handle_device(
     }
     let mut frame = vec![0u8; size];
     stream.read_exact(&mut frame).await?;
-    if !matches!(frame[0], 0xA3..=0xA5 | 0xB6 | 0xB7 | 0xC0) {
+    if !matches!(frame[0], 0xA3..=0xA5 | 0xB6 | 0xB7 | 0xC0 | 0xC2) {
         return Err("Non-device frame on device onion".into());
     }
     if frame[0] == 0xC0 && (frame.len() < 275 || frame[5] != 2 ||
         u32::from_be_bytes(frame[1..5].try_into().unwrap()) as usize != frame.len() - 5) {
         return Err("Malformed C0 device frame".into());
+    }
+    if frame[0] == 0xC2 && (frame.len() < 317 || frame.len() > 100_261 || frame[5] != 1 ||
+        u32::from_be_bytes(frame[1..5].try_into().unwrap()) as usize != frame.len() - 5) {
+        return Err("Malformed C2 device frame".into());
     }
     let mut queue = lock_recover(&DEVICE_FRAMES);
     if queue.len() == DEVICE_QUEUE_MAX ||

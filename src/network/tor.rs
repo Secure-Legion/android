@@ -2335,7 +2335,7 @@ impl TorManager {
             0xA4 | 0xA5 => {
                 // Valid type, continue to length check
             }
-            0xA3 | 0xB0..=0xB7 => {
+            0xA3 | 0xB0..=0xB7 | 0xC2 => {
                 // Independent-device frames require a dedicated authorized
                 // endpoint. Never reinterpret one as a contact Ping.
                 log::warn!("Reserved device frame rejected on legacy listener: 0x{:02x}", msg_type);
