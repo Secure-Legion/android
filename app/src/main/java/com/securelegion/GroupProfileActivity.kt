@@ -214,10 +214,6 @@ class GroupProfileActivity : BaseActivity() {
 
         // Group icon - photo picker
         groupIconContainer.setOnClickListener {
-            if (groupId?.let(::isDelegatedGroup) == true) {
-                ThemedToast.show(this, "Group photo editing is unavailable")
-                return@setOnClickListener
-            }
             showGroupIconPickerDialog()
         }
 
@@ -776,13 +772,26 @@ class GroupProfileActivity : BaseActivity() {
 
     private fun saveGroupIcon(base64: String?) {
         val currentGroupId = groupId ?: return
-        if (isDelegatedGroup(currentGroupId)) return
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
                     val keyManager = KeyManager.getInstance(this@GroupProfileActivity)
                     val db = SecureLegionDatabase.getInstance(this@GroupProfileActivity, keyManager.getDatabasePassphrase())
+
+                    if (DelegatedGroupStateStore(db).isAdopted(currentGroupId)) {
+                        val encoded = if (base64 == null) "" else
+                            mgr.compressAvatarForCrdt(base64)
+                                ?: throw IllegalArgumentException("Invalid group photo")
+                        val value = android.util.Base64.decode(encoded,
+                            android.util.Base64.DEFAULT)
+                        val identity = LocalDeviceIdentity.loadExisting(this@GroupProfileActivity)
+                        try {
+                            DelegatedGroupStateStore(db).setMetadata(currentGroupId,
+                                keyManager.getSigningPublicKey(), "Avatar", value, identity)
+                        } finally { identity.close() }
+                        return@withContext
+                    }
 
                     // Author a CRDT MetadataSet("Avatar") op so the change converges
                     // to iOS + other Android peers. Local-only DB write is not enough.

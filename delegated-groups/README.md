@@ -30,13 +30,14 @@ member list, and permission screen read validated native state; group names and
 member permissions publish signed native metadata operations. Member removal and
 the required fresh epoch commit together; removed members receive a terminal
 delivery selection. Promotion, demotion and admin-rights edits publish native
-role operations. GROUPS-only devices
+role operations. Group photos publish Avatar metadata and project into the
+local group cache after native validation. GROUPS-only devices
 run the device onion loop. Nearby can carry receipt-bound mixed group history
 between mutually capable own-account devices.
 
 This remains an integration checkpoint. Proof-request generation and Root
-approval, account-level responsibility ACKs, native authoring for icons,
-group deletion and self-leave, Android-created
+approval, account-level responsibility ACKs, native authoring for group deletion
+and self-leave, Android-created
 group activation, and mixed-platform end-to-end tests remain.
 `delegated_groups_v1` is withheld. The current APK should not replace a user's
 account installation until those paths are complete and verified on a test

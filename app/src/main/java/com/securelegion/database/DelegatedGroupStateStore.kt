@@ -542,6 +542,9 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                     "WHERE groupId=?", arrayOf(name, b64(key),
                         memberCount, if (summary.getBoolean("pending_invite")) 1 else 0,
                         last?.getLong("timestamp_ms") ?: nowMs, preview, groupId))
+                val avatar = avatarMetadata(summary)
+                if (avatar.first) db.execSQL("UPDATE groups SET groupIcon=? WHERE groupId=?",
+                    arrayOf<Any?>(avatar.second, groupId))
                 var unread = 0
                 for (index in records.indices) {
                     val info = infos.getJSONObject(index)
@@ -717,6 +720,9 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                     arrayOf(groupId, name, b64(selected),
                         founding.getLong("timestamp_ms"), nowMs, memberCount,
                         if (summary.getBoolean("pending_invite")) 1 else 0))
+                val avatar = avatarMetadata(summary)
+                if (avatar.first) db.execSQL("UPDATE groups SET groupIcon=? WHERE groupId=?",
+                    arrayOf<Any?>(avatar.second, groupId))
                 val keyring = summary.getJSONArray("keyring")
                 var currentFound = false
                 for (index in 0 until keyring.length()) {
@@ -752,13 +758,20 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
                         "(op_id,group_id,operation_hash,accepted_at_ms) VALUES (?,?,?,?)",
                         arrayOf(opId, groupId, hash, nowMs))
                 }
+                val principals = HashSet<String>()
                 for (index in 0 until members.length()) {
                     val member = members.getJSONObject(index)
                     if (!member.getBoolean("removed") && !member.getBoolean("banned"))
-                        db.execSQL("INSERT INTO delegated_group_principals " +
-                            "(group_id,account_ed) VALUES (?,?)", arrayOf(groupId,
-                                b64(hexBytes(member.getString("pubkey_hex")))))
+                        principals.add(b64(hexBytes(member.getString("pubkey_hex"))))
                 }
+                val historicalAccounts = summary.getJSONArray("historical_principals")
+                for (index in 0 until historicalAccounts.length())
+                    principals.add(b64(hexBytes(historicalAccounts.getString(index))))
+                require(principals.size <= 128)
+                for (principal in principals)
+                    db.execSQL("INSERT INTO delegated_group_principals " +
+                        "(group_id,account_ed) VALUES (?,?)",
+                        arrayOf(groupId, principal))
                 for (proof in ratifications)
                     db.execSQL("INSERT OR IGNORE INTO delegated_group_ratifications " +
                         "(operation_hash,group_id,proof) VALUES (?,?,?)",
@@ -898,6 +911,19 @@ internal class DelegatedGroupStateStore(private val database: SecureLegionDataba
     }
 
     private fun b64(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)
+    private fun avatarMetadata(summary: JSONObject): Pair<Boolean, String?> {
+        val metadata = summary.getJSONArray("metadata")
+        for (index in 0 until metadata.length()) {
+            val row = metadata.getJSONObject(index)
+            if (row.getString("key") == "Avatar") {
+                val encoded = row.getString("value")
+                val bytes = Base64.decode(encoded, Base64.DEFAULT)
+                require(bytes.size <= 65_536)
+                return Pair(true, if (bytes.isEmpty()) null else b64(bytes))
+            }
+        }
+        return Pair(false, null)
+    }
     private fun hexBytes(hex: String): ByteArray {
         require(hex.matches(Regex("[0-9a-f]{64}")))
         return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
