@@ -12,6 +12,7 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.LinkedChatStore
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 
 /** Turns refreshed source IDs into durable live outbox revisions. */
 internal class DeviceSyncLivePublisher(
@@ -75,12 +76,6 @@ internal class DeviceSyncLivePublisher(
 
     private fun messageDelta(id: String, nowMs: Long): JSONObject {
         require(id.isNotEmpty() && id.length <= 256)
-        if (linked) {
-            val imported = database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
-                "SELECT imported FROM linked_chat_messages WHERE message_id=?",
-                arrayOf(id))).use { it.moveToFirst() && it.getInt(0) == 1 }
-            if (imported) return relayDelta("messages", id, nowMs)
-        }
         val row = if (linked) linkedMessageRow(id) else
             database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
             "SELECT m.encryptedContent,m.isSentByMe,m.timestamp,m.status,m.messageType," +
@@ -102,7 +97,7 @@ internal class DeviceSyncLivePublisher(
         if (row == null) return JSONObject().put("message_id", id).put("deleted", true)
         if (row.status == 8 || row.expiry != null && row.expiry <= nowMs)
             return JSONObject().put("message_id", id).put("deleted", true)
-        require(row.type in setOf("TEXT", "IMAGE", "VOICE") && row.status in 0..7 &&
+        require(row.type in setOf("TEXT", "IMAGE", "VOICE", "STICKER") && row.status in 0..7 &&
             Base64.decode(row.contactX, Base64.NO_WRAP).size == 32)
         val delta = JSONObject().put("message_id", id)
             .put("contact_x25519", row.contactX).put("message_type", row.type)
@@ -131,10 +126,44 @@ internal class DeviceSyncLivePublisher(
                     finally { plain.fill(0) }
                 } finally { bytes.fill(0) }
             }
+            "STICKER" -> delta.put("attachment_type", "sticker")
+                .put("attachment_data", requireNotNull(row.attachmentData))
         }
         row.reply?.let { delta.put("reply_to_message_id", it) }
         row.expiry?.let { delta.put("self_destruct_at", it) }
         row.ttl?.let { delta.put("self_destruct_ttl", it) }
+        val reactions = org.json.JSONArray()
+        val reactionSql = if (linked)
+            "SELECT r.account_ed,r.emoji,r.removed,r.updated_at_ms FROM " +
+                "linked_chat_reactions r WHERE r.target_id=? ORDER BY r.account_ed LIMIT 3"
+        else "SELECT r.reactorPubKey,r.emoji,r.isRemoved,r.updatedAt FROM " +
+            "message_reactions r WHERE r.targetMessageId=? ORDER BY r.reactorPubKey LIMIT 3"
+        try {
+            database.openHelper.readableDatabase.query(SimpleSQLiteQuery(reactionSql,
+                arrayOf(id))).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val actor = cursor.getString(0)
+                    if (runCatching { Base64.decode(actor, Base64.NO_WRAP).size }
+                            .getOrNull() != 32) continue
+                    val emoji = cursor.getString(1)
+                    val removed = cursor.getInt(2) != 0
+                    val time = cursor.getLong(3)
+                    if (time !in 1..nowMs + 300_000L) continue
+                    val source = "secure-reaction-v1\u0000$id\u0000$actor\u0000$emoji" +
+                        "\u0000$removed\u0000$time"
+                    val event = MessageDigest.getInstance("SHA-256")
+                        .digest(source.toByteArray(Charsets.UTF_8)).joinToString("") {
+                            "%02x".format(it.toInt() and 255)
+                        }
+                    reactions.put(JSONObject().put("actor", actor).put("emoji", emoji)
+                        .put("removed", removed).put("timestamp", time)
+                        .put("event_id", event))
+                }
+            }
+            if (reactions.length() in 1..2) delta.put("reactions", reactions)
+        } catch (_: android.database.sqlite.SQLiteException) {
+            // Older linked stores acquire the reactions table on their first C0 control.
+        }
         DeviceSyncMessageDelta.parse(delta, nowMs)
         return delta
     }
@@ -143,16 +172,22 @@ internal class DeviceSyncLivePublisher(
         database.openHelper.readableDatabase.query(SimpleSQLiteQuery(
             "SELECT m.encrypted_content,m.sent_by_me,m.timestamp_ms,m.status,m.type," +
                 "m.read,m.edited,m.reply_to_id,c.x25519,m.media_path," +
-                "m.voice_duration FROM linked_chat_messages m JOIN linked_chat_contacts c " +
+                "m.voice_duration,m.attachment_data,m.self_destruct_ttl," +
+                "m.self_destruct_at FROM linked_chat_messages m JOIN linked_chat_contacts c " +
                 "ON c.account_ed=m.account_ed WHERE m.message_id=? LIMIT 1",
             arrayOf(id)
         )).use { c ->
             if (!c.moveToFirst()) null else Row(c.getString(0), c.getInt(1) == 1,
                 c.getLong(2), c.getInt(3), c.getString(4), c.getInt(5) == 1,
-                c.getInt(6) == 1, null, null, false, c.getInt(3) >= 2,
+                c.getInt(6) == 1,
+                if (c.isNull(13)) null else c.getLong(13),
+                if (c.isNull(12)) null else c.getDouble(12),
+                false, c.getInt(3) >= 2,
                 if (c.isNull(7)) null else c.getString(7),
                 Base64.encodeToString(c.getBlob(8), Base64.NO_WRAP),
-                if (c.getString(4) == "IMAGE" && !c.isNull(9)) c.getString(9) else null,
+                if (c.getString(4) == "STICKER" && !c.isNull(11)) c.getString(11)
+                    else if (c.getString(4) == "IMAGE" && !c.isNull(9)) c.getString(9)
+                    else null,
                 if (c.getString(4) == "VOICE" && !c.isNull(9)) c.getString(9) else null,
                 if (c.isNull(10)) null else c.getInt(10))
         }

@@ -7,6 +7,7 @@ import com.securelegion.database.DeviceRosterStore
 import com.securelegion.database.DeviceSyncChunkStore
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.LinkedChatStore
+import com.securelegion.database.DeviceSyncSourceCapture
 import org.json.JSONObject
 
 /** Authenticated live message import; missing pinned contacts remain durable. */
@@ -33,7 +34,7 @@ internal class DeviceSyncLiveMessageReceiver(
             val message = DeviceSyncMessageDelta.parse(
                 JSONObject(canonical.toString(Charsets.UTF_8)), nowMs)
             require(message.id == part.objectId)
-            applyVersioned(db, part, message, canonical, nowMs,
+            applyVersioned(db, accountEd, part, message, canonical, nowMs,
                 isLive = !archiveAuthenticated)
         }
     }
@@ -87,7 +88,7 @@ internal class DeviceSyncLiveMessageReceiver(
                         require(liveNegotiated(row.peer) &&
                             roster.isLocalAuthorized(accountEd, localDeviceId, 0x02, nowMs) &&
                             roster.isAuthorized(accountEd, row.peer, 0x02, nowMs))
-                        committed = applyVersioned(db, part, message, row.delta, nowMs)
+                        committed = applyVersioned(db, accountEd, part, message, row.delta, nowMs)
                         if (committed) {
                             db.execSQL("DELETE FROM device_sync_pending WHERE id=?",
                                 arrayOf(row.id))
@@ -107,7 +108,8 @@ internal class DeviceSyncLiveMessageReceiver(
         return applied
     }
 
-    private fun applyVersioned(db: SupportSQLiteDatabase, part: DeviceSyncChunkStore.Part,
+    private fun applyVersioned(db: SupportSQLiteDatabase, accountEd: ByteArray,
+                               part: DeviceSyncChunkStore.Part,
                                message: DeviceSyncMessageDelta.Message,
                                canonical: ByteArray, nowMs: Long,
                                isLive: Boolean = true): Boolean {
@@ -138,6 +140,8 @@ internal class DeviceSyncLiveMessageReceiver(
             return false
         }
         if (incomingWins) {
+            if (!message.deleted && message.reactions.isNotEmpty())
+                mergeReactions(db, accountEd, message)
             db.execSQL("INSERT OR REPLACE INTO device_sync_local_events " +
                 "(topic,object_id,event_time_ms,digest,sequence,delta_json) " +
                 "VALUES ('messages',?,?,?,?,?)",
@@ -146,6 +150,21 @@ internal class DeviceSyncLiveMessageReceiver(
             db.execSQL("INSERT INTO device_sync_source_changes " +
                 "(topic,object_id,kind,changed_at_ms) " +
                 "VALUES ('messages',?,'import',?)", arrayOf(part.objectId, nowMs))
+            if (!message.deleted && message.contactX25519 != null) {
+                val account = if (linked != null) db.query(SimpleSQLiteQuery(
+                    "SELECT account_ed FROM linked_chat_contacts WHERE x25519=? AND blocked=0",
+                    arrayOf(message.contactX25519)
+                )).use { if (it.moveToFirst()) it.getString(0) else null }
+                else db.query(SimpleSQLiteQuery(
+                    "SELECT publicKeyBase64 FROM contacts WHERE " +
+                        "x25519PublicKeyBase64=? AND friendshipStatus='CONFIRMED' AND isBlocked=0",
+                    arrayOf(android.util.Base64.encodeToString(message.contactX25519,
+                        android.util.Base64.NO_WRAP))
+                )).use { if (it.moveToFirst()) it.getString(0) else null }
+                if (account != null) DeviceChatControlStore(encryptForLocalProfile,
+                    linked != null).drainForMessage(db,
+                    android.util.Base64.decode(account, android.util.Base64.NO_WRAP), nowMs)
+            }
         }
         db.execSQL("INSERT OR REPLACE INTO device_sync_versions " +
             "(peer_device_id,topic,object_id,event_time_ms,digest) " +
@@ -156,6 +175,49 @@ internal class DeviceSyncLiveMessageReceiver(
             "AND topic='messages' AND object_id=? AND event_time_ms<=?",
             arrayOf(part.peerDeviceId, part.objectId, part.eventTimeMs))
         return true
+    }
+
+    private fun mergeReactions(db: SupportSQLiteDatabase, accountEd: ByteArray,
+                               message: DeviceSyncMessageDelta.Message) {
+        val x = requireNotNull(message.contactX25519)
+        val own = android.util.Base64.encodeToString(accountEd,
+            android.util.Base64.NO_WRAP)
+        val contact = if (linked != null) db.query(SimpleSQLiteQuery(
+            "SELECT account_ed FROM linked_chat_contacts WHERE x25519=? AND blocked=0",
+            arrayOf(x)
+        )).use { if (it.moveToFirst()) it.getString(0) else null }
+        else db.query(SimpleSQLiteQuery("SELECT publicKeyBase64 FROM contacts WHERE " +
+            "x25519PublicKeyBase64=? AND friendshipStatus='CONFIRMED' AND isBlocked=0",
+            arrayOf(android.util.Base64.encodeToString(x, android.util.Base64.NO_WRAP))
+        )).use { if (it.moveToFirst()) it.getString(0) else null }
+        require(contact != null)
+        val contactId = if (linked == null) db.query(SimpleSQLiteQuery(
+            "SELECT id FROM contacts WHERE publicKeyBase64=?", arrayOf(contact)
+        )).use { if (it.moveToFirst()) it.getLong(0) else null } else null
+        if (linked != null) db.execSQL("CREATE TABLE IF NOT EXISTS linked_chat_reactions (" +
+            "account_ed TEXT NOT NULL,target_id TEXT NOT NULL,emoji TEXT NOT NULL," +
+            "removed INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL," +
+            "PRIMARY KEY(account_ed,target_id))")
+        DeviceSyncSourceCapture.suppressDuringImport(db) {
+        for (reaction in message.reactions) {
+            require(reaction.actor == own || reaction.actor == contact)
+            if (linked != null) db.execSQL("INSERT INTO linked_chat_reactions " +
+                "(account_ed,target_id,emoji,removed,updated_at_ms) VALUES (?,?,?,?,?) " +
+                "ON CONFLICT(account_ed,target_id) DO UPDATE SET emoji=excluded.emoji," +
+                "removed=excluded.removed,updated_at_ms=excluded.updated_at_ms " +
+                "WHERE excluded.updated_at_ms>=updated_at_ms",
+                arrayOf(reaction.actor, message.id, reaction.emoji,
+                    if (reaction.removed) 1 else 0, reaction.timestamp))
+            else db.execSQL("INSERT INTO message_reactions " +
+                "(contactId,targetMessageId,reactorPubKey,emoji,isRemoved,createdAt,updatedAt) " +
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(contactId,targetMessageId,reactorPubKey) " +
+                "DO UPDATE SET emoji=excluded.emoji,isRemoved=excluded.isRemoved," +
+                "updatedAt=excluded.updatedAt WHERE excluded.updatedAt>=updatedAt",
+                arrayOf(requireNotNull(contactId), message.id, reaction.actor,
+                    reaction.emoji, if (reaction.removed) 1 else 0,
+                    reaction.timestamp, reaction.timestamp))
+        }
+        }
     }
 
     private fun defer(db: SupportSQLiteDatabase, part: DeviceSyncChunkStore.Part,

@@ -23,7 +23,7 @@ internal object DeviceSyncDirectMessageStore {
             }
             return true
         }
-        require(message.type in setOf("TEXT", "IMAGE", "VOICE") &&
+        require(message.type in setOf("TEXT", "IMAGE", "VOICE", "STICKER") &&
             message.contactX25519?.size == 32 && message.sentByMe != null &&
             message.timestampMs != null && message.status != null)
         if (message.type == "TEXT") require(message.content != null &&
@@ -55,12 +55,13 @@ internal object DeviceSyncDirectMessageStore {
                 message.status)
             val encrypted = if (existing.imported && message.type == "TEXT")
                 encryptForLocalProfile(message.content!!) else null
-            val mediaPath = if (existing.imported && message.type != "TEXT")
+            val mediaPath = if (existing.imported && message.type in setOf("IMAGE", "VOICE"))
                 storeMedia(message) else null
             DeviceSyncSourceCapture.suppressDuringImport(db) {
                 db.execSQL("UPDATE messages SET " +
                     "encryptedContent=COALESCE(?,encryptedContent),status=?," +
                     "attachmentData=CASE WHEN ?='IMAGE' AND ? IS NOT NULL " +
+                    "THEN ? WHEN ?='STICKER' AND ? IS NOT NULL " +
                     "THEN ? ELSE attachmentData END," +
                     "voiceFilePath=CASE WHEN ?='VOICE' AND ? IS NOT NULL " +
                     "THEN ? ELSE voiceFilePath END," +
@@ -68,6 +69,7 @@ internal object DeviceSyncDirectMessageStore {
                     "pingDelivered=MAX(pingDelivered,?)," +
                     "messageDelivered=MAX(messageDelivered,?) WHERE messageId=?",
                     arrayOf(encrypted, mergedStatus, message.type, mediaPath, mediaPath,
+                        message.type, message.attachmentData, message.attachmentData,
                         message.type, mediaPath, mediaPath,
                         if (message.read) 1 else 0,
                         if (message.edited) 1 else 0,
@@ -79,7 +81,8 @@ internal object DeviceSyncDirectMessageStore {
         // Imported copies have no local PING, signature, nonce or delivery job.
         val encrypted = if (message.type == "TEXT")
             encryptForLocalProfile(message.content!!) else ""
-        val mediaPath = if (message.type != "TEXT") storeMedia(message) else null
+        val mediaPath = if (message.type in setOf("IMAGE", "VOICE"))
+            storeMedia(message) else null
         DeviceSyncSourceCapture.suppressDuringImport(db) {
             db.execSQL("INSERT INTO messages " +
                 "(contactId,messageId,encryptedContent,isSentByMe,timestamp,status," +
@@ -93,8 +96,10 @@ internal object DeviceSyncDirectMessageStore {
                     message.timestampMs, message.status, "", "", 0L,
                     message.type, message.voiceDuration,
                     if (message.type == "VOICE") mediaPath else null,
-                    if (message.type == "IMAGE") "image" else null,
-                    if (message.type == "IMAGE") mediaPath else null,
+                    if (message.type == "IMAGE") "image"
+                        else if (message.type == "STICKER") "sticker" else null,
+                    if (message.type == "IMAGE") mediaPath
+                        else if (message.type == "STICKER") message.attachmentData else null,
                     if (message.read) 1 else 0,
                     if (message.pingDelivered) 1 else 0,
                     if (message.messageDelivered) 1 else 0,

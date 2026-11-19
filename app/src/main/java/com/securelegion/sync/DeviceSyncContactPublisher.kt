@@ -65,7 +65,7 @@ internal class DeviceSyncContactPublisher(
         try {
             val row = if (linked) db.query(SimpleSQLiteQuery(
                 "SELECT rowid,display_name,account_ed,x25519," +
-                    "friend_request_onion,messaging_onion,created_at_ms " +
+                    "friend_request_onion,messaging_onion,created_at_ms,avatar_base64 " +
                     "FROM linked_chat_contacts WHERE account_ed=? LIMIT 1",
                 arrayOf(objectId)
             )).use { cursor ->
@@ -74,7 +74,8 @@ internal class DeviceSyncContactPublisher(
                     Base64.encodeToString(cursor.getBlob(3), Base64.NO_WRAP),
                     if (cursor.isNull(4)) null else cursor.getString(4),
                     if (cursor.isNull(5)) null else cursor.getString(5),
-                    null, cursor.getLong(6), "CONFIRMED")
+                    if (cursor.isNull(7)) null else cursor.getString(7),
+                    cursor.getLong(6), "CONFIRMED")
             } else db.query(SimpleSQLiteQuery(
                 "SELECT id,displayName,publicKeyBase64,x25519PublicKeyBase64," +
                     "friendRequestOnion,messagingOnion,profilePictureBase64," +
@@ -91,7 +92,12 @@ internal class DeviceSyncContactPublisher(
                     "WHERE topic='contacts' AND object_id=?", arrayOf(objectId)
             )).use { if (it.moveToFirst()) Revision(objectId, it.getLong(0),
                 it.getLong(1), it.getBlob(2), it.getBlob(3)) else null }
-            if (linked && old != null) {
+            val previousAvatar = old?.let { runCatching {
+                JSONObject(it.delta.toString(Charsets.UTF_8)).opt("avatar")
+            }.getOrNull() }
+            val linkedAvatarChanged = linked && old != null &&
+                (previousAvatar ?: JSONObject.NULL) != (row?.avatar ?: JSONObject.NULL)
+            if (linked && old != null && !linkedAvatarChanged) {
                 // Linked contacts are controlled by authenticated own-device
                 // revisions. Relay their exact canonical snapshot, including
                 // avatar fields that this wallet-free projection does not need.
@@ -164,16 +170,27 @@ internal class DeviceSyncContactPublisher(
                     "SELECT timestamp_ms,event_id FROM device_sync_contact_profiles " +
                         "WHERE contact_id=?", arrayOf(row.id)
                 )).use { if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null }
+                val sourceVersion = runCatching { db.query(SimpleSQLiteQuery(
+                    "SELECT timestamp_ms,event_id FROM device_chat_profile_versions " +
+                        "WHERE account_ed=?", arrayOf(row.ed)
+                )).use { if (it.moveToFirst()) it.getLong(0) to it.getString(1) else null }
+                }.getOrNull()
                 val unchanged = previousAvatar == avatar
-                val version = if (unchanged && stored != null) stored else {
-                    val nextTime = maxOf(nowMs, (stored?.first ?: 0L) + 1)
+                val version = if (linked && stored != null) stored
+                    else if (sourceVersion != null && sourceVersion == stored)
+                    sourceVersion else if (unchanged && stored != null) stored else {
+                    val nextTime = sourceVersion?.first
+                        ?.takeIf { it > (stored?.first ?: 0L) } ?:
+                        maxOf(nowMs, (stored?.first ?: 0L) + 1)
                     val hash = MessageDigest.getInstance("SHA-256")
                         .digest((row.avatar ?: "deleted").toByteArray(Charsets.UTF_8))
                         .toHex()
+                    val event = if (sourceVersion != null && nextTime == sourceVersion.first)
+                        sourceVersion.second else hash
                     db.execSQL("INSERT OR REPLACE INTO device_sync_contact_profiles " +
                         "(contact_id,timestamp_ms,event_id) VALUES (?,?,?)",
-                        arrayOf(row.id, nextTime, hash))
-                    nextTime to hash
+                        arrayOf(row.id, nextTime, event))
+                    nextTime to event
                 }
                 candidate.put("profile_version", JSONObject()
                     .put("timestamp", version.first).put("event_id", version.second))

@@ -35,7 +35,7 @@ android {
         applicationId = "com.securelegion"
         minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 46
+        versionCode = 47
         versionName = "1.0.0"
 
         // Keep the package aligned with the native build matrix. The removed legacy x86 binary

@@ -34,13 +34,20 @@ internal class DeviceChatPayloadStore(
         )).use { if (it.moveToFirst()) it.getLong(0) else null }
             ?: if (linked == null) throw IllegalArgumentException("Unknown C0 contact") else null
         val type = plaintext[13].toInt() and 0xff
+        val body = plaintext.copyOfRange(14, plaintext.size)
+        val controls = DeviceChatControlStore(encryptForLocalProfile, linked != null)
+        if (type in setOf(0x10, 0x12, 0x13, 0x14, 0x15))
+            return controls.accept(db, senderAccount, logicalId, type, body,
+                timestamp, nowMs)
+        if (type == 0x0F) return DeviceChatPhotoStore.apply(db, senderAccount,
+            linked != null, logicalId, body, timestamp, nowMs)
         val messageType = when (type) {
             0x00, 0x11 -> "TEXT"
             0x02 -> "IMAGE"
             0x01 -> "VOICE"
+            0x0E -> "STICKER"
             else -> throw IllegalArgumentException("Unsupported C0 payload type")
         }
-        val body = plaintext.copyOfRange(14, plaintext.size)
         val existing = if (linked != null) null else db.query(SimpleSQLiteQuery(
             "SELECT contactId,isSentByMe,messageType,timestamp " +
                 "FROM messages WHERE messageId=? LIMIT 1",
@@ -52,12 +59,14 @@ internal class DeviceChatPayloadStore(
                 existing[2] == messageType && existing[3] == timestamp) {
                 "C0 message identity conflict"
             }
+            controls.drainForMessage(db, senderAccount, nowMs)
             return false
         }
         val content: String
         var replyTo: String? = null
         var mediaPath: String? = null
         var duration: Int? = null
+        var sticker: String? = null
         when (type) {
             0x00 -> {
                 require(body.size <= 65_536)
@@ -102,10 +111,26 @@ internal class DeviceChatPayloadStore(
                 mediaPath = storeMedia("VOICE", logicalId,
                     body.copyOfRange(4, body.size))
             }
+            0x0E -> {
+                require(body.size in 1..1024)
+                sticker = strictUtf8(body)
+                require(sticker.isNotEmpty() && sticker.none {
+                    it.code < 32 || it.code > 126
+                } && !sticker.contains("..") && !sticker.contains('\\') &&
+                    !sticker.contains(':') && !sticker.startsWith('/') &&
+                    !sticker.startsWith('~'))
+                content = ""
+            }
             else -> error("Validated above")
         }
-        if (linked != null) return linked.applyDirect(db, senderAccount,
-            logicalId, content, messageType, timestamp, mediaPath, duration, replyTo)
+        if (linked != null) {
+            val ready = linked.applyDirect(db, senderAccount,
+                logicalId, content, messageType, timestamp, mediaPath,
+                duration, replyTo, sticker,
+                if (ttl == 0L) null else ttl.toDouble() / 1_000.0)
+            controls.drainForMessage(db, senderAccount, nowMs)
+            return ready
+        }
         db.execSQL("INSERT INTO messages " +
             "(contactId,messageId,encryptedContent,isSentByMe,timestamp,status," +
             "signatureBase64,nonceBase64,messageNonce,messageType,isRead," +
@@ -115,10 +140,11 @@ internal class DeviceChatPayloadStore(
             "VALUES (?,?,?,0,?,2,'','',0,?,0,0,0,0,1,0,0,?,?,?,?,?,?,0,0)",
             arrayOf(requireNotNull(contact), logicalId, if (content.isEmpty()) "" else
                 encryptForLocalProfile(content), timestamp, messageType,
-                if (messageType == "IMAGE") "image" else null,
-                if (messageType == "IMAGE") mediaPath else null,
+                if (messageType == "IMAGE") "image" else if (sticker != null) "sticker" else null,
+                if (messageType == "IMAGE") mediaPath else sticker,
                 duration, if (messageType == "VOICE") mediaPath else null,
                 replyTo, if (ttl == 0L) null else ttl.toDouble() / 1_000.0))
+        controls.drainForMessage(db, senderAccount, nowMs)
         return false
     }
 

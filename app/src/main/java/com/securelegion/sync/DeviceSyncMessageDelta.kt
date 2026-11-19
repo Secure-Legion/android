@@ -24,8 +24,13 @@ internal object DeviceSyncMessageDelta {
         val voiceDuration: Int?, val replyToId: String?, val replyToText: String?,
         val replyToSelf: Boolean, val edited: Boolean, val read: Boolean,
         val selfDestructAtMs: Long?, val selfDestructTtl: Double?,
-        val pingDelivered: Boolean, val messageDelivered: Boolean
+        val pingDelivered: Boolean, val messageDelivered: Boolean,
+        val reactions: List<Reaction> = emptyList()
     )
+
+    data class Reaction(val actor: String, val emoji: String,
+                        val removed: Boolean, val timestamp: Long,
+                        val eventId: String)
 
     fun parse(delta: JSONObject, nowMs: Long = System.currentTimeMillis()): Message {
         val keys = delta.keys().asSequence().toSet()
@@ -51,6 +56,13 @@ internal object DeviceSyncMessageDelta {
         if (type == "TEXT") require(content != null)
         val attachmentType = nullableString(delta, "attachment_type", 64)
         val attachmentData = nullableString(delta, "attachment_data", 8 * 1_024 * 1_024)
+        if (type == "STICKER") require(attachmentType == "sticker" &&
+            attachmentData != null && attachmentData.isNotEmpty() &&
+            attachmentData.toByteArray(Charsets.UTF_8).size <= 1024 &&
+            !attachmentData.contains("..") && !attachmentData.contains('\\') &&
+            !attachmentData.contains(':') && !attachmentData.startsWith('/') &&
+            !attachmentData.startsWith('~') &&
+            attachmentData.none { it.code < 32 || it.code > 126 })
         if (type == "IMAGE") {
             require(attachmentData != null)
             base64(attachmentData, 1, MAX_IMAGE)
@@ -74,16 +86,38 @@ internal object DeviceSyncMessageDelta {
             is Number -> value.toDouble().also { require(it.isFinite() && it in 1.0..604_800.0) }
             else -> throw IllegalArgumentException("Invalid self-destruct TTL")
         }
-        for (name in listOf("control_versions", "reactions")) {
-            // These fields require separate signed-operation/version validators.
-            if (delta.has(name)) require(delta.getJSONArray(name).length() == 0)
+        if (delta.has("control_versions"))
+            require(delta.getJSONArray("control_versions").length() == 0)
+        val reactions = if (!delta.has("reactions")) emptyList() else {
+            val array = delta.getJSONArray("reactions")
+            require(array.length() <= 2)
+            val actors = HashSet<String>()
+            (0 until array.length()).map { index ->
+                val item = array.getJSONObject(index)
+                require(item.keys().asSequence().toSet() == setOf("actor", "emoji",
+                    "removed", "timestamp", "event_id"))
+                val actor = item.getString("actor")
+                base64(actor, 32, 32)
+                require(actors.add(actor))
+                val emoji = item.getString("emoji")
+                require(emoji.codePointCount(0, emoji.length) <= 32 &&
+                    emoji.toByteArray(Charsets.UTF_8).size <= 128)
+                val removed = bool(item, "removed")
+                require(removed || emoji.isNotEmpty())
+                val time = integer(item.opt("timestamp"))
+                require(time in 1..nowMs + 300_000L)
+                val event = item.getString("event_id")
+                require(event.isNotEmpty() && event.length <= 256 &&
+                    event.all { it.code in 33..126 })
+                Reaction(actor, emoji, removed, time, event)
+            }
         }
         return Message(id, false, contactX, type, sent, timestamp, status.toInt(),
             content, attachmentType, attachmentData, voice, duration, reply,
             replyText, optionalBool(delta, "reply_to_self"),
             optionalBool(delta, "is_edited"), optionalBool(delta, "is_read"),
             expiry, ttl, optionalBool(delta, "ping_delivered"),
-            optionalBool(delta, "message_delivered"))
+            optionalBool(delta, "message_delivered"), reactions)
     }
 
     private fun bool(value: JSONObject, key: String): Boolean {

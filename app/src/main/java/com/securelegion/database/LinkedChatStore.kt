@@ -25,18 +25,36 @@ internal class LinkedChatStore(
             "account_ed TEXT NOT NULL PRIMARY KEY,x25519 BLOB NOT NULL," +
             "display_name TEXT NOT NULL,messaging_onion TEXT," +
             "friend_request_onion TEXT,created_at_ms INTEGER NOT NULL," +
-            "updated_at_ms INTEGER NOT NULL,blocked INTEGER NOT NULL DEFAULT 0)")
+            "updated_at_ms INTEGER NOT NULL,blocked INTEGER NOT NULL DEFAULT 0," +
+            "avatar_base64 TEXT)")
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_linked_chat_contacts_x " +
             "ON linked_chat_contacts(x25519)")
+        val avatarColumn = db.query(SimpleSQLiteQuery("PRAGMA table_info(linked_chat_contacts)"))
+            .use { cursor -> var found = false; while (cursor.moveToNext())
+                if (cursor.getString(1) == "avatar_base64") found = true; found }
+        if (!avatarColumn) db.execSQL("ALTER TABLE linked_chat_contacts " +
+            "ADD COLUMN avatar_base64 TEXT")
         db.execSQL("CREATE TABLE IF NOT EXISTS linked_chat_messages (" +
             "message_id TEXT NOT NULL PRIMARY KEY,account_ed TEXT NOT NULL," +
             "encrypted_content TEXT NOT NULL,type TEXT NOT NULL," +
             "sent_by_me INTEGER NOT NULL,timestamp_ms INTEGER NOT NULL," +
             "status INTEGER NOT NULL,media_path TEXT,voice_duration INTEGER," +
             "reply_to_id TEXT,read INTEGER NOT NULL DEFAULT 0," +
-            "edited INTEGER NOT NULL DEFAULT 0,imported INTEGER NOT NULL DEFAULT 0)")
+            "edited INTEGER NOT NULL DEFAULT 0,imported INTEGER NOT NULL DEFAULT 0," +
+            "attachment_data TEXT,self_destruct_ttl REAL,self_destruct_at INTEGER)")
         db.execSQL("CREATE INDEX IF NOT EXISTS index_linked_chat_messages_contact_time " +
             "ON linked_chat_messages(account_ed,timestamp_ms)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS linked_chat_reactions (" +
+            "account_ed TEXT NOT NULL,target_id TEXT NOT NULL,emoji TEXT NOT NULL," +
+            "removed INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL," +
+            "PRIMARY KEY(account_ed,target_id))")
+        for ((name, type) in listOf("attachment_data" to "TEXT",
+            "self_destruct_ttl" to "REAL", "self_destruct_at" to "INTEGER")) {
+            val present = db.query(SimpleSQLiteQuery("PRAGMA table_info(linked_chat_messages)"))
+                .use { cursor -> var found = false; while (cursor.moveToNext())
+                    if (cursor.getString(1) == name) found = true; found }
+            if (!present) db.execSQL("ALTER TABLE linked_chat_messages ADD COLUMN $name $type")
+        }
     }
 
     fun contact(db: SupportSQLiteDatabase, accountEd: ByteArray): Contact? {
@@ -70,14 +88,17 @@ internal class LinkedChatStore(
         }
         db.execSQL("INSERT INTO linked_chat_contacts " +
             "(account_ed,x25519,display_name,messaging_onion," +
-            "friend_request_onion,created_at_ms,updated_at_ms,blocked) " +
-            "VALUES (?,?,?,?,?,?,?,0) ON CONFLICT(account_ed) DO UPDATE SET " +
+            "friend_request_onion,created_at_ms,updated_at_ms,blocked,avatar_base64) " +
+            "VALUES (?,?,?,?,?,?,?,0,?) ON CONFLICT(account_ed) DO UPDATE SET " +
             "display_name=excluded.display_name," +
             "messaging_onion=excluded.messaging_onion," +
             "friend_request_onion=excluded.friend_request_onion," +
+            "avatar_base64=CASE WHEN ?=1 THEN excluded.avatar_base64 " +
+                "ELSE linked_chat_contacts.avatar_base64 END," +
             "updated_at_ms=excluded.updated_at_ms",
             arrayOf(account, x, name, delta.messagingOnion,
-                delta.friendRequestOnion, delta.createdAtMs ?: nowMs, nowMs))
+                delta.friendRequestOnion, delta.createdAtMs ?: nowMs, nowMs,
+                delta.avatar, if (delta.avatarPresent) 1 else 0))
         return true
     }
 
@@ -91,7 +112,7 @@ internal class LinkedChatStore(
                 arrayOf(delta.id))
             return true
         }
-        require(delta.type in setOf("TEXT", "IMAGE", "VOICE") &&
+        require(delta.type in setOf("TEXT", "IMAGE", "VOICE", "STICKER") &&
             delta.contactX25519?.size == 32 && delta.sentByMe != null &&
             delta.timestampMs != null && delta.status != null)
         val account = db.query(SimpleSQLiteQuery(
@@ -120,36 +141,46 @@ internal class LinkedChatStore(
             val imported = existing[4] == "1"
             val content = if (imported && delta.type == "TEXT")
                 encryptText(requireNotNull(delta.content)) else null
-            val mediaPath = if (imported && delta.type != "TEXT") media.store(delta)
+            val mediaPath = if (imported && delta.type in setOf("IMAGE", "VOICE")) media.store(delta)
                 else null
             db.execSQL("UPDATE linked_chat_messages SET status=?," +
                 "encrypted_content=COALESCE(?,encrypted_content)," +
                 "media_path=COALESCE(?,media_path),read=MAX(read,?)," +
-                "edited=MAX(edited,?) WHERE message_id=?",
+                "edited=MAX(edited,?)," +
+                "attachment_data=COALESCE(?,attachment_data)," +
+                "self_destruct_ttl=COALESCE(?,self_destruct_ttl)," +
+                "self_destruct_at=COALESCE(?,self_destruct_at) WHERE message_id=?",
                 arrayOf(merged, content, mediaPath, if (delta.read) 1 else 0,
-                    if (delta.edited) 1 else 0, delta.id))
+                    if (delta.edited) 1 else 0,
+                    if (imported && delta.type == "STICKER") delta.attachmentData else null,
+                    delta.selfDestructTtl, delta.selfDestructAtMs,
+                    delta.id))
             return true
         }
         val content = if (delta.type == "TEXT")
             encryptText(requireNotNull(delta.content)) else ""
-        val mediaPath = if (delta.type != "TEXT") media.store(delta) else null
+        val mediaPath = if (delta.type in setOf("IMAGE", "VOICE")) media.store(delta) else null
         db.execSQL("INSERT INTO linked_chat_messages (message_id,account_ed," +
             "encrypted_content,type,sent_by_me,timestamp_ms,status,media_path," +
-            "voice_duration,reply_to_id,read,edited,imported) " +
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)",
+            "voice_duration,reply_to_id,read,edited,imported,attachment_data," +
+            "self_destruct_ttl,self_destruct_at) " +
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)",
             arrayOf(delta.id, account, content, delta.type,
                 if (delta.sentByMe) 1 else 0, delta.timestampMs, delta.status,
                 mediaPath, delta.voiceDuration, delta.replyToId,
-                if (delta.read) 1 else 0, if (delta.edited) 1 else 0))
+                if (delta.read) 1 else 0, if (delta.edited) 1 else 0,
+                if (delta.type == "STICKER") delta.attachmentData else null,
+                delta.selfDestructTtl, delta.selfDestructAtMs))
         return true
     }
 
     fun applyDirect(db: SupportSQLiteDatabase, senderAccount: ByteArray,
                     logicalId: String, text: String, type: String,
                     timestampMs: Long, mediaPath: String? = null,
-                    duration: Int? = null, replyTo: String? = null): Boolean {
+                    duration: Int? = null, replyTo: String? = null,
+                    sticker: String? = null, ttlSeconds: Double? = null): Boolean {
         require(db.inTransaction() && senderAccount.size == 32 &&
-            type in setOf("TEXT", "IMAGE", "VOICE"))
+            type in setOf("TEXT", "IMAGE", "VOICE", "STICKER"))
         val account = Base64.encodeToString(senderAccount, Base64.NO_WRAP)
         require(contact(db, senderAccount) != null) { "Unknown linked C0 contact" }
         val old = db.query(SimpleSQLiteQuery("SELECT account_ed,sent_by_me,type," +
@@ -166,10 +197,12 @@ internal class LinkedChatStore(
         }
         db.execSQL("INSERT INTO linked_chat_messages (message_id,account_ed," +
             "encrypted_content,type,sent_by_me,timestamp_ms,status,media_path," +
-            "voice_duration,reply_to_id,read,edited,imported) " +
-            "VALUES (?,?,?,?,0,?,2,?,?,?,0,0,0)",
+            "voice_duration,reply_to_id,read,edited,imported,attachment_data," +
+            "self_destruct_ttl) " +
+            "VALUES (?,?,?,?,0,?,2,?,?,?,0,0,0,?,?)",
             arrayOf(logicalId, account, if (type == "TEXT") encryptText(text)
-                else "", type, timestampMs, mediaPath, duration, replyTo))
+                else "", type, timestampMs, mediaPath, duration, replyTo,
+                sticker, ttlSeconds))
         db.execSQL("INSERT INTO device_sync_source_changes " +
             "(topic,object_id,kind,changed_at_ms) " +
             "VALUES ('messages',?,'body',?)",

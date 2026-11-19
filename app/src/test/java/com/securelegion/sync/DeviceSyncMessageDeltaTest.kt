@@ -38,6 +38,29 @@ class DeviceSyncMessageDeltaTest {
         }
     }
 
+    @Test fun acceptsStickerAndBoundedReactionHistory() {
+        val actor = Base64.getEncoder().encodeToString(ByteArray(32) { 4 })
+        val reaction = JSONObject().put("actor", actor).put("emoji", "🙂")
+            .put("removed", false).put("timestamp", now - 100)
+            .put("event_id", "event-1")
+        val sticker = text().put("message_type", "STICKER")
+            .put("content", JSONObject.NULL).put("attachment_type", "sticker")
+            .put("attachment_data", "stickers/hello.webp")
+            .put("reactions", JSONArray().put(reaction))
+        val parsed = DeviceSyncMessageDelta.parse(sticker, now)
+        assertEquals("STICKER", parsed.type)
+        assertEquals(1, parsed.reactions.size)
+        assertEquals(actor, parsed.reactions.single().actor)
+        assertThrows(IllegalArgumentException::class.java) {
+            DeviceSyncMessageDelta.parse(sticker.put("reactions",
+                JSONArray().put(reaction).put(reaction)), now)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DeviceSyncMessageDelta.parse(sticker.put("reactions", JSONArray())
+                .put("attachment_data", "../escape.webp"), now)
+        }
+    }
+
     private fun text() = JSONObject().put("message_id", "msg-1")
         .put("contact_x25519", Base64.getEncoder().encodeToString(ByteArray(32) { 7 }))
         .put("message_type", "TEXT").put("is_sent_by_me", true)

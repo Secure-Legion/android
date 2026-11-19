@@ -1447,6 +1447,24 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 "AFTER DELETE ON messages WHEN $guard BEGIN " +
                 "INSERT INTO device_sync_source_changes(topic,object_id,kind,changed_at_ms) " +
                 "VALUES ('messages',OLD.messageId,'delete',$now); END")
+            createDeviceReactionCaptureTriggers(db)
+        }
+
+        private fun createDeviceReactionCaptureTriggers(db: SupportSQLiteDatabase) {
+            val guard = "(SELECT depth FROM device_sync_import_guard WHERE id=1)=0"
+            val now = "CAST(strftime('%s','now') AS INTEGER)*1000"
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS device_sync_capture_reaction_insert " +
+                "AFTER INSERT ON message_reactions WHEN $guard BEGIN " +
+                "INSERT INTO device_sync_source_changes(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('messages',NEW.targetMessageId,'body',$now); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS device_sync_capture_reaction_update " +
+                "AFTER UPDATE ON message_reactions WHEN $guard BEGIN " +
+                "INSERT INTO device_sync_source_changes(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('messages',NEW.targetMessageId,'body',$now); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS device_sync_capture_reaction_delete " +
+                "AFTER DELETE ON message_reactions WHEN $guard BEGIN " +
+                "INSERT INTO device_sync_source_changes(topic,object_id,kind,changed_at_ms) " +
+                "VALUES ('messages',OLD.targetMessageId,'body',$now); END")
         }
 
         /**
@@ -1605,6 +1623,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
 
                     override fun onOpen(db: SupportSQLiteDatabase) {
                         super.onOpen(db)
+                        createDeviceReactionCaptureTriggers(db)
 
                         // Emergency CursorWindow protection: nuke oversized inline blobs.
                         // Break-glass recovery for legacy rows with multi-MB base64 data.
