@@ -605,25 +605,30 @@ internal class DeviceTransportSessionStore(
 
     private fun rehomeDraft(localAccount: ByteArray, identity: LocalDeviceIdentity) {
         val db = database.openHelper.writableDatabase
-        val orphan = db.query(SimpleSQLiteQuery("SELECT account_ed,peer_device_id " +
+        val orphans = db.query(SimpleSQLiteQuery("SELECT account_ed,peer_device_id " +
             "FROM device_transport_jobs WHERE local_device_id=? AND " +
-            "length(session_id)=0 AND wire IS NULL ORDER BY created_at_ms LIMIT 1",
-            arrayOf(identity.deviceId))).use { c ->
-            if (c.moveToFirst()) c.getString(0) to c.getString(1) else null
-        } ?: return
-        val account = Base64.getDecoder().decode(orphan.first)
-        val session = request(localAccount, account, orphan.second, identity).sessionId
-        db.beginTransaction()
-        try {
-            authorize(localAccount, identity.deviceId, account, orphan.second,
-                System.currentTimeMillis())
-            db.execSQL("UPDATE device_transport_jobs SET session_id=? " +
-                "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? " +
-                "AND length(session_id)=0 AND wire IS NULL AND counter IS NULL " +
-                "AND wire_hash IS NULL AND plaintext IS NOT NULL",
-                arrayOf(session, orphan.first, orphan.second, identity.deviceId))
-            db.setTransactionSuccessful()
-        } finally { db.endTransaction() }
+            "length(session_id)=0 AND wire IS NULL " +
+            "GROUP BY account_ed,peer_device_id ORDER BY MIN(created_at_ms) LIMIT 8",
+            arrayOf(identity.deviceId))).use { c -> buildList {
+            while (c.moveToNext()) add(c.getString(0) to c.getString(1))
+        } }
+        for ((encodedAccount, peerId) in orphans) try {
+            val account = Base64.getDecoder().decode(encodedAccount)
+            val session = request(localAccount, account, peerId, identity).sessionId
+            db.beginTransaction()
+            try {
+                authorize(localAccount, identity.deviceId, account, peerId,
+                    System.currentTimeMillis())
+                db.execSQL("UPDATE device_transport_jobs SET session_id=? " +
+                    "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? " +
+                    "AND length(session_id)=0 AND wire IS NULL AND counter IS NULL " +
+                    "AND wire_hash IS NULL AND plaintext IS NOT NULL",
+                    arrayOf(session, encodedAccount, peerId, identity.deviceId))
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+        } catch (error: Exception) {
+            Log.w(TAG, "Transport draft rehome deferred for $peerId: ${error.message}")
+        }
     }
 
     private data class DataDraft(val account: String, val peer: String, val job: ByteArray,
