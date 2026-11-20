@@ -262,6 +262,9 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                             transport.acceptRequest(incoming, identity)
                                         DeviceTransportFrame.Kind.PREKEY -> {
                                             transport.acceptPrekey(incoming, identity)
+                                            // The queued first DATA is ready now; do not wait for
+                                            // the periodic transport sweep before sealing it.
+                                            nextSendMs = 0L
                                             null
                                         }
                                         DeviceTransportFrame.Kind.DATA -> {
@@ -299,6 +302,10 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                         DeviceTransportFrame.Kind.DEVICE_STORAGE_ACK,
                                         DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK -> {
                                             transport.acceptAcknowledgment(incoming, identity)
+                                            Log.i(TAG, "C0 ACK committed kind=${incoming.kind} " +
+                                                "job=${incoming.jobId.take(4).joinToString("") {
+                                                    "%02x".format(it.toInt() and 255)
+                                                }}")
                                             null
                                         }
                                         else -> throw IllegalArgumentException("Unsupported C0 kind")
@@ -486,9 +493,14 @@ internal class DeviceRosterRuntime(private val context: Context) {
                                 if (!frame.senderAccount.contentEquals(account) ||
                                     roster.authorizedPeer(frame.recipientAccount,
                                         pending.peerId, 0x01, now)?.onion != pending.onion) continue
-                                runCatching {
+                                val sent = runCatching {
                                     RustBridge.sendDeviceOnionFrame(pending.onion, pending.wire)
                                 }.onFailure { Log.w(TAG, "C0 send deferred: ${it.message}") }
+                                    .getOrDefault(false)
+                                Log.d(TAG, "C0 dispatch kind=${frame.kind} counter=${frame.counter} " +
+                                    "job=${frame.jobId.take(4).joinToString("") {
+                                        "%02x".format(it.toInt() and 255)
+                                    }} send_returned=$sent")
                                 transport.recordSendAttempt(pending.wire, now)
                             }
                         }
