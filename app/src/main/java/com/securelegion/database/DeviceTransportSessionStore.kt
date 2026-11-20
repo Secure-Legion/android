@@ -32,6 +32,8 @@ internal class DeviceTransportSessionStore(
         db.beginTransaction()
         try {
             authorize(localAccount, identity.deviceId, recipientAccount, peerId, nowMs)
+            DeviceTransportEpochStore.reap(db, recipientAccount, peerId,
+                identity.deviceId)
             val active = db.query(SimpleSQLiteQuery(
                 "SELECT session_id,prekey_wire,state FROM device_transport_sessions " +
                     "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? " +
@@ -227,6 +229,7 @@ internal class DeviceTransportSessionStore(
     /** Return the oldest exact wire for retry, sealing a queued draft when necessary. */
     fun nextDataWire(localAccount: ByteArray, identity: LocalDeviceIdentity,
                      draftOnly: Boolean = false): ByteArray? {
+        rehomeDraft(localAccount, identity)
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
         try {
@@ -271,8 +274,8 @@ internal class DeviceTransportSessionStore(
                     "AND peer_device_id=? AND local_device_id=? AND job_id=? AND wire IS NULL",
                     arrayOf(frame.wire, frame.exactWireHash, pending.counter, pending.account,
                         pending.peer, identity.deviceId, pending.job))
-                db.execSQL("UPDATE device_transport_sessions SET counter=?,chain_key=?," +
-                    "initial_cipher=NULL WHERE account_ed=? AND peer_device_id=? " +
+                db.execSQL("UPDATE device_transport_sessions SET counter=?,chain_key=? " +
+                    "WHERE account_ed=? AND peer_device_id=? " +
                     "AND local_device_id=? AND session_id=? AND direction='tx' AND counter=?",
                     arrayOf(pending.counter + 1, encrypted.evolvedChainKey,
                         pending.account, pending.peer, identity.deviceId, pending.session,
@@ -536,6 +539,9 @@ internal class DeviceTransportSessionStore(
         val peer = roster.authorizedPeer(frame.senderAccount, frame.senderDeviceId, 0x01, nowMs)
             ?: throw IllegalArgumentException("Unknown ACK sender")
         require(frame.verify(peer.signingKey))
+        if (frame.kind == DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK)
+            require(roster.isAuthorized(frame.senderAccount, frame.senderDeviceId,
+                0x03, nowMs))
         val db = database.openHelper.writableDatabase
         db.beginTransaction()
         try {
@@ -548,6 +554,10 @@ internal class DeviceTransportSessionStore(
                 c.getLong(2) == frame.counter && c.getBlob(3).contentEquals(frame.payload))
                 c.getString(0) else null }
                 ?: throw IllegalArgumentException("Invalid transport acknowledgment")
+            db.execSQL("UPDATE device_transport_sessions SET initial_cipher=NULL " +
+                "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? " +
+                "AND session_id=? AND direction='tx'",
+                arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.sessionId))
             db.execSQL("DELETE FROM device_transport_jobs WHERE account_ed=? AND " +
                 "peer_device_id=? AND local_device_id=? AND job_id=?",
                 arrayOf(account, frame.senderDeviceId, identity.deviceId, frame.jobId))
@@ -566,12 +576,52 @@ internal class DeviceTransportSessionStore(
                     arrayOf(logicalId, nowMs))
             }
             if (frame.kind == DeviceTransportFrame.Kind.ACCOUNT_STORAGE_ACK) {
+                val retired = db.query(SimpleSQLiteQuery(
+                    "SELECT DISTINCT peer_device_id,session_id FROM device_transport_jobs " +
+                        "WHERE account_ed=? AND local_device_id=? AND logical_id=? " +
+                        "AND wire IS NOT NULL AND peer_device_id IN " +
+                        "(SELECT deviceId FROM authorized_devices WHERE accountEd=? " +
+                        "AND (capabilities & 3)=3)",
+                    arrayOf(account, identity.deviceId, logicalId, account))).use { c ->
+                    buildList { while (c.moveToNext()) add(c.getString(0) to c.getBlob(1)) }
+                }
+                for ((cancelledPeer, session) in retired)
+                    DeviceTransportEpochStore.markRetiring(db, frame.senderAccount,
+                        cancelledPeer, identity.deviceId, session)
                 db.execSQL("DELETE FROM device_transport_jobs WHERE account_ed=? " +
                     "AND local_device_id=? AND logical_id=? AND peer_device_id IN " +
                     "(SELECT deviceId FROM authorized_devices WHERE accountEd=? " +
                     "AND (capabilities & 3)=3)",
                     arrayOf(account, identity.deviceId, logicalId, account))
+                for (cancelledPeer in retired.map { it.first }.toSet())
+                    DeviceTransportEpochStore.reap(db, frame.senderAccount,
+                        cancelledPeer, identity.deviceId)
             }
+            DeviceTransportEpochStore.reap(db, frame.senderAccount,
+                frame.senderDeviceId, identity.deviceId)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    private fun rehomeDraft(localAccount: ByteArray, identity: LocalDeviceIdentity) {
+        val db = database.openHelper.writableDatabase
+        val orphan = db.query(SimpleSQLiteQuery("SELECT account_ed,peer_device_id " +
+            "FROM device_transport_jobs WHERE local_device_id=? AND " +
+            "length(session_id)=0 AND wire IS NULL ORDER BY created_at_ms LIMIT 1",
+            arrayOf(identity.deviceId))).use { c ->
+            if (c.moveToFirst()) c.getString(0) to c.getString(1) else null
+        } ?: return
+        val account = Base64.getDecoder().decode(orphan.first)
+        val session = request(localAccount, account, orphan.second, identity).sessionId
+        db.beginTransaction()
+        try {
+            authorize(localAccount, identity.deviceId, account, orphan.second,
+                System.currentTimeMillis())
+            db.execSQL("UPDATE device_transport_jobs SET session_id=? " +
+                "WHERE account_ed=? AND peer_device_id=? AND local_device_id=? " +
+                "AND length(session_id)=0 AND wire IS NULL AND counter IS NULL " +
+                "AND wire_hash IS NULL AND plaintext IS NOT NULL",
+                arrayOf(session, orphan.first, orphan.second, identity.deviceId))
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
